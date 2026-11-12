@@ -90,28 +90,14 @@ export const HERDR_VERSIONS_ENV = "DISPATCH_HERDR_VERSIONS"
 export const HERDR_DEFAULT_PIN = "0.9.5"
 
 export const realHerdr: Herdr = {
-  async call(args, timeoutMs = 10_000, signal) {
-    const mod = await loadClient()
-    if (!mod) throw new LocalHerdrError("herdr_client_missing", `herdr client not loadable: ${HERDR_CLIENT_PATH}`)
-    if (signal?.aborted) throw new LocalHerdrError("aborted", `herdr ${args.slice(0, 2).join(" ")}: aborted`)
-    const r = await herdrExec(args, timeoutMs, signal)
-    if (signal?.aborted) throw new LocalHerdrError("aborted", `herdr ${args.slice(0, 2).join(" ")}: aborted`)
-    if (silentSuccess(r)) return {}
-    return mod.parseCliResult(r, args.slice(0, 2).join(" "))
+  async call(args) {
+    throw new LocalHerdrError("herdr_retired", `herdr is retired (${args.slice(0, 2).join(" ")})`)
   },
-  async read(pane, signal) {
-    const r = await herdrExec(["pane", "read", pane, "--source", "visible", "--format", "ansi"], 1_500, signal)
-    return r.status === 0 && !r.error && !signal?.aborted ? herdrScreen(r.stdout) : null
+  async read() {
+    return null
   },
   async gate() {
-    const mod = await loadClient()
-    if (!mod) return `herdr-client-missing (${HERDR_CLIENT_PATH})`
-    try {
-      const status = await realHerdr.call(["status", "server", "--json"], 5_000)
-      return mod.gateReason(status, mod.pinnedFromEnv(process.env[HERDR_VERSIONS_ENV] || HERDR_DEFAULT_PIN))
-    } catch (err) {
-      return `herdr-down: ${(err as Error).message.slice(0, 120)}`
-    }
+    return "herdr-retired"
   },
 }
 

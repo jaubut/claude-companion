@@ -246,8 +246,10 @@ export function recordSession(
       if (otherKey === key) continue
       if (hasStrongIdentity(otherKey)) continue
       if (s.agent !== next.agent) continue
-      const sameCwd = s.cwd === next.cwd
-      const sameSid = next.sessionId && s.sessionId === next.sessionId
+      const sameSid = Boolean(next.sessionId && s.sessionId === next.sessionId)
+      if (s.herdrPane?.startsWith("headless:") && !sameSid) continue
+      const differentConfirmedSid = Boolean(s.sessionId && next.sessionId && s.sessionId !== next.sessionId)
+      const sameCwd = s.cwd === next.cwd && !differentConfirmedSid
       if (sameCwd || sameSid) {
         // Waiting is the only field with no re-derivation path: a Stop hook
         // that fired without a tty (the Linux `?` case) set it on the weaker

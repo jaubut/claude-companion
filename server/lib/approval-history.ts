@@ -203,7 +203,7 @@ export function questionEntry(req: QuestionRequest): PendingEntry {
   return {
     id: req.id,
     kind: "question",
-    tool: agent === "codex" ? "request_user_input" : "AskUserQuestion",
+    tool: agent === "codex" ? "request_user_input" : agent === "gemini" ? "ask_question" : "AskUserQuestion",
     summary: req.questions.map((q) => q.question).join(" · "),
     detail: { agent, questions: req.questions },
     sessionKey: req.sessionKey,

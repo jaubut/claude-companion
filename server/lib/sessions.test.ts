@@ -496,3 +496,23 @@ test("removals are counted for the discovery tick log, then drained", () => {
   expect(drainRemovalCount()).toBe(1)
   expect(drainRemovalCount()).toBe(0)
 })
+
+test("a tty session does not collapse a headless sibling or a different sessionId in the same cwd", () => {
+  const headless = recordSession({
+    agent: "gemini",
+    cwd: "/Users/jeremieaubut",
+    sessionId: "d88c2ec3-fb2b-4105-ae8a-23eb039ec25e",
+    herdrPane: "headless:agy:d88c2ec3-fb2b-4105-ae8a-23eb039ec25e",
+    title: "Read Note IDE-73PA",
+  }, { provisional: true, sessionIdConfirmed: true })!
+  const ttySession = recordSession({
+    agent: "gemini",
+    cwd: "/Users/jeremieaubut",
+    sessionId: "a63bd666-aeca-47af-9be5-5e494a36ecda",
+    tty: "/dev/ttys031",
+    title: "Configuring MCP Guide",
+  }, { provisional: true, sessionIdConfirmed: true })!
+  const keys = listSessions().map((s) => s.key)
+  expect(keys).toContain(headless.key)
+  expect(keys).toContain(ttySession.key)
+})

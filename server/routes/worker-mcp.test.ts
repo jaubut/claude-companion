@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { recordPeer } from "../lib/vault-guard"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
+import { syncWorkerTaskToTurso } from "../wiring/worker-mcp"
 import { createWorkerMcpRoute } from "./worker-mcp"
 
 describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
@@ -233,5 +234,30 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
     expect(JSON.stringify(local)).not.toContain(CLAIM)
     await mcp.callTool(2, "dispatch_task", { ...args, host: "mac" })
     expect(forwarded[0]).toMatchObject({ params: { name: "dispatch_task", arguments: { ...args, host: "local" } } })
+  })
+
+  test("syncWorkerTaskToTurso: a claim-bound worker syncs dispatch_status; the PR url is left to the claim-checked link; an unbound one writes nothing", async () => {
+    const calls: Array<{ sql: string; args: unknown[] }> = []
+    const exec = async (sql: string, args: unknown[] = []) => {
+      calls.push({ sql, args })
+      return { rows: [], affected: 1 }
+    }
+    const pr = "https://github.com/jaubut/le-brouemont-maquette/pull/8"
+    // a dispatch under a borrowed id (no verified claim) never touches that row
+    const borrowed = "79b0c0ac1e6f866189c3dbd821fb8f85"
+    for (const status of ["running", "completed", "failed"] as const) await syncWorkerTaskToTurso({ taskId: borrowed, status, prUrl: pr, error: "x" }, false, exec)
+    expect(calls).toEqual([])
+
+    const taskId = "89b0c0ac1e6f866189c3dbd821fb8f85"
+    await syncWorkerTaskToTurso({ taskId, status: "running", prUrl: null, error: null }, true, exec)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.sql).toContain("dispatch_status = 'running'")
+    await syncWorkerTaskToTurso({ taskId, status: "running", prUrl: pr, error: null }, true, exec)
+    await syncWorkerTaskToTurso({ taskId, status: "completed", prUrl: pr, error: null }, true, exec)
+    expect(calls.at(-1)!.sql).toContain("dispatch_status = 'completed'")
+    for (const c of calls) {
+      expect(c.sql).not.toContain("dispatch_pr_url")
+      expect(c.args).not.toContain(pr)
+    }
   })
 })

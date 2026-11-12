@@ -383,6 +383,8 @@ No WS frame or iOS change.
 
 **Fix round 1 (#311 review, Codex HIGH):** the stored claim carried over to ANY redispatch, so after a claimed task failed, anyone could redispatch the id with their own prompt and no claim, and still link as jeremie. Now it carries over only to a continuation of the same worker's completed turn (status completed, session started, same family): never after failed/interrupted or a reset. A supplied claim is always verified itself; a refused one answers `claim_refused:<reason>` (bindTask now returns true | reason | null) and never falls back to the stored claim. Codex's second HIGH (same-uid disk reads of the key file, codex/agy unsandboxed) = F4, accepted residual.
 
+**Merge of main (cc900b7 `syncWorkerTaskToTurso`, #312 resolver), 2026-11-12:** main's new worker→Turso sync wrote `dispatch_pr_url` for any dispatch-id worker with no claim (the laundering path again) and set `dispatch_status`/`dispatch_owner` at dispatch, which made the row non-OWNABLE so the claim-checked link could never land. Kept main's status sync, but only for a claim-bound task (the supervisor now tells `syncSession`/`onTaskTerminal` `linkBound`), without the `dispatch_pr_url` writes; OWNABLE also accepts the bound worker's own `companion:worker:%` owner. Process-group helpers moved to `lib/worker-pid.ts` (supervisor 605 > 600 after the merge).
+
 **Needs Jeremie decision** (answered above)
 1. Sequencing: stack on #309 and merge back-to-back (recommended), or fold into #309. Never merge #309 alone. Deploy to both hosts together; roll back both PRs together, or neither.
 2. Copy the keys file to the Mac (so Mac-hosted worker PRs can link), or accept unknown for them.

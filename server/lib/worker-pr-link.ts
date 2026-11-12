@@ -17,7 +17,10 @@ import { REPO_NAME_RE, TASK_ID_RE } from "./worker-invocation"
 //    so a link is never overwritten.
 
 const PR_URL = /^https:\/\/github\.com\/jaubut\/([A-Za-z0-9._-]+)\/pull\/(\d+)$/
-export const OWNABLE = "id = ? AND done = 0 AND assignee = 'handoff' AND dispatch_status IS NULL AND (dispatch_owner IS NULL OR dispatch_owner = '') AND (dispatch_pr_url IS NULL OR dispatch_pr_url = '')"
+// Never claimed by dispatch-run or the relay, never linked. A bound worker's own status sync (wiring/worker-mcp.ts,
+// owner `companion:worker:<host>`) doesn't take the row away from the claim-checked bind and link.
+export const OWNABLE = "id = ? AND done = 0 AND assignee = 'handoff' AND (dispatch_pr_url IS NULL OR dispatch_pr_url = '') AND " +
+  "((dispatch_status IS NULL AND (dispatch_owner IS NULL OR dispatch_owner = '')) OR dispatch_owner LIKE 'companion:worker:%')"
 const TRIES = 3
 const RETRY_MS = 1_000
 

@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -12,6 +12,7 @@ import {
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
+import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
 
 export {
@@ -49,8 +50,9 @@ export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
-  syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
-  onTaskTerminal?(task: SupervisedTaskSnapshot): void
+  /** `linkBound`: the task holds a verified handoff claim, so it may write its Turso row (wiring's status sync). */
+  syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
+  onTaskTerminal?(task: SupervisedTaskSnapshot, linkBound: boolean): void
   /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
   bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
   /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
@@ -61,35 +63,9 @@ export { workerStateFile }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
-  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo)].filter(Boolean)
+  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo), join(home, ".cache", "dispatch-repos", repo)].filter(Boolean)
   for (const c of candidates) if (existsSync(join(c, ".git"))) return c
   return null
-}
-
-export function defaultIsPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false
-  try { process.kill(-pid, 0); return true } catch { return false }
-}
-
-export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
-  if (!Number.isInteger(pid) || pid <= 1) return
-  try { process.kill(-pid, sig) } catch { /* gone */ }
-}
-
-export function defaultGetPidIdentity(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 1) return null
-  try {
-    if (existsSync(`/proc/${pid}/stat`)) {
-      const bootId = existsSync("/proc/sys/kernel/random/boot_id") ? readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() : "linux"
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-      const rparen = stat.lastIndexOf(")")
-      const startTime = rparen > 0 ? stat.slice(rparen + 2).trim().split(/\s+/)[19] ?? "" : ""
-      if (startTime) return `${bootId}:${pid}:${startTime}`
-    }
-    const ps = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", timeout: 1_000 })
-    const out = (ps.stdout ?? "").trim()
-    return ps.status === 0 && out ? `ps:${pid}:${out}` : null
-  } catch { return null }
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
@@ -142,8 +118,18 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
 
+  // No checkout on this host: a full clone of jaubut/<repo> into ~/apps/<repo>, where the resolver finds it next time.
+  // Never ~/leads/<repo>: a lead's clone is shallow, lead-writable and wiped on every lead respawn.
+  async function cloneRepo(repo: string): Promise<string | null> {
+    const dir = join(deps.home, "apps", repo)
+    if (existsSync(dir)) return null
+    mkdirSync(dirname(dir), { recursive: true })
+    const r = await deps.sh("git", ["clone", "-q", `https://github.com/jaubut/${repo}.git`, dir], { cwd: deps.home, timeoutMs: 300_000 })
+    return r.ok && existsSync(join(dir, ".git")) ? dir : null
+  }
+
   function syncTaskSession(t: InternalTask): void {
-    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null) } catch { /* best effort */ }
+    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
   }
 
   function savePersistedTasks(): void {
@@ -317,7 +303,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       inFlightDispatches.add(taskId); inFlightWorktrees.add(wtKey)
       try {
         if (existing && !(await reconcileSurvivingProcess(existing))) return { ok: false, status: 409, error: "task_already_running" }
-        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
+        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(repo)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
@@ -394,7 +380,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
-              const prevSid = task.sessionId; const prevStarted = task.sessionStarted
+              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
@@ -403,9 +389,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 task.sessionStarted = true; task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+                syncTaskSession(task)
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
-              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) { savePersistedTasks(); syncTaskSession(task) }
+              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
@@ -429,7 +416,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               const finish = () => {
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
-                try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
+                try { deps.onTaskTerminal?.(toSnapshot(task), task.prLinkBound === true && !!task.handoffClaim) } catch { /* best effort */ }
               }
               const complete = (link: string | null) => {
                 const note = link === "timeout" ? " (PR link still pending)" : link && link !== "linked" && link !== "not_linked" ? ` (not linked: ${link})` : ""

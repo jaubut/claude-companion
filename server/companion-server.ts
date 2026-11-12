@@ -36,7 +36,7 @@ import { hookCallerAllowed, hostAllowed, watchTailscaleName } from "./lib/reques
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
-import { getShellSession, startShellPoll } from "./lib/shell-sessions"
+import { getShellSession } from "./lib/shell-sessions"
 import { startEndedSweep } from "./lib/ended-sessions"
 import { listSessions, resolveSession } from "./lib/sessions"
 import { MAX_ATTACHES_PER_KEY, TERMINAL_PATH, parseTerminalSize, shellNetworkRefusal } from "./lib/terminal-bridge"
@@ -47,7 +47,6 @@ import { ensureUtf8Locale } from "./lib/tmux-pane"
 import { brainRoute } from "./routes/brain"
 import { handleWorkerBlockedRoute } from "./routes/worker-blocked"
 import { brainWiring, setBrainDeliver } from "./wiring/brain"
-import { brainWorkers } from "./wiring/brain-workers"
 import { startStuckEvents } from "./wiring/brain-stuck-events"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
@@ -71,14 +70,11 @@ export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
-  // Shell sessions are read from herdr (lib/shell-sessions.ts; tmux's old ones
-  // too): first read now, then every few seconds so an `exit` reaches the phone.
-  startShellPoll(listSessions)
   startEndedSweep(listSessions)
   replayWorkerPrLinks()
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
-  if (brainEnabled()) { brainWiring.start(); brainWorkers.start(); startAutoDeploy(); startStuckEvents() }
+  if (brainEnabled()) { brainWiring.start(); startAutoDeploy(); startStuckEvents() }
   watchTailscaleName()
   const server = Bun.serve<WsData>({
     port,

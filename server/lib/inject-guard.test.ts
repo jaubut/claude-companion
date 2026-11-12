@@ -216,6 +216,11 @@ describe("paneNotReady — parser fixtures", () => {
     expect(paneNotReady(pane(DIV, "❯ "))).toBe("prompt_unframed")
   })
 
+  test("a named session divider (e.g. --name lead-claude-companion) frames the prompt", () => {
+    const namedTop = `${"─".repeat(60)} lead-claude-companion ─`
+    expect(paneNotReady(pane("new task? /clear to save 174.6k tokens", namedTop, "❯ ", DIV, "  ⏵⏵ auto mode on"))).toBeNull()
+  })
+
   test("the AskUserQuestion review screen is named, not just 'unframed'", () => {
     expect(paneNotReady(pane(DIV, "←  ☒ A  ☒ B  ✔ Submit  →", "Review your answers", "Ready to submit your answers?", "❯ 1. Submit answers", "  2. Cancel"))).toBe("question_review_pending")
   })

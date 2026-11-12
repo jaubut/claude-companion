@@ -4,8 +4,11 @@ import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { listSessions } from "./sessions"
+import { listSessions, recordSession } from "./sessions"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
+import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
+import { withPickerIO } from "./keyboard-inject"
+import { driveQuestionPicker } from "./question-driver"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
@@ -73,10 +76,36 @@ export function extractAgyUserPrompt(rawContent: unknown): string | null {
 
 function unquoteArgVal(v: unknown): unknown {
   if (typeof v !== "string") return v
-  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
-    try { return JSON.parse(v) } catch { return v.slice(1, -1) }
+  if (
+    (v.length >= 2 && v.startsWith('"') && v.endsWith('"'))
+    || (v.length >= 2 && v.startsWith("[") && v.endsWith("]"))
+    || (v.length >= 2 && v.startsWith("{") && v.endsWith("}"))
+  ) {
+    try { return JSON.parse(v) } catch {
+      return v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v
+    }
   }
   return v
+}
+
+export function formatAgyQuestionsMarkdown(questions: QuestionItem[]): string {
+  return questions.map((q, idx) => {
+    const prefix = questions.length > 1 ? `**Q${idx + 1}: ${q.question}**` : `**${q.question}**`
+    const multi = q.multiSelect ? " *(Select all that apply)*" : ""
+    const opts = q.options.map((o, oi) => `${oi + 1}. ${o.label}`).join("\n")
+    return `${prefix}${multi}\n${opts}`
+  }).join("\n\n")
+}
+
+export function formatAgyQuestionAnswers(questions: QuestionItem[], answers: QuestionAnswer[]): string {
+  return questions.map((q, i) => {
+    const a = answers[i] ?? { selected: [] }
+    const custom = (a.otherText ?? "").trim()
+    const parts = q.multiSelect ? [...a.selected] : a.selected.slice(0, 1)
+    if (custom && (q.multiSelect || parts.length === 0)) parts.push(custom)
+    const chosen = parts.join(", ") || "Skipped"
+    return questions.length > 1 ? `A${i + 1}: ${chosen}` : chosen
+  }).join("\n")
 }
 
 function normalizeAgyToolArgs(raw: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -132,11 +161,16 @@ export function parseAgyTranscriptLine(
         ...ident,
       })
     }
+    const askedQuestions: QuestionItem[] = []
     if (Array.isArray(step.tool_calls)) {
       step.tool_calls.forEach((tc, idx) => {
         const rawName = typeof tc?.name === "string" && tc.name.trim() ? tc.name.trim() : "tool"
         const name = rawName.replace(/^default_api:/, "")
         const args = normalizeAgyToolArgs(tc?.args)
+        if (isQuestionTool(name)) {
+          const qs = parseQuestionInput(args)
+          if (qs) askedQuestions.push(...qs)
+        }
         const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         out.push({
           id: `${idBase}:tool:${idx}`,
@@ -149,32 +183,53 @@ export function parseAgyTranscriptLine(
         })
       })
     }
-    if (typeof step.content === "string" && step.content.trim()) {
+    const rawProse = typeof step.content === "string" ? step.content.trim() : ""
+    const questionMd = askedQuestions.length > 0 && (!rawProse || !rawProse.includes(askedQuestions[0]!.question))
+      ? formatAgyQuestionsMarkdown(askedQuestions)
+      : ""
+    const combinedText = [rawProse, questionMd].filter(Boolean).join("\n\n")
+    if (combinedText) {
       out.push({
         id: `${idBase}:text`,
         ts,
         kind: "assistant_text",
-        text: clampLong(step.content.trim(), 64_000),
+        text: clampLong(combinedText, 64_000),
         ...ident,
       })
     }
     return out
   }
 
-  if (step.type === "GENERIC" && typeof step.content === "string" && step.content.includes("Command output:")) {
-    const outIdx = step.content.indexOf("Command output:")
-    const rawOut = step.content.slice(outIdx + "Command output:".length).trim()
-    const errored = /Command exited with code [1-9]/.test(step.content)
-    const res = extractToolResult("run_command", rawOut)
-    if (res.excerpt || errored) {
+  if (step.type === "GENERIC" && typeof step.content === "string") {
+    if (step.content.includes("Command output:")) {
+      const outIdx = step.content.indexOf("Command output:")
+      const rawOut = step.content.slice(outIdx + "Command output:".length).trim()
+      const errored = /Command exited with code [1-9]/.test(step.content)
+      const res = extractToolResult("run_command", rawOut)
+      if (res.excerpt || errored) {
+        return [{
+          id: `${idBase}:tool_end`,
+          ts,
+          kind: "tool_end",
+          tool: "run_command",
+          summary: "",
+          outputExcerpt: res.excerpt,
+          errored: errored || res.errored,
+          ...ident,
+        }]
+      }
+      return []
+    }
+    const answerLines = step.content
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /^A\d+:\s+.+/.test(l))
+    if (answerLines.length > 0) {
       return [{
-        id: `${idBase}:tool_end`,
+        id: `${idBase}:answer`,
         ts,
-        kind: "tool_end",
-        tool: "run_command",
-        summary: "",
-        outputExcerpt: res.excerpt,
-        errored: errored || res.errored,
+        kind: "user_prompt",
+        text: clampLong(answerLines.join("\n"), 8_000),
         ...ident,
       }]
     }
@@ -218,6 +273,20 @@ function parseAgyTimestamp(raw: string): number {
   return Date.parse(iso) || 0
 }
 
+let cachedRecentAgyConversations: AgyConversationSummary[] = []
+
+function isEphemeralSubagentTranscript(sessionId: string, home: string): boolean {
+  const path = agyTranscriptPath(sessionId, home)
+  if (!existsSync(path)) return false
+  try {
+    const raw = readFileSync(path, "utf8")
+    const head = raw.slice(0, 8192)
+    if (head.includes('"type":"USER_INPUT"')) return false
+    if (head.includes("<SYSTEM_MESSAGE>") && head.includes("sender=")) return true
+  } catch { /* ignore */ }
+  return false
+}
+
 export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_WINDOW_MS): AgyConversationSummary[] {
   const dbPath = agySummariesDbPath(home)
   if (!existsSync(dbPath)) return []
@@ -225,55 +294,111 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
   try {
     const db = new Database(dbPath, { readonly: true })
     try {
+      db.exec("PRAGMA busy_timeout = 2500;")
       const rows = db.query(`
-        SELECT
-          conversation_id AS id,
-          title,
-          step_count AS stepCount,
-          last_modified_time AS lastModifiedTime,
-          workspace_uris AS workspaceUris,
-          status,
-          not_fully_idle AS notFullyIdle
-        FROM conversation_summaries
-        WHERE killed = 0
-          AND step_count > 0
-        ORDER BY last_modified_time DESC
-        LIMIT ?
+        SELECT conversation_id AS id, title, step_count AS stepCount, last_modified_time AS lastModifiedTime,
+               workspace_uris AS workspaceUris, status, not_fully_idle AS notFullyIdle
+        FROM conversation_summaries WHERE killed = 0 AND step_count > 0
+        ORDER BY last_modified_time DESC LIMIT ?
       `).all(MAX_CONVERSATIONS) as Array<{
-        id: string
-        title: string
-        stepCount: number
-        lastModifiedTime: string
-        workspaceUris: string
-        status: string
-        notFullyIdle: number
+        id: string; title: string; stepCount: number; lastModifiedTime: string
+        workspaceUris: string; status: string; notFullyIdle: number
       }>
       const out: AgyConversationSummary[] = []
       for (const r of rows) {
         if (!r.id) continue
         const updatedAtMs = parseAgyTimestamp(r.lastModifiedTime)
         if (updatedAtMs < cutoff) continue
+        const trimmedTitle = (r.title || "").trim()
+        if (!trimmedTitle && isEphemeralSubagentTranscript(r.id, home)) continue
         const busy = Boolean(r.notFullyIdle) || r.status === "CASCADE_RUN_STATUS_RUNNING"
         out.push({
           id: r.id,
-          title: (r.title || "").trim() || "Antigravity Session",
+          title: trimmedTitle || "Antigravity Session",
           cwd: firstWorkspacePath(r.workspaceUris),
           status: busy ? "busy" : "idle",
           updatedAtMs,
           stepCount: Number(r.stepCount) || 0,
         })
       }
+      if (home === homedir()) cachedRecentAgyConversations = out
       return out
     } finally {
       db.close()
     }
   } catch {
+    if (home === homedir() && cachedRecentAgyConversations.length > 0) {
+      return cachedRecentAgyConversations.filter((c) => c.updatedAtMs >= cutoff)
+    }
     return []
   }
 }
 
 const offsets = new Map<string, number>()
+const raisedAgyQuestions = new Map<string, string>()
 let timer: ReturnType<typeof setInterval> | null = null
+
+export function syncAgyOpenQuestion(
+  lines: string[],
+  convo: AgyConversationSummary,
+  ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+): void {
+  let lastStep: AgyTranscriptStep | null = null
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i]?.trim()
+    if (!l) continue
+    try {
+      const parsed = JSON.parse(l) as AgyTranscriptStep
+      if (typeof parsed.step_index === "number") {
+        lastStep = parsed
+        break
+      }
+    } catch { /* ignore */ }
+  }
+  const sessionKey = ident.key || `gemini:sid:${convo.id}`
+  let openQuestions: QuestionItem[] | null = null
+  if (lastStep?.type === "PLANNER_RESPONSE" && Array.isArray(lastStep.tool_calls)) {
+    for (const tc of lastStep.tool_calls) {
+      const name = (typeof tc?.name === "string" ? tc.name : "").replace(/^default_api:/, "")
+      if (isQuestionTool(name)) {
+        const qs = parseQuestionInput(normalizeAgyToolArgs(tc?.args))
+        if (qs && qs.length > 0) openQuestions = [...(openQuestions ?? []), ...qs]
+      }
+    }
+  }
+  if (!openQuestions || typeof lastStep?.step_index !== "number") {
+    if (raisedAgyQuestions.has(convo.id)) {
+      raisedAgyQuestions.delete(convo.id)
+      cancelQuestionsFor({ sessionId: convo.id, sessionKey }, "answered", "agy transcript advanced")
+    }
+    return
+  }
+  const qId = `agy-q:${convo.id}:${lastStep.step_index}`
+  if (raisedAgyQuestions.get(convo.id) === qId) return
+  if (raisedAgyQuestions.has(convo.id)) {
+    cancelQuestionsFor({ sessionId: convo.id, sessionKey }, "answered", "superseded")
+  }
+  raisedAgyQuestions.set(convo.id, qId)
+  const questions = openQuestions
+  const cwd = ident.cwd || convo.cwd
+  void addQuestionRequest(
+    { agent: "gemini", sessionId: convo.id, cwd, questions, sessionKey },
+    { id: qId, expiryMs: THREAD_WINDOW_MS },
+  ).then(async (answers) => {
+    if (raisedAgyQuestions.get(convo.id) === qId) raisedAgyQuestions.delete(convo.id)
+    if (answers.length === 0) return
+    const ttySession = listSessions().find((s) => s.sessionId === convo.id && (s.tty || s.tmuxPane))
+      ?? listSessions().find((s) => s.agent === "gemini" && (s.tty || s.tmuxPane))
+    if (ttySession) {
+      await withPickerIO(
+        { tty: ttySession.tty, tmuxPane: ttySession.tmuxPane, tmuxSocket: ttySession.tmuxSocket, termProgram: ttySession.termProgram, iTermSessionId: ttySession.iTermSessionId },
+        (io) => driveQuestionPicker(io, questions, answers),
+      )
+    } else {
+      deliverHeadlessAgyTurn({ sessionId: convo.id, cwd, prompt: formatAgyQuestionAnswers(questions, answers) })
+    }
+  })
+}
 
 export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
   if (!timer) {
@@ -295,6 +420,38 @@ export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
 async function pollAgyOnce(home = homedir()): Promise<void> {
   const convos = readRecentAgyConversations(home)
   if (convos.length === 0) return
+
+  const agyModel = readAgyModel(home)
+  const currentSessions = listSessions()
+  for (const c of convos.slice(0, 5)) {
+    const ttyOwner = currentSessions.find((s) => s.sessionId === c.id && !!s.tty)
+    if (ttyOwner) {
+      if (ttyOwner.agentStatus !== c.status || (c.title && ttyOwner.title !== c.title)) {
+        recordSession({
+          ...ttyOwner,
+          title: c.title || ttyOwner.title,
+          agentStatus: c.status,
+          model: ttyOwner.model || agyModel,
+        }, { provisional: true, sessionIdConfirmed: true })
+      }
+      continue
+    }
+    const existing = currentSessions.find((s) => s.sessionId === c.id)
+    if (!existing || existing.agentStatus !== c.status || existing.title !== c.title) {
+      recordSession({
+        agent: "gemini",
+        cwd: c.cwd,
+        sessionId: c.id,
+        herdrPane: `headless:agy:${c.id}`,
+        title: c.title,
+        label: c.title,
+        firstSeenAt: existing?.firstSeenAt ?? (c.updatedAtMs || undefined),
+        agentStatus: c.status,
+        model: existing?.model || agyModel,
+        pid: String(process.pid),
+      }, { provisional: true, sessionIdConfirmed: true })
+    }
+  }
 
   const events: FeedEvent[] = []
   for (const c of convos) {
@@ -357,6 +514,7 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
   for (const line of lines) {
     out.push(...parseAgyTranscriptLine(line, ident, convo.id))
   }
+  syncAgyOpenQuestion(lines, convo, ident)
   if (!firstRead && ident.key) {
     const lastTool = [...out].reverse().find((e) => e.kind === "tool_start")
     const hasFinalReply = out.some((e) => e.kind === "assistant_text") && !lastTool
@@ -382,6 +540,24 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
     }
   }
   return firstRead ? out.slice(-INITIAL_EVENTS_PER_CONVERSATION) : out
+}
+
+export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, home = homedir()) {
+  if (!lookup.startsWith("gemini:sid:")) return null
+  const sid = lookup.slice("gemini:sid:".length).trim()
+  if (!sid || !existsSync(agyTranscriptPath(sid, home))) return null
+  const convo = readRecentAgyConversations(home).find((c) => c.id === sid)
+  return recordSession({
+    agent: "gemini",
+    cwd: convo?.cwd || fallbackCwd || home,
+    sessionId: sid,
+    herdrPane: `headless:agy:${sid}`,
+    title: convo?.title || "Antigravity Session",
+    label: convo?.title || "Antigravity Session",
+    agentStatus: convo?.status ?? "idle",
+    model: readAgyModel(home),
+    pid: String(process.pid),
+  }, { provisional: true, sessionIdConfirmed: true })
 }
 
 export function deliverHeadlessAgyTurn(opts: {

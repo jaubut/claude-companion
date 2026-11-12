@@ -13,8 +13,10 @@ export function agentFromHeaders(headers: Headers): SpawnAgent {
   return headers.get("x-companion-agent") === "codex" ? "codex" : "claude"
 }
 
-export function agentTitle(agent: SpawnAgent): string {
-  return agent === "codex" ? "Codex" : "Claude"
+export function agentTitle(agent: SpawnAgent | "kimi" | "gemini"): string {
+  if (agent === "codex") return "Codex"
+  if (agent === "gemini") return "Gemini"
+  return "Claude"
 }
 
 export function cwdFromPayload(payloadCwd: string | undefined, headers: Headers): string {

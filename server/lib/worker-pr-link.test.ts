@@ -109,6 +109,17 @@ describe("linkWorkerPr", () => {
     expect(await linkWorkerPr({ gh: fakeGh(() => `dispatch/${ID}`).gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("not_linked")
   })
 
+  test("a row the bound worker's own status sync marked (companion:worker owner) still binds and links; another owner's never", async () => {
+    await seed(ID, { status: "running", owner: "companion:worker:zettlab" })
+    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2", CLAIM(ID))).toBe(true)
+    const { gh } = fakeGh(() => `dispatch/${ID}`)
+    expect(await linkWorkerPr({ gh, exec: tursoExec, sleep: noSleep }, { taskId: ID, repo: "tls-dashboard-v2", claim: CLAIM(ID), prUrl: URL() })).toBe("linked")
+    expect(await prOf(ID)).toBe(URL())
+    const relay = `${ID.slice(0, 30)}zr`
+    await seed(relay, { status: "running", owner: "companion:relay:tls-dashboard-v2-x" })
+    expect(await bindWorkerTask(tursoExec, relay, "tls-dashboard-v2", CLAIM(relay))).toBe("not_ownable")
+  })
+
   test("writes GitHub's canonical url, not the one the worker printed", async () => {
     await seed(ID)
     const { gh } = fakeGh(() => `dispatch/${ID}`)

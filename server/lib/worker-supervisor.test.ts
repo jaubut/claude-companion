@@ -11,6 +11,7 @@ import {
   buildHeadlessWorkerInvocation,
   buildWorkerEnv,
   createWorkerSupervisor,
+  defaultResolveRepoDir,
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
@@ -592,12 +593,13 @@ describe("createWorkerSupervisor", () => {
       const linkClaims: string[] = []
       const terminal: string[] = []
       const seen: unknown[] = [] // every snapshot the supervisor hands out
+      const boundArgs: string[] = [] // what each callback was told about the claim binding
       let uuidN = 0
       const sup = createWorkerSupervisor({
         host: "zettlab", home, now: () => 1700000000000, uuid: () => `eeee1111-2222-4333-8444-55555555555${uuidN++ % 10}`,
         trust: () => {}, reportJob: () => {},
-        onTaskTerminal: (t) => { seen.push(t); terminal.push(`${t.status}:${t.step}`) },
-        syncSession: (t) => { seen.push(t) },
+        onTaskTerminal: (t, bound) => { seen.push(t); boundArgs.push(`terminal:${bound}`); terminal.push(`${t.status}:${t.step}`) },
+        syncSession: (t, _pid, bound) => { seen.push(t); boundArgs.push(`sync:${bound}`) },
         bindTask: async (taskId, repo, claim) => { binds.push([taskId, repo]); bindClaims.push(claim); return typeof o.bind === "function" ? o.bind() : o.bind === undefined ? true : o.bind },
         linkPr: async (t, claim) => { seen.push(t); links.push({ taskId: t.taskId, prUrl: t.prUrl, status: t.status }); linkClaims.push(claim); return o.link ? o.link(t) : "linked" },
         sh: async (_cmd, args) => {
@@ -610,7 +612,7 @@ describe("createWorkerSupervisor", () => {
         spawned[i]!.onStdoutLine(JSON.stringify({ type: "result", result: `Done ${PR}` }))
         spawned[i]!.onExit(0, null)
       }
-      return { sup, spawned, binds, bindClaims, links, linkClaims, terminal, seen, finish }
+      return { sup, spawned, binds, bindClaims, links, linkClaims, terminal, seen, boundArgs, finish }
     }
     const tmpHome = () => {
       const home = join(tmpdir(), `worker-sup-link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
@@ -800,6 +802,25 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
+    test("the session sync and terminal callbacks are told whether the task is claim-bound (gates the Turso status sync)", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "sync-1", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        expect(h.boundArgs.length).toBeGreaterThan(1)
+        expect(new Set(h.boundArgs.map((a) => a.split(":")[1]))).toEqual(new Set(["true"]))
+        h.boundArgs.length = 0
+        await h.sup.dispatchTask({ taskId: "sync-2", repo: "claude-companion", prompt: "Ship PR" })
+        h.finish(1)
+        await flush(); await flush()
+        expect(new Set(h.boundArgs.map((a) => a.split(":")[1]))).toEqual(new Set(["false"]))
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
     test("a claimed task that failed: anyone's redispatch without a claim runs unbound and drops the stored claim", async () => {
       const home = tmpHome()
       const h = harness(home)
@@ -945,5 +966,33 @@ describe("createWorkerSupervisor", () => {
       expect(workerReceipt({ ...base, prUrl: null, step: "Turn completed", result: "ok" })).toBe("completed [t1] claude-companion — T\nResult: ok")
       expect(workerReceipt({ ...base, status: "failed", prUrl: null, step: "Failed", error: "boom" })).toBe("blocked [t1] claude-companion — T\nError: boom")
     })
+  })
+
+  test("a repo with no checkout resolves to the dispatch-repos cache, else is cloned into ~/apps on demand", async () => {
+    const home = join(tmpdir(), `worker-sup-clone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const cache = join(home, ".cache", "dispatch-repos", "cached-site")
+    mkdirSync(join(cache, ".git"), { recursive: true })
+    const clones: string[][] = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, killGraceMs: 50, now: () => 1700000000000, uuid: () => "11111111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args[0] === "clone") { clones.push(args); mkdirSync(join(args[args.length - 1]!, ".git"), { recursive: true }) }
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: () => ({ pid: 4243, kill() {} }),
+    })
+    try {
+      expect(defaultResolveRepoDir("cached-site", home)).toBe(cache)
+      expect(defaultResolveRepoDir("no-checkout", home)).toBeNull()
+
+      const d = await sup.dispatchTask({ taskId: "task-clone", repo: "no-checkout", prompt: "Do work" })
+      expect(d.ok).toBe(true)
+      expect(clones).toEqual([["clone", "-q", "https://github.com/jaubut/no-checkout.git", join(home, "apps", "no-checkout")]])
+      expect(defaultResolveRepoDir("no-checkout", home)).toBe(join(home, "apps", "no-checkout"))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

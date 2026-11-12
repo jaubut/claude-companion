@@ -134,4 +134,53 @@ describe("transcript backfill", () => {
     expect(rows[0]!.text).toBe("resume this session inside companion")
     expect(rows[3]!.text).toBe("Here is how we wire Antigravity sessions into Companion.")
   })
+
+  test("Antigravity (agy/gemini) ask_question tool calls render in feed and raise live PendingQuestion", async () => {
+    const { eventsFromAgyTranscript, syncAgyOpenQuestion } = await import("./agy-feed")
+    const { getPendingQuestions } = await import("./questions")
+    const agyFile = `${dir}/agy-ask-question.jsonl`
+    const askStep = JSON.stringify({
+      step_index: 10,
+      type: "PLANNER_RESPONSE",
+      created_at: at(2000),
+      thinking: "Need clarification from Jeremie.",
+      tool_calls: [{
+        name: "ask_question",
+        args: {
+          questions: JSON.stringify([{
+            is_multi_select: false,
+            options: ["(Recommended) GCP Montréal", "Cloudflare Workers"],
+            question: "Where should we land LE FAR?",
+          }]),
+        },
+      }],
+    })
+    const answerStep = JSON.stringify({
+      step_index: 11,
+      type: "GENERIC",
+      created_at: at(3000),
+      content: "Created At: 2026-11-12T13:50:34-05:00\nCompleted At: 2026-11-12T13:51:13-05:00\nA1: (Recommended) GCP Montréal",
+    })
+    writeFileSync(agyFile, [askStep, answerStep].join("\n") + "\n")
+    const rows = eventsFromAgyTranscript(agyFile, { ...session, agent: "gemini" })
+    expect(rows.map((r) => r.kind)).toEqual(["assistant_thinking", "tool_start", "assistant_text", "user_prompt"])
+    expect(rows[1]!.tool).toBe("ask_question")
+    expect(rows[1]!.summary).toBe("Where should we land LE FAR?")
+    expect(rows[2]!.text).toContain("**Where should we land LE FAR?**")
+    expect(rows[2]!.text).toContain("1. (Recommended) GCP Montréal")
+    expect(rows[3]!.text).toBe("A1: (Recommended) GCP Montréal")
+
+    // Live PendingQuestion lifecycle: open when ask_question is the last step, cleared when answered
+    const convo = { id: "agy-q-convo", title: "LE FAR", cwd: "/Users/jeremieaubut", status: "idle" as const, updatedAtMs: Date.now(), stepCount: 11 }
+    const ident = { key: "gemini:sid:agy-q-convo", cwd: "/Users/jeremieaubut", sessionId: "agy-q-convo" }
+    syncAgyOpenQuestion([askStep], convo, ident)
+    const pending = getPendingQuestions().find((q) => q.sessionId === "agy-q-convo")
+    expect(pending).toBeDefined()
+    expect(pending?.agent).toBe("gemini")
+    expect(pending?.questions[0]?.question).toBe("Where should we land LE FAR?")
+    expect(pending?.questions[0]?.options.map((o) => o.label)).toEqual(["(Recommended) GCP Montréal", "Cloudflare Workers"])
+
+    syncAgyOpenQuestion([askStep, answerStep], convo, ident)
+    expect(getPendingQuestions().find((q) => q.sessionId === "agy-q-convo")).toBeUndefined()
+  })
 })
