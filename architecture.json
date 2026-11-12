@@ -2438,6 +2438,37 @@
           "externals": []
         },
         {
+          "path": "lib/jev-model-router.ts",
+          "lines": 244,
+          "kind": "lib",
+          "exports": [
+            "JEV_ROUTER_TIMEOUT_MS",
+            "WorkerScope",
+            "WorkerModelInput",
+            "WorkerModelDecision",
+            "WORKER_SCOPE_CRITERIA",
+            "WORKER_QUESTIONS",
+            "workerRouterState",
+            "pickWorkerModelFromOutcome",
+            "decideWorkerModel",
+            "BrainTurnModelDecision",
+            "BRAIN_TURN_QUESTIONS",
+            "pickBrainTurnModelFromOutcome",
+            "decideBrainTurnModel"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/jev.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/jev-route-log.ts",
           "lines": 168,
           "kind": "lib",
@@ -6316,7 +6347,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 542,
+          "lines": 580,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6328,6 +6359,7 @@
             "defaultIsPidAlive",
             "defaultKillPid",
             "defaultGetPidIdentity",
+            "clearStaleGitConfigLock",
             "defaultSpawnWorker",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -6339,6 +6371,7 @@
           "apiCalls": [],
           "imports": [
             "lib/builder-jobs.ts",
+            "lib/jev-model-router.ts",
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
             "lib/worker-invocation.ts"
@@ -6659,7 +6692,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 397,
+          "lines": 402,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7113,7 +7146,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 294,
+          "lines": 295,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -7484,7 +7517,7 @@
         },
         {
           "path": "routes/worker-mcp.ts",
-          "lines": 89,
+          "lines": 90,
           "kind": "route-host",
           "exports": [
             "WorkerMcpRouteDeps",
@@ -7803,7 +7836,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 182,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -7819,7 +7852,9 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-store.ts",
+            "lib/jev-model-router.ts",
             "lib/last-assistant.ts",
+            "lib/log.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
@@ -7832,7 +7867,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 222,
+          "lines": 252,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -7899,11 +7934,12 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 190,
+          "lines": 237,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
+            "hasRecentUserMergeApproval",
             "mergeAgentPr"
           ],
           "state": [],
@@ -7929,9 +7965,10 @@
         },
         {
           "path": "wiring/brain-pr-park.ts",
-          "lines": 34,
+          "lines": 37,
           "kind": "lib",
           "exports": [
+            "hardStopPark",
             "retiredPark",
             "parked"
           ],
@@ -7949,7 +7986,7 @@
         },
         {
           "path": "wiring/brain-pr-update-branch.ts",
-          "lines": 115,
+          "lines": 118,
           "kind": "lib",
           "exports": [
             "PR_UPDATE_ACTION",
@@ -7968,6 +8005,7 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-park.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
@@ -10035,6 +10073,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-headless.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -11371,6 +11410,7 @@
             "lib/orchestrator-brain.ts",
             "lib/worker-blocked.ts",
             "wiring/body.ts",
+            "wiring/brain-pr-merge.ts",
             "wiring/brain.ts",
             "wiring/orchestrator.ts"
           ]
@@ -11788,6 +11828,40 @@
             "lib/tmux-inject.ts"
           ]
         },
+        "JevQuestion": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-model-router.ts",
+            "lib/jev-router.ts",
+            "lib/trip-classify.ts",
+            "wiring/trips.ts"
+          ]
+        },
+        "JevOutcome": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-model-router.ts",
+            "lib/jev-router.ts",
+            "lib/trip-classify.ts",
+            "wiring/trips.ts"
+          ]
+        },
+        "JevOpts": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-model-router.ts",
+            "lib/jev-router.ts"
+          ]
+        },
+        "systemOne": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/jev-model-router.ts",
+            "lib/jev-router.ts",
+            "wiring/triage.ts",
+            "wiring/trips.ts"
+          ]
+        },
         "Intent": {
           "module": "lib/jev-router.ts",
           "callers": [
@@ -11800,26 +11874,10 @@
             "lib/jev-route-log.ts"
           ]
         },
-        "JevQuestion": {
-          "module": "lib/jev.ts",
-          "callers": [
-            "lib/jev-router.ts",
-            "lib/trip-classify.ts",
-            "wiring/trips.ts"
-          ]
-        },
         "jevCriteria": {
           "module": "lib/project-catalog.ts",
           "callers": [
             "lib/jev-router.ts"
-          ]
-        },
-        "JevOutcome": {
-          "module": "lib/jev.ts",
-          "callers": [
-            "lib/jev-router.ts",
-            "lib/trip-classify.ts",
-            "wiring/trips.ts"
           ]
         },
         "NONE_KEY": {
@@ -11832,20 +11890,6 @@
           "module": "lib/project-catalog.ts",
           "callers": [
             "lib/jev-router.ts"
-          ]
-        },
-        "JevOpts": {
-          "module": "lib/jev.ts",
-          "callers": [
-            "lib/jev-router.ts"
-          ]
-        },
-        "systemOne": {
-          "module": "lib/jev.ts",
-          "callers": [
-            "lib/jev-router.ts",
-            "wiring/triage.ts",
-            "wiring/trips.ts"
           ]
         },
         "tmuxArgv": {
@@ -14497,6 +14541,12 @@
             "wiring/resolver.ts"
           ]
         },
+        "decideWorkerModel": {
+          "module": "lib/jev-model-router.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "registerToken": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -16046,6 +16096,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/brain-pr-merge.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts"
           ]
@@ -17035,6 +17086,12 @@
             "wiring/brain.ts"
           ]
         },
+        "decideBrainTurnModel": {
+          "module": "lib/jev-model-router.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
         "defaultSpawnWorker": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
@@ -17106,6 +17163,12 @@
           "callers": [
             "wiring/brain-pr-merge.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "hasRecentUserMergeApproval": {
+          "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "wiring/brain-pr-update-branch.ts"
           ]
         },
         "envValue": {
