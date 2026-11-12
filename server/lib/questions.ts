@@ -21,7 +21,7 @@ export interface QuestionItem {
 
 export interface QuestionRequest {
   id: string
-  agent?: "claude" | "codex" | "kimi"
+  agent?: "claude" | "codex" | "kimi" | "gemini"
   sessionId: string
   cwd: string
   questions: QuestionItem[]
@@ -273,8 +273,10 @@ export function isQuestionTool(tool: string): boolean {
   return normalized === "askuserquestion"
     || normalized === "requestuserinput"
     || normalized === "askuser"
+    || normalized === "askquestion"
     || normalized.endsWith("requestuserinput")
     || normalized.endsWith("askuserquestion")
+    || normalized.endsWith("askquestion")
 }
 
 function parseOptions(raw: unknown): QuestionOption[] | null {
@@ -288,7 +290,7 @@ function parseOptions(raw: unknown): QuestionOption[] | null {
     }
     if (!o || typeof o !== "object") return null
     const oobj = o as Record<string, unknown>
-    const label = typeof oobj.label === "string" ? oobj.label : ""
+    const label = typeof oobj.label === "string" ? oobj.label : (typeof oobj.text === "string" ? oobj.text : "")
     if (!label) return null
     const description = typeof oobj.description === "string" ? oobj.description : undefined
     options.push({ label, description })
@@ -296,13 +298,17 @@ function parseOptions(raw: unknown): QuestionOption[] | null {
   return options
 }
 
-// Defensive parser for the AskUserQuestion `tool_input` shape. Returns null
-// when the shape doesn't match — caller falls back to the generic approval
-// flow rather than broadcasting a malformed question frame.
+// Defensive parser for the AskUserQuestion / ask_question `tool_input` shape.
+// Returns null when the shape doesn't match — caller falls back to the generic
+// approval flow rather than broadcasting a malformed question frame.
 export function parseQuestionInput(input: unknown): QuestionItem[] | null {
   if (!input || typeof input !== "object") return null
   const obj = input as Record<string, unknown>
-  const raw = Array.isArray(obj.questions) ? obj.questions : [obj]
+  let rawQuestions: unknown = obj.questions
+  if (typeof rawQuestions === "string") {
+    try { rawQuestions = JSON.parse(rawQuestions) } catch { return null }
+  }
+  const raw = Array.isArray(rawQuestions) ? rawQuestions : [obj]
   if (raw.length === 0) return null
 
   const out: QuestionItem[] = []
@@ -312,7 +318,7 @@ export function parseQuestionInput(input: unknown): QuestionItem[] | null {
     const id = typeof qobj.id === "string" ? qobj.id : undefined
     const question = typeof qobj.question === "string" ? qobj.question : ""
     const header = typeof qobj.header === "string" ? qobj.header : ""
-    const multiSelect = qobj.multiSelect === true
+    const multiSelect = qobj.multiSelect === true || qobj.is_multi_select === true || qobj.isMultiSelect === true
     const options = parseOptions(qobj.options ?? qobj.choices)
     if (!options) return null
     if (!question) return null
