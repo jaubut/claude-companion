@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -246,7 +246,19 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
   }
 
+  /** Remove 0-byte read-only (0444) `.git/config.lock` mount stubs left behind by bwrap `--ro-bind /dev/null` on the host repo. */
+  function clearEmptyReadOnlyGitConfigLock(repoDir: string): void {
+    try {
+      const lock = join(repoDir, ".git", "config.lock")
+      const st = statSync(lock)
+      if (st.isFile() && st.size === 0 && (st.mode & 0o222) === 0) {
+        rmSync(lock, { force: true })
+      }
+    } catch { /* ignore */ }
+  }
+
   async function ensureWorktree(repoDir: string, repo: string, taskId: string, ownedByTask: boolean): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
+    clearEmptyReadOnlyGitConfigLock(repoDir)
     const wtRoot = join(deps.home, "apps", "wt", repo)
     const worktree = join(wtRoot, taskId)
     const branch = `dispatch/${taskId}`
@@ -391,6 +403,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (clean) { task.stderrTail.push(clean); if (task.stderrTail.length > 10) task.stderrTail.shift() }
             },
             onExit(code, sig) {
+              clearEmptyReadOnlyGitConfigLock(task.repoDir)
               if (settled) return
               settled = true; resolveExit()
               if (task.activeTurn !== myTurn) return
@@ -505,6 +518,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let worktreeRemoved = false
         let note: string | undefined
         if (opts.closeWorktree && existsSync(t.worktree)) {
+          clearEmptyReadOnlyGitConfigLock(t.repoDir)
           const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
           if (!statusRes.ok || statusRes.out.trim() !== "") {
             note = "worktree kept: uncommitted changes present"
