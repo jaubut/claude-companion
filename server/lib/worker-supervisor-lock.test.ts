@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,14 +16,19 @@ describe("clearStaleGitConfigLock", () => {
       git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
       const lock = join(repoDir, ".git", "config.lock")
       // What Claude Code's Linux sandbox does to the repo a worktree belongs to.
-      const sandbox = Bun.spawn(["bwrap", "--die-with-parent", "--bind", "/", "/", "--dev", "/dev", "--ro-bind", "/dev/null", lock, "sleep", "30"])
+      const sandbox = spawn("bwrap", ["--die-with-parent", "--bind", "/", "/", "--dev", "/dev", "--ro-bind", "/dev/null", lock, "sleep", "30"], { detached: true, stdio: "ignore" })
+      const exited = new Promise((resolve) => sandbox.once("exit", resolve))
       for (let i = 0; i < 100 && !existsSync(lock); i++) await Bun.sleep(20)
       await Bun.sleep(100)
       clearStaleGitConfigLock(repoDir)
       expect(existsSync(lock)).toBe(true) // a live sandbox keeps its mask
-      sandbox.kill("SIGKILL")
-      await sandbox.exited
-      expect(statSync(lock).size).toBe(0) // the stub a killed sandbox leaves on the host
+      // Kill the whole group, as the supervisor does, and wait until every member (bwrap's sleep child too) is gone:
+      // a member still alive still has the mount, and the sweep rightly keeps the stub.
+      process.kill(-sandbox.pid!, "SIGKILL")
+      await exited
+      for (let i = 0; i < 100; i++) { try { process.kill(-sandbox.pid!, 0) } catch { break } await Bun.sleep(20) }
+      const st = statSync(lock) // the stub a killed sandbox leaves on the host
+      expect({ size: st.size, mode: st.mode & 0o777 }).toEqual({ size: 0, mode: 0o444 })
       const stateFile = join(home, "state.json")
       writeFileSync(stateFile, JSON.stringify([{ taskId: "task-1", repo: "repo", repoDir, worktree: join(home, "wt-old"), sessionId: "s", status: "completed" }]))
       createWorkerSupervisor({
