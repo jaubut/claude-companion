@@ -92,7 +92,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-model-router.ts` | 244 | lib | 13 |  |
 | `ws.ts` | 244 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
-| `wiring/brain-pr-merge.ts` | 237 | lib | 4 |  |
+| `wiring/brain-pr-merge.ts` | 238 | lib | 4 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
@@ -171,6 +171,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
+| `wiring/worker-mcp.ts` | 123 | lib | 3 | state: lastTursoSync: Map |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
@@ -207,7 +208,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
-| `wiring/worker-mcp.ts` | 80 | lib | 2 |  |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/tmux-inject.ts` | 77 | lib | 5 |  |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
@@ -427,7 +427,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `QueryFn()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/canvas.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/note-media.ts`, `lib/pipeline.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-autofile.ts`, `lib/trip-dashboard.ts`, `routes/body.ts`, `routes/canvas.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/resolver.ts` |
 | `ExecFn()` | `lib/turso.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-pr.ts`, `routes/my-tasks.ts`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-park.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/resolver-dry-run.ts` |
 | `appendTurn()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts` |
-| `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts`, `wiring/triage.ts` |
+| `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
 | `Row()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/pipeline.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-dashboard.ts`, `lib/turso-test-db.test-util.ts`, `routes/goals.ts`, `wiring/auto-compact.ts`, `wiring/brain-task-cancel.ts` |
 | `tursoQuery()` | `lib/turso.ts` | `companion-server.ts`, `lib/receipt-qa-worker.ts`, `lib/turso-test-db.test-util.ts`, `routes/body.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/dispatch.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/trips.ts` |
 | `BRAIN_THREAD()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-handoff.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/worker-mcp.ts` |
@@ -816,6 +816,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `choicesFrom()` | `lib/model-control.ts` | `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set` |
 | `emitChannel()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `wiring/brain.ts` |
 | `listTasks()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread` |
+| `DISPATCH_ID()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/worker-mcp.ts` |
 | `getTaskActivity()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/resolver.ts` |
 | `fileTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |
 | `newDispatchId()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/orchestrator.ts` |

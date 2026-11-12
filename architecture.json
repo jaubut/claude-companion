@@ -7945,7 +7945,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 237,
+          "lines": 238,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9123,19 +9123,23 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 80,
+          "lines": 123,
           "kind": "lib",
           "exports": [
+            "syncWorkerTaskToTurso",
             "workerSupervisor",
             "workerMcp"
           ],
-          "state": [],
+          "state": [
+            "lastTursoSync: Map"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
             "lib/brain.ts",
+            "lib/dispatch-tasks.ts",
             "lib/live-repo.ts",
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
@@ -9145,6 +9149,7 @@
             "state.ts",
             "wiring/brain.ts",
             "wiring/builder-jobs.ts",
+            "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
           "listeners": [],
@@ -15919,7 +15924,8 @@
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "ModelChoice": {
@@ -16193,7 +16199,8 @@
         "DISPATCH_ID": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "getDispatchTask": {
@@ -18903,6 +18910,12 @@
           "module": "lib/worker-blocked.ts",
           "callers": [
             "wiring/worker-blocked.ts"
+          ]
+        },
+        "SupervisedTaskSnapshot": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
           ]
         },
         "createWorkerSupervisor": {

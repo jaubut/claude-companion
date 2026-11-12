@@ -394,7 +394,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
-              const prevSid = task.sessionId; const prevStarted = task.sessionStarted
+              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
@@ -406,7 +406,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 syncTaskSession(task)
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
-              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) { savePersistedTasks(); syncTaskSession(task) }
+              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
