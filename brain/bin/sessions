@@ -38,7 +38,11 @@ claude_pid() {
 }
 
 CALLER_TASK="${COMPANION_TASK_ID:-brain}"
-curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/sessions" \
+CURL_SANDBOX_ARGS=()
+if [ "${SANDBOX_RUNTIME:-}" = "1" ]; then
+  CURL_SANDBOX_ARGS=(--noproxy "" -H "X-Companion-Sandbox: 1")
+fi
+curl -sS --max-time 30 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/sessions" \
   -H "Content-Type: application/json" \
   -H "X-Companion-Task-Id: ${CALLER_TASK}" \
   -H "X-Companion-Pid: $(claude_pid)" \

@@ -219,16 +219,32 @@ test("leadCheckout: the lead's own clone or a REPO_MAP checkout counts, a bare n
 })
 
 describe("brain ↔ lead relay and sandbox exemptions", () => {
-  test("leadSettings exempts brain/bin/worker and brain/bin/sessions from bwrap so loopback 127.0.0.1:4245 is reachable", () => {
+  test("leadSettings exempts brain/bin/worker, brain/bin/sessions, and brain/bin/pr-update-branch from bwrap so loopback 127.0.0.1:4245 is reachable", () => {
     const s = leadSettings([], "/h/leads/tls-dashboard-v2")
     expect(s.permissions.allow).toEqual(expect.arrayContaining([
       "Bash(~/claude-companion/brain/bin/worker:*)",
       "Bash(~/claude-companion/brain/bin/sessions:*)",
+      "Bash(~/claude-companion/brain/bin/pr-update-branch:*)",
     ]))
     expect(s.sandbox.excludedCommands).toEqual(expect.arrayContaining([
       "~/claude-companion/brain/bin/worker *",
       "~/claude-companion/brain/bin/sessions *",
+      "~/claude-companion/brain/bin/pr-update-branch *",
     ]))
+  })
+
+  test("leadIsolated refreshes an existing valid lead clone in place when model or allowlist updates without killing the live lead", () => {
+    const h = mkdtempSync(join(tmpdir(), "lead-iso-upgrade-")), dir = leadDir("r", h), none = () => [] as string[]
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    const file = join(dir, ".claude/settings.local.json")
+    const prev = leadSettings([], dir)
+    prev.model = "claude-opus-4-7"
+    prev.permissions.allow = ["Bash(~/claude-companion/brain/bin/worker:*)"]
+    writeFileSync(file, JSON.stringify(prev, null, 2))
+    expect(leadIsolated("r", h, none)).toBe(true)
+    const refreshed = JSON.parse(readFileSync(file, "utf8"))
+    expect(refreshed.model).toBe("claude-sonnet-5-5")
+    expect(refreshed.permissions.allow).toContain("Bash(~/claude-companion/brain/bin/pr-update-branch:*)")
   })
 
   test("maybeRelaySendMessageToBrain relays actionable lead messages, drops routine ACKs, and hides internal events from chat bubbles", () => {

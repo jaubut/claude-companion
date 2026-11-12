@@ -163,14 +163,15 @@ async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 
-/** Verify a loopback lead-<repo> caller for `tell-brain`. */
+/** Verify a loopback lead-<repo> caller for `tell-brain` and `pr-update-branch`. */
 function leadCallerTaskId(req: Request, deps: BrainRouteDeps): string | null {
   const origin = clientOrigin(req, peerOf(req))
   if (origin.transport !== "loopback") return null
   const taskId = req.headers.get("x-companion-task-id")?.trim() ?? ""
   const pid = req.headers.get("x-companion-pid")?.trim() ?? ""
   if (!taskId.startsWith(LEAD_PREFIX) || !pid) return null
-  const found = deps.sessions().find((x) => x.pid === pid && x.taskId === taskId)
+  const sandboxed = req.headers.get("x-companion-sandbox") === "1"
+  const found = deps.sessions().find((x) => x.taskId === taskId && (x.pid === pid || sandboxed))
   return found ? taskId : null
 }
 
@@ -236,12 +237,16 @@ const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
 /** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and Turso. */
 async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch"): Promise<Response> {
-  const refused = proposeRefusal(req, deps)
+  const leadTask = op === "pr-update-branch" ? leadCallerTaskId(req, deps) : null
+  const refused = leadTask ? null : proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
   const repo = typeof body.repo === "string" && REPO.test(body.repo) ? body.repo : null
   if (!repo) return fail(400, "repo must be owner/name")
+  if (leadTask && !repo.toLowerCase().endsWith(`/${leadTask.slice(LEAD_PREFIX.length).toLowerCase()}`)) {
+    return fail(403, "forbidden")
+  }
   const pr = typeof body.pr === "number" && Number.isInteger(body.pr) && body.pr > 0 ? body.pr : null
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)

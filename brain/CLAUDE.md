@@ -104,7 +104,7 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 Every jaubut repo with a checkout on the brain host is managed by its repo lead (`lead-<repo>`). **`lead-<repo>` is the repo manager** — it owns that repo's builders, watches CI and Codex/Claude reviews, runs fix rounds, and enforces the 3-PR cap:
 1. File the task first, while the turn is open, with `bin/propose --handoff`.
-2. Ensure the repo lead is running with `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id via `bin/sessions send lead-<repo> "Read ~/claude-companion/brain/LEAD.md. <brief>"` (and answer Jeremie immediately in your own turn — leads do not send ACKs back to you).
+2. Ensure the repo lead is running with `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id via `bin/sessions send lead-<repo> "Read ~/claude-companion/brain/LEAD.md. <brief>"` (and answer Jeremie immediately in your own turn — leads do not send ACKs back to you, and `SendMessage`'s `"in that session's inbox, not yet read"` notice simply means queued for immediate delivery on the lead's turn; never report `"not yet read"` to Jeremie as a stall).
 3. Only dispatch `bin/worker dispatch` yourself when a repo has no lead or `lead-<repo>` asks you `builder <repo>: <task-id>`. A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
 4. If a routine status event arrives that requires no new decision or outcome for Jeremie, reply `noted` (`QUIET_REPLY`, kept out of the thread).
 

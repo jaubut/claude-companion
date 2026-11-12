@@ -42,7 +42,8 @@ function callerAuthorizedOnHook(req: Request, deps: WorkerMcpRouteDeps): boolean
     return !!s && !!brain && brain.key === s.key && brain.sessionId === s.sessionId && brain.taskId === BRAIN_AGENT
   }
   if (taskId.startsWith(LEAD_PREFIX)) {
-    const lead = sessions.find((x) => x.pid === pid && x.taskId === taskId)
+    const sandboxed = req.headers.get("x-companion-sandbox") === "1"
+    const lead = sessions.find((x) => x.taskId === taskId && (x.pid === pid || sandboxed))
     return !!lead
   }
   return false

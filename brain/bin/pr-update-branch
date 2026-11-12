@@ -32,7 +32,7 @@ claude_pid() {
     [ -z "$pid" ] || [ "$pid" -le 1 ] && break
     comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
     case "$comm" in
-      *claude*) echo "$pid"; return 0 ;;
+      *claude*|*codex*|*gemini*) echo "$pid"; return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
   done
@@ -43,9 +43,14 @@ BODY=$(REPO="$REPO" PR="$PR" REASON="$REASON" python3 -c '
 import json, os
 print(json.dumps({"repo": os.environ["REPO"], "pr": int(os.environ["PR"]), "reason": os.environ["REASON"]}))')
 
-curl -sS --max-time 90 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-update-branch" \
+CALLER_TASK="${COMPANION_TASK_ID:-brain}"
+CURL_SANDBOX_ARGS=()
+if [ "${SANDBOX_RUNTIME:-}" = "1" ]; then
+  CURL_SANDBOX_ARGS=(--noproxy "" -H "X-Companion-Sandbox: 1")
+fi
+curl -sS --max-time 90 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/pr-update-branch" \
   -H "Content-Type: application/json" \
-  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Task-Id: ${CALLER_TASK}" \
   -H "X-Companion-Pid: $(claude_pid)" \
   --data-binary "$BODY"
 echo

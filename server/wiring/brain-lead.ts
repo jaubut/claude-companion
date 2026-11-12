@@ -45,14 +45,18 @@ export function leadSettings(excluded: string[], dir: string): LeadSettings {
   const allow = [
     "Bash(~/claude-companion/brain/bin/worker:*)",
     "Bash(~/claude-companion/brain/bin/sessions:*)",
+    "Bash(~/claude-companion/brain/bin/pr-update-branch:*)",
     `Bash(${join(home, "claude-companion/brain/bin/worker")}:*)`,
     `Bash(${join(home, "claude-companion/brain/bin/sessions")}:*)`,
+    `Bash(${join(home, "claude-companion/brain/bin/pr-update-branch")}:*)`,
   ]
   const excludedBins = [
     "~/claude-companion/brain/bin/worker *",
     "~/claude-companion/brain/bin/sessions *",
+    "~/claude-companion/brain/bin/pr-update-branch *",
     `${join(home, "claude-companion/brain/bin/worker")} *`,
     `${join(home, "claude-companion/brain/bin/sessions")} *`,
+    `${join(home, "claude-companion/brain/bin/pr-update-branch")} *`,
   ]
   return {
     model: "claude-sonnet-5-5",
@@ -77,12 +81,36 @@ function excludedCommands(home: string): string[] {
   }
 }
 
-/** Running with exactly the settings the server wrote: a swapped file doesn't count. Thrown when the user settings can't be read: that proves nothing either way, so the caller stops nothing and starts nothing. */
+/**
+ * Running with settings the server wrote: a missing or tampered file doesn't count.
+ * When a previous server version wrote valid sandbox + deny settings and `leadSettings` evolved
+ * (e.g., model or allowlist updates), refresh `settings.local.json` in place so live leads keep their context.
+ * Thrown when the user settings can't be read: that proves nothing either way, so the caller stops nothing and starts nothing.
+ */
 export function leadIsolated(repo: string, home = homedir(), excluded: (home: string) => string[] = excludedCommands): boolean {
   const dir = leadDir(repo, home)
-  const want = JSON.stringify(leadSettings(excluded(home), dir), null, 2)
+  const expected = leadSettings(excluded(home), dir)
+  const want = JSON.stringify(expected, null, 2)
   try {
-    return readFileSync(settingsFile(dir), "utf8") === want
+    const raw = readFileSync(settingsFile(dir), "utf8")
+    if (raw === want) return true
+    const cur = JSON.parse(raw) as Partial<LeadSettings>
+    const sb = cur.sandbox
+    const deny = cur.permissions?.deny
+    const dw = sb?.filesystem?.denyWrite
+    if (
+      sb?.enabled !== true ||
+      sb.allowUnsandboxedCommands !== false ||
+      sb.failIfUnavailable !== true ||
+      !Array.isArray(dw) ||
+      !expected.sandbox.filesystem.denyWrite.every((p) => dw.includes(p)) ||
+      !Array.isArray(deny) ||
+      !expected.permissions.deny.every((d) => deny.includes(d))
+    ) {
+      return false
+    }
+    writeFileSync(settingsFile(dir), want)
+    return true
   } catch {
     return false
   }
