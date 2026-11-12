@@ -33,9 +33,15 @@ export function ensureFolderTrusted(cwd: string, mcpFrom?: string, cfgPath = `${
   let cfg: { projects?: Record<string, Record<string, unknown>> }
   try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) } catch { return }
   const projects = cfg.projects ?? (cfg.projects = {})
+  let root: string | undefined
+  try { root = readFileSync(`${cwd}/.git`, "utf8").match(/^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\s*$/m)?.[1] } catch { /* not a worktree */ }
   const entry = projects[cwd] ?? (projects[cwd] = {})
   let changed = false
   if (entry.hasTrustDialogAccepted !== true) { entry.hasTrustDialogAccepted = true; changed = true }
+  if (root) {
+    const rootEntry = projects[root] ?? (projects[root] = {})
+    if (rootEntry.hasTrustDialogAccepted !== true) { rootEntry.hasTrustDialogAccepted = true; changed = true }
+  }
   if (mcpFrom && applyMcpChoices(entry, projects, mcpFrom, cwd)) changed = true
   if (!changed) return
   try {

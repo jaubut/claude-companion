@@ -67,7 +67,7 @@ export type PaneNotReadyReason =
   | "panel_open"         // key hints under the box: a panel has focus
   | "agent_blocked"      // herdr refused the prompt: an approval/question is up
 
-const DIVIDER_RE = /^[\s▔─━═]{8,}$/
+const DIVIDER_RE = /^[\s▔─━═]{8,}$|^\s*[▔─━═]{8,}.*[▔─━═]\s*$/
 const REVIEW_PENDING_RE = /Ready to submit your answers\?/
 // The "?" overlay. Two of these, below the box, and it is the overlay — the
 // idle footer's own "? for shortcuts" hint matches none of them.

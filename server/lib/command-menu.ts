@@ -37,7 +37,7 @@ export type SuggestRefusalCode =
 
 export interface SuggestRefusal { error: SuggestRefusalCode }
 
-const DIVIDER_RE = /^[\s▔─━═]{8,}$/
+const DIVIDER_RE = /^[\s▔─━═]{8,}$|^\s*[▔─━═]{8,}.*[▔─━═]\s*$/
 // Claude Code separates the prompt marker from the text with a non-breaking
 // space, so a plain \s class is not enough.
 const PROMPT_RE = /^❯[\s ]*(.*)$/
