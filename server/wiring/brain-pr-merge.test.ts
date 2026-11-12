@@ -360,6 +360,11 @@ describe("bin/pr-merge gate: the merge", () => {
       { role: "user", text: "yes", createdAt: now - 5_000 },
     ], now)).toBe(true)
 
+    expect(hasRecentUserMergeApproval(8, [
+      { role: "orchestrator", text: "All 157 stores are on the map now (PR #8): https://github.com/jaubut/le-brouemont-maquette/pull/8", createdAt: now - 30_000 },
+      { role: "user", text: "Merge it", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
     expect(hasRecentUserMergeApproval(413, [
       { role: "user", text: "Do not merge 413 yet", createdAt: now - 5_000 },
     ], now)).toBe(false)
@@ -372,6 +377,15 @@ describe("bin/pr-merge gate: the merge", () => {
     const okOut = await mergeAgentPr(input, { ...reviewParked.deps, humanApproved: () => true })
     expect(okOut.status).toBe(200)
     expect(merges(reviewParked.calls)).toHaveLength(1)
+
+    // With humanApproved: true, a green PR parked with "— needs your review" (size/dependency/external-url) merges cleanly
+    const needsReviewParked = world(
+      green(),
+      park("pr:needs-human", "tainted (unknown) PR: 10700 changed lines > 150; dependency manifest/lockfile: bun.lock, package.json — needs your review"),
+    )
+    const okNeedsReview = await mergeAgentPr(input, { ...needsReviewParked.deps, humanApproved: () => true })
+    expect(okNeedsReview.status).toBe(200)
+    expect(merges(needsReviewParked.calls)).toHaveLength(1)
 
     // Even with humanApproved: true, pr:hold and tainted/human-merge parks remain blocked
     const holdParked = world(green(), park("pr:hold", "infra hold"))

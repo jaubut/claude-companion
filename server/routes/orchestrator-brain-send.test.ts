@@ -76,6 +76,13 @@ test("a replayed Idempotency-Key returns the cached answer and enqueues once", a
   expect(outbox()).toHaveLength(1)
 })
 
+test("rapid duplicate user sends (<1.5s, no Idempotency-Key) deduplicate to one turn and one outbox item", async () => {
+  const a = await send({ text: "Run it yourself", channel: "brain" })
+  const b = await send({ text: "Run it yourself", channel: "brain" })
+  expect(b.json.turn.id).toBe(a.json.turn.id)
+  expect(outbox()).toHaveLength(1)
+})
+
 test("other channels keep the front door, and get no card even with voice", async () => {
   const r = await send({ text: "hello general", channel: "general", voice: { durationMs: 10 } })
   expect(r.status).toBe(200)

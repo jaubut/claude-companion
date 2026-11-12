@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type ProcReader, clearStaleGitConfigLock, linuxProc } from "./git-config-lock"
@@ -60,47 +60,55 @@ describe("clearStaleGitConfigLock", () => {
   }
   const quiet = () => {}
   const statLine = (comm: string, state = "S") => `42 (${comm}) ${state} 1 42 42 0 -1`
-  const idle: ProcReader = { pids: () => ["42"], stat: () => statLine("bash"), mountinfo: () => "", fds: () => [], fdTarget: () => "" }
+  const idle: ProcReader = { pids: () => ["42"], stat: () => statLine("bash"), mountinfo: () => "" }
+  const quarantine = (repoDir: string) => join(repoDir, ".git", "companion-config-lock.stale")
 
-  test("a stub nobody holds is removed through the injected reader", () => {
+  test.skipIf(process.platform !== "linux")("a stub nobody holds is removed through the injected reader", () => {
     withStub((repoDir, lock) => {
-      clearStaleGitConfigLock(repoDir, idle, quiet)
+      expect(clearStaleGitConfigLock(repoDir, idle, quiet)).toBeNull()
       expect(existsSync(lock)).toBe(false)
+      expect(existsSync(quarantine(repoDir))).toBe(false)
     })
   })
 
-  test("a lock swapped in during the scan (new inode) is never removed", () => {
+  test.skipIf(process.platform !== "linux")("a lock swapped in during the scan (new inode) is never removed", () => {
     withStub((repoDir, lock) => {
       const swap: ProcReader = {
         ...idle,
         pids: () => { writeFileSync(`${lock}.new`, "[core]\n"); renameSync(`${lock}.new`, lock); return idle.pids() },
       }
-      clearStaleGitConfigLock(repoDir, swap, quiet)
+      expect(clearStaleGitConfigLock(repoDir, swap, quiet)).toContain("replaced during the sweep")
       expect(readFileSync(lock, "utf8")).toBe("[core]\n")
     })
   })
 
-  test("an unreadable mountinfo of a live process keeps the stub; an exited process or a non-git process's fds do not", () => {
+  test.skipIf(process.platform !== "linux")("the sandbox unlinking the stub and git O_EXCL-creating config.lock after validation never loses git's lock", () => {
+    withStub((repoDir, lock) => {
+      let gitFd = -1
+      const race: ProcReader = {
+        ...idle,
+        // After the stub is validated and leased, before removal: a non-sweep remover, then git takes the lock.
+        pids: () => { unlinkSync(lock); gitFd = openSync(lock, "wx"); writeFileSync(gitFd, "[core]\n"); return idle.pids() },
+      }
+      try {
+        expect(clearStaleGitConfigLock(repoDir, race, quiet)).toContain("replaced during the sweep")
+        expect(readFileSync(lock, "utf8")).toBe("[core]\n")
+        expect(fstatSync(gitFd).ino).toBe(statSync(lock).ino) // git's own inode, still under its name
+        expect(existsSync(quarantine(repoDir))).toBe(false)
+      } finally {
+        if (gitFd >= 0) closeSync(gitFd)
+      }
+    })
+  })
+
+  test.skipIf(process.platform !== "linux")("an unreadable mountinfo of a live process keeps the stub; an exited process does not", () => {
     withStub((repoDir, lock) => {
       clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => { throw errno("EACCES") } }, quiet)
       expect(existsSync(lock)).toBe(true)
     })
     withStub((repoDir, lock) => {
-      clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => { throw errno("ENOENT") }, fds: () => { throw errno("ESRCH") } }, quiet)
+      clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => { throw errno("ENOENT") } }, quiet)
       expect(existsSync(lock)).toBe(false)
-    })
-    withStub((repoDir, lock) => {
-      // Non-git fd tables aren't read: they are unreadable everywhere (root daemons, other users, the user's own `(sd-pam)` on CI).
-      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => { throw errno("EACCES") } }, quiet)
-      expect(existsSync(lock)).toBe(false)
-    })
-    withStub((repoDir, lock) => {
-      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => ["3"], fdTarget: () => { throw errno("EACCES") } }, quiet)
-      expect(existsSync(lock)).toBe(false)
-    })
-    withStub((repoDir, lock) => {
-      clearStaleGitConfigLock(repoDir, { ...idle, stat: () => statLine("git"), fds: () => ["3"], fdTarget: () => lock }, quiet)
-      expect(existsSync(lock)).toBe(true) // open in a git process: held
     })
   })
 
@@ -144,18 +152,38 @@ describe("clearStaleGitConfigLock", () => {
     })
   })
 
-  test("a git process whose fds can't be read keeps the stub; any other process's unreadable fds don't", () => {
-    for (const code of ["EACCES", "EPERM"]) {
-      withStub((repoDir, lock) => {
-        expect(clearStaleGitConfigLock(repoDir, { ...idle, stat: () => statLine("git"), fds: () => { throw errno(code) } }, quiet)).toContain("git pid 42")
-        expect(existsSync(lock)).toBe(true)
-        expect(clearStaleGitConfigLock(repoDir, { ...idle, stat: () => statLine("git"), fds: () => ["3"], fdTarget: () => { throw errno(code) } }, quiet)).toContain("git pid 42")
-        expect(existsSync(lock)).toBe(true)
-      })
-    }
+  test.skipIf(process.platform !== "linux")("an fd open on the stub in any process keeps it, read-only or writable, whatever the process is named", () => {
     withStub((repoDir, lock) => {
-      expect(clearStaleGitConfigLock(repoDir, { ...idle, stat: () => statLine("(sd-pam)"), fds: () => { throw errno("EACCES") } }, quiet)).toBeNull()
-      expect(existsSync(lock)).toBe(false)
+      const ro = openSync(lock, "r") // held by this (bun) process, not a `git`
+      try {
+        expect(clearStaleGitConfigLock(repoDir, idle, quiet)).toContain("open elsewhere")
+        expect(existsSync(lock)).toBe(true)
+      } finally {
+        closeSync(ro)
+      }
+    })
+    withStub((repoDir, lock) => {
+      // A writable fd opened before the chmod to 0444: read-only permissions don't revoke it.
+      chmodSync(lock, 0o644)
+      const rw = openSync(lock, "r+")
+      chmodSync(lock, 0o444)
+      try {
+        expect(clearStaleGitConfigLock(repoDir, idle, quiet)).toContain("open elsewhere")
+        expect(existsSync(lock)).toBe(true)
+      } finally {
+        closeSync(rw)
+      }
+    })
+    withStub((repoDir, lock) => {
+      // A process other than the sweeper holding it.
+      const holder = Bun.spawn(["sh", "-c", `exec 3<"$0"; read -r _`, lock], { stdin: "pipe", stdout: "ignore" })
+      try {
+        for (let i = 0; i < 100 && !readdirSync(`/proc/${holder.pid}/fd`).includes("3"); i++) Bun.sleepSync(10)
+        expect(clearStaleGitConfigLock(repoDir, idle, quiet)).toContain("open elsewhere")
+        expect(existsSync(lock)).toBe(true)
+      } finally {
+        holder.kill()
+      }
     })
   })
 

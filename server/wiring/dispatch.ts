@@ -8,7 +8,7 @@ import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import { pushToAll } from "../lib/push"
 import { tursoExec, tursoQuery } from "../lib/turso"
 import { broadcast } from "../state"
-import { BRAIN_THREAD, brainEnabled } from "../lib/brain"
+import { BRAIN_THREAD, brainEnabled, isBrainInternalEvent } from "../lib/brain"
 import { traceForDispatch } from "../lib/brain-trace"
 
 // The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
@@ -34,7 +34,10 @@ export function onDispatchPolled(fn: () => void): () => void {
 export const dispatchWiring: DispatchWiring = createDispatchWiring({
   query: tursoQuery,
   exec: tursoExec,
-  broadcast,
+  broadcast: (frame) => {
+    if (frame.type === "orchestrator" && frame.turn && isBrainInternalEvent(frame.turn as Parameters<typeof isBrainInternalEvent>[0])) return
+    broadcast(frame)
+  },
   appendTurn: (text, taskId, channelId, card) => appendTurn("orchestrator", text, taskId, channelId, card),
   brainThread: () => (brainEnabled() ? BRAIN_THREAD : null),
   traceTask: (t) => {

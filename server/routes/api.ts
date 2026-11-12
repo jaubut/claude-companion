@@ -1,7 +1,7 @@
 import { hostname } from "node:os"
 import { basename } from "node:path"
 import { getPending, resolveApproval } from "../lib/pty-manager"
-import { deliverHeadlessAgyTurn } from "../lib/agy-feed"
+import { deliverHeadlessAgyTurn, ensureHeadlessAgySession } from "../lib/agy-feed"
 import { headlessBrainRunner } from "../wiring/brain"
 import { workerSupervisor } from "../wiring/worker-mcp"
 import { companionLog } from "../lib/log"
@@ -306,6 +306,9 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
   if (url.pathname === "/api/sessions/history" && req.method === "GET") {
     const session = getSessionByKey(url.searchParams.get("key") ?? "")
     if (!session) return Response.json({ ok: false, error: "unknown_session" }, { status: 404 })
+    if (session.taskId === "brain" || session.herdrPane === "headless:brain") {
+      return Response.json({ ok: true, key: session.key, events: [] })
+    }
     return Response.json({ ok: true, key: session.key, events: await historyFor(session) })
   }
 
@@ -433,7 +436,7 @@ async function handleInject(req: Request): Promise<Response> {
  */
 export async function deliverInject(text: string, key?: string, cwd?: string, boundSid?: string, canDeliver?: () => boolean): Promise<Response> {
   const lookup = key || cwd || ""
-  let target = lookup ? resolveSession(lookup) : null
+  let target = lookup ? (resolveSession(lookup) ?? ensureHeadlessAgySession(lookup, cwd)) : null
   const explicit = target
   if (!lookup) {
     const recent = listSessions().find(s => !!s.tty || s.herdrPane?.startsWith("headless:"))

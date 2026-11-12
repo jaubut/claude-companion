@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { recordPeer } from "../lib/vault-guard"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
+import { syncWorkerTaskToTurso } from "../wiring/worker-mcp"
 import { createWorkerMcpRoute } from "./worker-mcp"
 
 describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
@@ -209,5 +210,25 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  test("syncWorkerTaskToTurso links dispatch_pr_url and dispatch_status on Turso tasks", async () => {
+    const calls: Array<{ sql: string; args: unknown[] }> = []
+    const exec = async (sql: string, args: unknown[] = []) => {
+      calls.push({ sql, args })
+      return { rows: [], affected: 1 }
+    }
+    const taskId = "89b0c0ac1e6f866189c3dbd821fb8f85"
+    await syncWorkerTaskToTurso({ taskId, status: "running", prUrl: null, error: null }, exec)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.sql).toContain("dispatch_status = 'running'")
+
+    await syncWorkerTaskToTurso({ taskId, status: "running", prUrl: "https://github.com/jaubut/le-brouemont-maquette/pull/8", error: null }, exec)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.args).toContain("https://github.com/jaubut/le-brouemont-maquette/pull/8")
+
+    await syncWorkerTaskToTurso({ taskId, status: "completed", prUrl: "https://github.com/jaubut/le-brouemont-maquette/pull/8", error: null }, exec)
+    expect(calls).toHaveLength(3)
+    expect(calls[2]!.sql).toContain("dispatch_status = 'completed'")
   })
 })

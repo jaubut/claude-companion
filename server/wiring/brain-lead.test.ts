@@ -209,9 +209,11 @@ describe("the last round's three checks", () => {
   })
 })
 
-test("leadCheckout: the lead's own clone or a REPO_MAP checkout counts, a bare name alone does not", () => {
+test("leadCheckout: the lead's own clone, a worker-resolvable checkout or a REPO_MAP checkout counts, a bare name alone does not", () => {
   const h = mkdtempSync(join(tmpdir(), "lead-home-")), repo = "tls-dashboard-v2"
   expect(leadCheckout(repo, h, [])).toBe(false)
+  mkdirSync(join(h, ".cache", "dispatch-repos", "cached-site", ".git"), { recursive: true })
+  expect(leadCheckout("cached-site", h, [])).toBe(true)
   const mapped = join(h, "elsewhere"); mkdirSync(mapped)
   expect(leadCheckout(repo, h, [{ match: /x/, path: mapped, github: `jaubut/${repo}` }])).toBe(true)
   mkdirSync(leadDir(repo, h), { recursive: true })

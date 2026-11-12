@@ -11,6 +11,7 @@ import {
   buildHeadlessWorkerInvocation,
   buildWorkerEnv,
   createWorkerSupervisor,
+  defaultResolveRepoDir,
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
@@ -574,6 +575,34 @@ describe("createWorkerSupervisor", () => {
       spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", result: "Done https://github.com/jaubut/claude-companion/pull/999" }))
       spawned[0]!.onExit(0, null)
       expect(terminalEvents).toEqual([{ taskId: "wake-1", status: "completed", prUrl: "https://github.com/jaubut/claude-companion/pull/999" }])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("a repo with no checkout resolves to the dispatch-repos cache, else is cloned into ~/apps on demand", async () => {
+    const home = join(tmpdir(), `worker-sup-clone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const cache = join(home, ".cache", "dispatch-repos", "cached-site")
+    mkdirSync(join(cache, ".git"), { recursive: true })
+    const clones: string[][] = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, killGraceMs: 50, now: () => 1700000000000, uuid: () => "11111111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args[0] === "clone") { clones.push(args); mkdirSync(join(args[args.length - 1]!, ".git"), { recursive: true }) }
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: () => ({ pid: 4243, kill() {} }),
+    })
+    try {
+      expect(defaultResolveRepoDir("cached-site", home)).toBe(cache)
+      expect(defaultResolveRepoDir("no-checkout", home)).toBeNull()
+
+      const d = await sup.dispatchTask({ taskId: "task-clone", repo: "no-checkout", prompt: "Do work" })
+      expect(d.ok).toBe(true)
+      expect(clones).toEqual([["clone", "-q", "https://github.com/jaubut/no-checkout.git", join(home, "apps", "no-checkout")]])
+      expect(defaultResolveRepoDir("no-checkout", home)).toBe(join(home, "apps", "no-checkout"))
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

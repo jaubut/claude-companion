@@ -85,11 +85,12 @@ export function hasRecentUserMergeApproval(
     const text = t.text.trim()
     if (!text || NEGATION_RE.test(text)) continue
     if (MERGE_VERB_RE.test(text) && prBoundaryRe.test(text)) return true
-    if (SHORT_CONFIRM_RE.test(text)) {
-      // Check if the preceding orchestrator turn explicitly asked about merging #<pr>
-      for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+    if (MERGE_VERB_RE.test(text) || SHORT_CONFIRM_RE.test(text)) {
+      const userNamedMerge = MERGE_VERB_RE.test(text)
+      // Check if a recent preceding orchestrator turn referenced #<pr> (and asked about merging when user only said "yes"/"ok")
+      for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
         const prev = turns[j]!
-        if (prev.role === "orchestrator" && MERGE_VERB_RE.test(prev.text) && prBoundaryRe.test(prev.text)) {
+        if (prev.role === "orchestrator" && prBoundaryRe.test(prev.text) && (userNamedMerge || MERGE_VERB_RE.test(prev.text))) {
           return true
         }
       }

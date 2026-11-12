@@ -26,7 +26,7 @@ export async function parked(exec: ExecFn, v: { url: string; labels: Array<{ nam
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
     if (meta.url !== undefined && meta.url !== v.url) continue
     const why = typeof meta.reason === "string" ? meta.reason : ""
-    const liftedByHuman = humanApproved && row.action === "pr:needs-human" && why.length > 0 && !hardStopPark(why)
+    const liftedByHuman = humanApproved && row.action === "pr:needs-human" && why.length > 0 && !/human merge/i.test(why)
     if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !retiredPark(why) && !liftedByHuman)) {
       reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
     }
