@@ -11,6 +11,11 @@ const unreadableOwnProcess = process.platform === "linux" && readdirSync("/proc"
   if (!/^\d+$/.test(p)) return false
   try { readdirSync(`/proc/${p}/fd`); return false } catch { try { return statSync(`/proc/${p}`).uid === process.getuid!() } catch { return false } }
 })
+if (unreadableOwnProcess) for (const p of readdirSync("/proc").filter((x) => /^\d+$/.test(x))) {
+  try { readdirSync(`/proc/${p}/fd`) } catch (e) {
+    try { console.log("DIAG", p, (e as NodeJS.ErrnoException).code, statSync(`/proc/${p}`).uid, readFileSync(`/proc/${p}/status`, "utf8").split("\n").filter((l) => /^(Name|Uid|NSpid|PPid)/.test(l)).join(" | ")) } catch { /* gone */ }
+  }
+}
 
 describe("clearStaleGitConfigLock", () => {
   test.skipIf(process.platform !== "linux" || !Bun.which("bwrap") || unreadableOwnProcess)("a sandbox killed mid-run leaves no config.lock stub after supervisor start, and the next worktree add -b succeeds", async () => {
