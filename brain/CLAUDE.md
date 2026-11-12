@@ -62,7 +62,7 @@ dispatch-run starts no new work on a repo with 3+ open agent PRs. You may close 
 Don't ask Jeremie to merge routine agent PRs: merge them with
 `bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"`. It is the only merge path; never `gh pr merge`. The server re-checks everything and refuses on any doubt. Refusals:
 - 403 `not_agent_branch`: the head is not `dispatch/*`.
-- 403 `parked`: a do-not-merge/wip label, or a shepherd park that means the work is broken (conflict unresolved, fix budget spent, infra hold). Money, MFA, auth, schema and the task origin no longer block a merge.
+- 403 `parked`: a do-not-merge/wip label, or a shepherd park (`pr:hold`, or `pr:needs-human` without Jeremie's explicit approval in this thread). Money, MFA, auth, schema and the task origin no longer block a merge. When a green PR is parked with `pr:needs-human` after 2 review rounds (reviewer disagreement), summarize the objection for Jeremie and ask if he wants to merge it; once Jeremie replies `"Merge <n>"` in the Brain thread, the server's `bin/pr-merge` gate verifies his user message in `orchestrator_turns` and lifts the review park + `not_approved` check automatically. Never recommend merging a PR before checking that its CI is green (`MERGEABLE` + `CLEAN`).
 - 409 `not_green`: CI is not green or not CLEAN.
 - 409 `not_approved`: the current head lacks what its review tier needs (high or unmarked: Claude and Codex APPROVE; normal: Claude; while `~/.claude/state/claude-review-paused` exists, Codex instead, or both if the PR is client-origin; low: none on docs, tests and generated maps), or has a CHANGES.
 - 429 `merge_cap`.

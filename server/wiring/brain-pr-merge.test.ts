@@ -12,7 +12,7 @@ import type { ExecFn, Row } from "../lib/turso"
 // gh faked at the process boundary, Turso a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
-const { mergeAgentPr, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
+const { mergeAgentPr, hasRecentUserMergeApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
 
 // Default to unpaused reviews, independent of the host's flag.
 const flagDir = mkdtempSync(join(tmpdir(), "cc-prmerge-unpaused-"))
@@ -346,5 +346,38 @@ describe("bin/pr-merge gate: the merge", () => {
     expect([out.status, out.body.error]).toEqual([502, "merge_unverified"])
     expect(w.db.query("SELECT COUNT(*) AS n FROM agent_activity").get()).toEqual({ n: 0 })
     expect(w.events).toHaveLength(0)
+  })
+
+  test("humanApproved (Jeremie said 'Merge 413' in Brain thread) lifts review-round pr:needs-human park and CHANGES, but never lifts pr:hold or tainted/human-merge hard stops", async () => {
+    const now = 1_700_000_000_000
+    expect(hasRecentUserMergeApproval(413, [
+      { role: "orchestrator", text: "Merge #413, or would you rather investigate the runner first?", createdAt: now - 30_000 },
+      { role: "user", text: "Merge 413", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
+    expect(hasRecentUserMergeApproval(413, [
+      { role: "orchestrator", text: "Merge #413, or investigate first?", createdAt: now - 30_000 },
+      { role: "user", text: "yes", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
+    expect(hasRecentUserMergeApproval(413, [
+      { role: "user", text: "Do not merge 413 yet", createdAt: now - 5_000 },
+    ], now)).toBe(false)
+
+    // With humanApproved: true, a green PR parked after 2 review rounds with Codex CHANGES merges cleanly
+    const reviewParked = world(
+      green({ comments: [review("claude", "APPROVE"), review("codex", "CHANGES")] }),
+      park("pr:needs-human", "review verdict CHANGES after 2 fix runs — see the reviewer summary"),
+    )
+    const okOut = await mergeAgentPr(input, { ...reviewParked.deps, humanApproved: () => true })
+    expect(okOut.status).toBe(200)
+    expect(merges(reviewParked.calls)).toHaveLength(1)
+
+    // Even with humanApproved: true, pr:hold and tainted/human-merge parks remain blocked
+    const holdParked = world(green(), park("pr:hold", "infra hold"))
+    expect((await mergeAgentPr(input, { ...holdParked.deps, humanApproved: () => true })).status).toBe(403)
+
+    const taintedParked = world(green(), park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only"))
+    expect((await mergeAgentPr(input, { ...taintedParked.deps, humanApproved: () => true })).status).toBe(403)
   })
 })

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { BRAIN_AGENT, BRAIN_THREAD } from "../lib/brain"
 import { companionLog } from "../lib/log"
 import { type MergeGateFn, mergeGate } from "../lib/merge-gate"
-import { appendTurn } from "../lib/orchestrator-chat"
+import { type Turn, appendTurn, getThread } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
 import { type GhFn, prReadiness, prState, realGh } from "../lib/triage-pr"
 import { type ExecFn, TursoUnreachable } from "../lib/turso"
@@ -52,8 +52,51 @@ const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
 interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal }
-interface PrMergeDeps { gh: GhFn; exec: ExecFn; event(text: string): void; gate: MergeGateFn; pausedFlag?: string }
+interface PrMergeDeps {
+  gh: GhFn
+  exec: ExecFn
+  event(text: string): void
+  gate: MergeGateFn
+  pausedFlag?: string
+  humanApproved?(pr: number, repo: string): boolean
+}
 const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
+const HUMAN_APPROVAL_WINDOW_MS = 30 * 60_000
+const NEGATION_RE = /\b(don't|dont|do not|never|no|wait|hold|stop|cancel|refuse|pas)\b/i
+const MERGE_VERB_RE = /\b(merge|ship|land|fusionne|fusionner)\b/i
+const SHORT_CONFIRM_RE = /^(?:yes|yep|yeah|ok|okay|go|go ahead|do it|merge it|merge as is|oui|vas-y)[.!?\s]*$/i
+
+/**
+ * Verify from unforgeable `role === "user"` rows in `orchestrator_turns` that Jeremie explicitly
+ * authorized merging PR `#<pr>` in the Brain thread within the last 30 minutes.
+ */
+export function hasRecentUserMergeApproval(
+  pr: number,
+  turns: Array<Pick<Turn, "role" | "text" | "createdAt">> = getThread(BRAIN_THREAD),
+  now = Date.now(),
+): boolean {
+  if (!Number.isInteger(pr) || pr <= 0) return false
+  const prBoundaryRe = new RegExp(`(?:^|[\\s#/])${pr}(?:$|[^0-9])`)
+  const cutoff = now - HUMAN_APPROVAL_WINDOW_MS
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i]!
+    if (t.createdAt < cutoff) break
+    if (t.role !== "user") continue
+    const text = t.text.trim()
+    if (!text || NEGATION_RE.test(text)) continue
+    if (MERGE_VERB_RE.test(text) && prBoundaryRe.test(text)) return true
+    if (SHORT_CONFIRM_RE.test(text)) {
+      // Check if the preceding orchestrator turn explicitly asked about merging #<pr>
+      for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+        const prev = turns[j]!
+        if (prev.role === "orchestrator" && MERGE_VERB_RE.test(prev.text) && prBoundaryRe.test(prev.text)) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
 type Out = { status: number; body: Record<string, unknown> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
@@ -136,10 +179,11 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  const humanApproved = deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
   let recent: number
   try {
-    park = await parked(deps.exec, v)
+    park = await parked(deps.exec, v, humanApproved)
     const c = await deps.exec("SELECT COUNT(*) AS n FROM agent_activity WHERE action = ? AND ts >= datetime('now', '-1 day')", [PR_MERGE_ACTION])
     recent = Number(c.rows[0]?.n ?? NaN)
   } catch (err) {
@@ -149,8 +193,10 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
-  const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
-  if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
+  if (!humanApproved) {
+    const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
+    if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
+  }
   if (!(recent < MERGE_CAP)) return fail(429, "merge_cap", { cap: MERGE_CAP })
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
   const last = await prReadiness(deps.gh, v.url).catch(() => null)
@@ -186,4 +232,5 @@ const realDeps: PrMergeDeps = {
   exec: (sql, args) => dispatchWiring.exec(sql, args),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   gate: mergeGate,
+  humanApproved: (pr) => hasRecentUserMergeApproval(pr),
 }
