@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { chmodSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type ProcReader, clearStaleGitConfigLock, linuxProc } from "./git-config-lock"
@@ -180,6 +180,24 @@ describe("clearStaleGitConfigLock", () => {
       try {
         for (let i = 0; i < 100 && !readdirSync(`/proc/${holder.pid}/fd`).includes("3"); i++) Bun.sleepSync(10)
         expect(clearStaleGitConfigLock(repoDir, idle, quiet)).toContain("open elsewhere")
+        expect(existsSync(lock)).toBe(true)
+      } finally {
+        holder.kill()
+      }
+    })
+  })
+
+  test.skipIf(process.platform !== "linux")("a non-git writer (git-config, a library) holding the stub open in another process keeps it", () => {
+    withStub((repoDir, lock) => {
+      // `comm` comes from the exec'd file name: a symlink makes the holder show up as `git-config`, not `git`.
+      const bin = join(repoDir, "git-config")
+      symlinkSync(Bun.which("sh")!, bin)
+      const holder = Bun.spawn([bin, "-c", `exec 3<"$0"; read -r _`, lock], { stdin: "pipe", stdout: "ignore" })
+      try {
+        for (let i = 0; i < 100 && !readdirSync(`/proc/${holder.pid}/fd`).includes("3"); i++) Bun.sleepSync(10)
+        expect(readFileSync(`/proc/${holder.pid}/comm`, "utf8").trim()).toBe("git-config")
+        const why = clearStaleGitConfigLock(repoDir, linuxProc, quiet)
+        expect(why).not.toBeNull()
         expect(existsSync(lock)).toBe(true)
       } finally {
         holder.kill()

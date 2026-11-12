@@ -65,8 +65,11 @@ export function clearStaleGitConfigLock(repoDir: string, proc: ProcReader = linu
     renameSync(lock, quarantine)
     const moved = lstatSync(quarantine)
     if (moved.dev === st.dev && moved.ino === st.ino) { unlinkSync(quarantine); return null }
-    // ponytail: the stub was replaced (sandbox unlink + git O_EXCL create) after the open; git's live lock goes back
-    // under its name, nameless for microseconds. A third writer taking config.lock in that gap leaves it here, logged.
+    // ponytail: accepted residual. The lease stops opens, not unlinks: a non-cooperating remover (a human, a tool that
+    // ignores the guard) can unlink the stub after validation and git can O_EXCL-create config.lock before our rename.
+    // Then git's live lock is moved here and linked back, nameless for microseconds; a third writer taking config.lock
+    // in that gap leaves it at the quarantine name, logged. Sweeps themselves never race: one at a time under the flock,
+    // and only a 0-byte 0444 stub with the leased inode is ever unlinked.
     try { linkSync(quarantine, lock) } catch (err) { return keep(`replaced during the sweep; restore failed (${code(err)}), moved file left at ${quarantine}`) }
     unlinkSync(quarantine)
     return keep("replaced during the sweep")

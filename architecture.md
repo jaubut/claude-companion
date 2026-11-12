@@ -205,10 +205,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
 | `lib/request-gate.ts` | 86 | lib | 5 | state: NAMES: Set, let tailscaleName |
+| `lib/git-config-lock.ts` | 83 | lib | 3 | state: let libc |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
-| `lib/git-config-lock.ts` | 80 | lib | 3 | state: let libc |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/tmux-inject.ts` | 77 | lib | 5 |  |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
