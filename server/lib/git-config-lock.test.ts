@@ -1,24 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { chmodSync, existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type ProcReader, clearStaleGitConfigLock } from "./git-config-lock"
 import { createWorkerSupervisor } from "./worker-supervisor"
 
-// Inside a Claude Code sandbox, its own pid 1 runs as us with an unreadable fd table: the sweep rightly counts it as a holder.
-const unreadableOwnProcess = process.platform === "linux" && readdirSync("/proc").some((p) => {
-  if (!/^\d+$/.test(p)) return false
-  try { readdirSync(`/proc/${p}/fd`); return false } catch { try { return statSync(`/proc/${p}`).uid === process.getuid!() } catch { return false } }
-})
-if (unreadableOwnProcess) for (const p of readdirSync("/proc").filter((x) => /^\d+$/.test(x))) {
-  try { readdirSync(`/proc/${p}/fd`) } catch (e) {
-    try { console.log("DIAG", p, (e as NodeJS.ErrnoException).code, statSync(`/proc/${p}`).uid, readFileSync(`/proc/${p}/status`, "utf8").split("\n").filter((l) => /^(Name|Uid|NSpid|PPid)/.test(l)).join(" | ")) } catch { /* gone */ }
-  }
-}
-
 describe("clearStaleGitConfigLock", () => {
-  test.skipIf(process.platform !== "linux" || !Bun.which("bwrap") || unreadableOwnProcess)("a sandbox killed mid-run leaves no config.lock stub after supervisor start, and the next worktree add -b succeeds", async () => {
+  test.skipIf(process.platform !== "linux" || !Bun.which("bwrap"))("a sandbox killed mid-run leaves no config.lock stub after supervisor start, and the next worktree add -b succeeds", async () => {
     const home = mkdtempSync(join(tmpdir(), "worker-lock-"))
     const repoDir = join(home, "repo")
     const git = (...args: string[]) => Bun.spawnSync(["git", "-C", repoDir, ...args], { stderr: "pipe" })
@@ -69,7 +58,7 @@ describe("clearStaleGitConfigLock", () => {
       rmSync(repoDir, { recursive: true, force: true })
     }
   }
-  const idle: ProcReader = { pids: () => ["42"], mountinfo: () => "", fds: () => [], fdTarget: () => "", uid: () => process.getuid!() }
+  const idle: ProcReader = { pids: () => ["42"], mountinfo: () => "", fds: () => [], fdTarget: () => "" }
 
   test("a stub nobody holds is removed through the injected reader", () => {
     withStub((repoDir, lock) => {
@@ -89,11 +78,9 @@ describe("clearStaleGitConfigLock", () => {
     })
   })
 
-  test("an unreadable /proc entry of a live process keeps the stub; an exited one does not", () => {
+  test("an unreadable mountinfo or fd link of a live process keeps the stub; an exited process or unreadable fd table does not", () => {
     withStub((repoDir, lock) => {
       clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => { throw errno("EACCES") } })
-      expect(existsSync(lock)).toBe(true)
-      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => { throw errno("EPERM") } }) // same uid as the lock's owner
       expect(existsSync(lock)).toBe(true)
       clearStaleGitConfigLock(repoDir, { ...idle, fdTarget: () => { throw errno("EACCES") }, fds: () => ["3"] })
       expect(existsSync(lock)).toBe(true)
@@ -103,8 +90,8 @@ describe("clearStaleGitConfigLock", () => {
       expect(existsSync(lock)).toBe(false)
     })
     withStub((repoDir, lock) => {
-      // Another user's fd table (root daemons, non-dumpable processes) is always unreadable; its mountinfo was read and is clean.
-      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => { throw errno("EACCES") }, uid: () => process.getuid!() + 1 })
+      // Unreadable fd tables are everywhere (root daemons, other users, the user's own `(sd-pam)` on CI): with a clean mountinfo they don't hold.
+      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => { throw errno("EACCES") } })
       expect(existsSync(lock)).toBe(false)
     })
   })

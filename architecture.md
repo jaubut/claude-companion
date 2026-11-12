@@ -236,11 +236,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-activity.ts` | 56 | lib | 2 |  |
 | `lib/auto-compact-stats.ts` | 55 | lib | 6 |  |
 | `lib/dispatch-worker.ts` | 55 | lib | 5 | state: cache: Map |
-| `lib/git-config-lock.ts` | 53 | lib | 2 |  |
 | `lib/last-assistant.ts` | 53 | lib | 1 |  |
 | `wiring/outbound.ts` | 53 | lib | 4 | state: let live |
 | `wiring/brain-handoff.ts` | 52 | lib | 3 |  |
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
+| `lib/git-config-lock.ts` | 49 | lib | 2 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
