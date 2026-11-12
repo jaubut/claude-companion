@@ -7,35 +7,51 @@ import { isQuestionTool } from "./questions"
 // the hook routes and the event wiring.
 
 export function verbFor(tool: string): string {
-  if (isQuestionTool(tool)) return "Asking"
-  switch (tool) {
-    case "Read": return "Reading"
-    case "Write": return "Writing"
+  const clean = tool.replace(/^default_api:/, "")
+  if (isQuestionTool(clean)) return "Asking"
+  switch (clean) {
+    case "Read":
+    case "read_file":
+    case "read_resource": return "Reading"
+    case "Write":
+    case "write_file": return "Writing"
     case "Edit":
-    case "MultiEdit": return "Editing"
-    case "Bash": return "Running"
+    case "MultiEdit":
+    case "edit_file":
+    case "apply_patch": return "Editing"
+    case "Bash":
+    case "run_command":
     case "shell":
     case "unified_exec":
     case "exec_command": return "Running"
     case "Grep": return "Searching"
-    case "Glob": return "Finding"
+    case "Glob":
+    case "list_resources": return "Finding"
     case "WebFetch": return "Fetching"
-    case "WebSearch": return "Searching web"
+    case "WebSearch":
+    case "search_web": return "Searching web"
     case "Task":
-    case "Agent": return "Delegating"
+    case "Agent":
+    case "invoke_subagent":
+    case "define_subagent":
+    case "swarm": return "Delegating"
+    case "manage_task":
+    case "manage_subagents": return "Checking task"
     default: return "Working"
   }
 }
 
 export function isShellTool(tool: string): boolean {
-  return tool === "Bash" || tool === "shell" || tool === "unified_exec" || tool === "exec_command"
+  const clean = tool.replace(/^default_api:/, "")
+  return clean === "Bash" || clean === "run_command" || clean === "shell" || clean === "unified_exec" || clean === "exec_command"
 }
 
 // tool_input is whatever the tool defines: an MCP tool can send `command: 5`.
 const text = (v: unknown): string => (typeof v === "string" ? v : "")
 
 export function summarize(tool: string, input: Record<string, unknown>): string {
-  if (isQuestionTool(tool)) {
+  const clean = tool.replace(/^default_api:/, "")
+  if (isQuestionTool(clean)) {
     // Show the first question's text so the feed row reads as
     // "request_user_input: Which framework?" instead of just the tool name.
     const qs = input.questions
@@ -47,18 +63,27 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
     const q = typeof input.question === "string" ? input.question : ""
     return q.slice(0, 160)
   }
-  switch (tool) {
+  switch (clean) {
     case "Bash":
+    case "run_command":
     case "shell":
     case "unified_exec":
     case "exec_command": {
-      return text(input.command ?? input.cmd).slice(0, 120)
+      const cmd = text(input.command ?? input.CommandLine ?? input.cmd).trim()
+      const desc = text(input.toolSummary ?? input.description).trim()
+      if (cmd && desc && !cmd.includes(desc)) {
+        return `${desc} · ${cmd}`.slice(0, 140)
+      }
+      return (cmd || desc).slice(0, 120)
     }
     case "Edit":
     case "Read":
     case "Write":
-    case "MultiEdit": {
-      const p = text(input.file_path)
+    case "MultiEdit":
+    case "read_file":
+    case "edit_file":
+    case "write_file": {
+      const p = text(input.file_path ?? input.Path)
       return p.replace(/^\/Users\/[^/]+\//, "~/")
     }
     case "Grep":
@@ -68,9 +93,14 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
     case "WebFetch":
       return text(input.url)
     case "WebSearch":
+    case "search_web":
       return text(input.query)
+    case "invoke_subagent":
+      return text(input.Role ?? input.TypeName)
+    case "manage_task":
+      return text(input.Action)
     default:
-      return ""
+      return text(input.toolSummary ?? input.description).slice(0, 120)
   }
 }
 

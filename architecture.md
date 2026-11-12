@@ -15,13 +15,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain.ts` | 593 | lib | 11 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 584 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 578 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/activity.ts` | 575 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `routes/hooks.ts` | 565 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/worker-supervisor.ts` | 542 | lib | 12 |  |
-| `lib/activity.ts` | 535 | lib | 15 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/transcript.ts` | 532 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
@@ -38,6 +38,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/questions.ts` | 440 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
+| `lib/agy-feed.ts` | 412 | lib | 11 | state: offsets: Map, let timer |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `routes/orchestrator.ts` | 409 | route-host | 3 | routes: 11 |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
@@ -49,7 +50,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/herdr.ts` | 381 | lib | 34 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
-| `lib/agy-feed.ts` | 358 | lib | 11 | state: offsets: Map, let timer |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `routes/brain.ts` | 347 | lib | 3 |  |
 | `lib/orchestrator-chat.ts` | 346 | lib | 27 | state: appendedListeners: Set |
@@ -140,6 +140,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/builder-jobs.ts` | 167 | lib | 11 | state: EVENTS: Set |
+| `lib/tool-format.ts` | 166 | lib | 6 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
@@ -163,7 +164,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
-| `lib/tool-format.ts` | 136 | lib | 6 |  |
 | `wiring/brain-stuck-events.ts` | 136 | lib | 4 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/transcript-backfill.ts` | 131 | lib | 6 |  |
@@ -650,6 +650,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `tasksChat()` | `wiring/tasks-agent.ts` | `companion-server.ts`, `wiring/front-door.ts` |
 | `originLabel()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
+| `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
+| `extractToolResult()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `THINKING_MAX()` | `lib/transcript.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts` |
 | `Entry()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
 | `entryTime()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |

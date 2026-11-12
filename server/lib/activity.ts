@@ -532,3 +532,43 @@ export function forgetSession(meta: SessionMeta): void {
   pruneFeedForSession(meta)
   stopPollIfIdle()
 }
+
+export function syncExternalToolActivity(args: {
+  verb: string
+  tool: string
+  summary: string
+  cwd: string
+  sessionId?: string
+  tty?: string
+  transcriptPath?: string
+  sessionKey: string
+}): void {
+  const now = Date.now()
+  const s = stateFor(args)
+  if (!s.turnStartedAt) s.turnStartedAt = now
+  if (!pollTimer) startPoll()
+  setActivity(s, {
+    verb: args.verb,
+    tool: args.tool,
+    summary: args.summary,
+    turnStartedAt: s.turnStartedAt || now,
+    lastBeatAt: now,
+    tokens: s.lastTokens,
+    cwd: s.cwd,
+    sessionId: s.sessionId || undefined,
+    tty: s.tty || undefined,
+  }, args.sessionKey)
+}
+
+export function clearExternalSessionActivity(args: {
+  cwd: string
+  sessionId?: string
+  tty?: string
+  transcriptPath?: string
+  sessionKey: string
+}): void {
+  const s = stateFor(args)
+  s.toolStarts.clear()
+  clearActivity(s, args.sessionKey)
+  stopPollIfIdle()
+}

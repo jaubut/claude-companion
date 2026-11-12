@@ -132,7 +132,7 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 535,
+          "lines": 575,
           "kind": "lib",
           "exports": [
             "Activity",
@@ -149,7 +149,9 @@
             "recordToolEnd",
             "recordUserPrompt",
             "recordTurnEnd",
-            "forgetSession"
+            "forgetSession",
+            "syncExternalToolActivity",
+            "clearExternalSessionActivity"
           ],
           "state": [
             "activityListeners: Set",
@@ -196,7 +198,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 358,
+          "lines": 412,
           "kind": "lib",
           "exports": [
             "AgyConversationSummary",
@@ -221,6 +223,7 @@
           "apiCalls": [],
           "imports": [
             "lib/feed.ts",
+            "lib/activity.ts",
             "lib/sessions.ts",
             "lib/tool-format.ts",
             "lib/transcript.ts",
@@ -5279,7 +5282,7 @@
         },
         {
           "path": "lib/tool-format.ts",
-          "lines": 136,
+          "lines": 166,
           "kind": "lib",
           "exports": [
             "verbFor",
@@ -9827,13 +9830,15 @@
         "verbFor": {
           "module": "lib/tool-format.ts",
           "callers": [
-            "lib/activity.ts"
+            "lib/activity.ts",
+            "lib/agy-feed.ts"
           ]
         },
         "extractToolResult": {
           "module": "lib/tool-format.ts",
           "callers": [
-            "lib/activity.ts"
+            "lib/activity.ts",
+            "lib/agy-feed.ts"
           ]
         },
         "summarize": {
@@ -9908,6 +9913,18 @@
             "lib/agy-feed.ts",
             "lib/transcript-backfill.ts",
             "lib/transcript.ts"
+          ]
+        },
+        "clearExternalSessionActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "syncExternalToolActivity": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "lib/agy-feed.ts"
           ]
         },
         "ApnsEnv": {

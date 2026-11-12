@@ -3,8 +3,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, type FeedEvent } from "./feed"
+import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
 import { listSessions } from "./sessions"
-import { clampLong, summarize } from "./tool-format"
+import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
@@ -132,11 +133,10 @@ export function parseAgyTranscriptLine(
     }
     if (Array.isArray(step.tool_calls)) {
       step.tool_calls.forEach((tc, idx) => {
-        const name = typeof tc?.name === "string" && tc.name.trim() ? tc.name.trim() : "tool"
+        const rawName = typeof tc?.name === "string" && tc.name.trim() ? tc.name.trim() : "tool"
+        const name = rawName.replace(/^default_api:/, "")
         const args = normalizeAgyToolArgs(tc?.args)
-        const summary = typeof args.toolSummary === "string" && args.toolSummary.trim()
-          ? args.toolSummary.trim()
-          : summarize(name, args)
+        const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         out.push({
           id: `${idBase}:tool:${idx}`,
           ts,
@@ -158,6 +158,25 @@ export function parseAgyTranscriptLine(
       })
     }
     return out
+  }
+
+  if (step.type === "GENERIC" && typeof step.content === "string" && step.content.includes("Command output:")) {
+    const outIdx = step.content.indexOf("Command output:")
+    const rawOut = step.content.slice(outIdx + "Command output:".length).trim()
+    const errored = /Command exited with code [1-9]/.test(step.content)
+    const res = extractToolResult("run_command", rawOut)
+    if (res.excerpt || errored) {
+      return [{
+        id: `${idBase}:tool_end`,
+        ts,
+        kind: "tool_end",
+        tool: "run_command",
+        summary: "",
+        outputExcerpt: res.excerpt,
+        errored: errored || res.errored,
+        ...ident,
+      }]
+    }
   }
 
   return []
@@ -312,7 +331,18 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
     if (lastNewline < start) return []
     end = lastNewline + 1
   }
-  if (end <= start) return []
+  if (end <= start) {
+    if (convo.status === "idle" && ident.key) {
+      clearExternalSessionActivity({
+        cwd: ident.cwd,
+        sessionId: ident.sessionId,
+        tty: ident.tty,
+        transcriptPath: path,
+        sessionKey: ident.key,
+      })
+    }
+    return []
+  }
 
   const firstRead = start === 0
   const chunk = raw.slice(start, end)
@@ -325,6 +355,30 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
   const out: FeedEvent[] = []
   for (const line of lines) {
     out.push(...parseAgyTranscriptLine(line, ident, convo.id))
+  }
+  if (!firstRead && ident.key) {
+    const lastTool = [...out].reverse().find((e) => e.kind === "tool_start")
+    const hasFinalReply = out.some((e) => e.kind === "assistant_text") && !lastTool
+    if (lastTool && convo.status === "busy") {
+      syncExternalToolActivity({
+        verb: verbFor(lastTool.tool ?? "tool"),
+        tool: lastTool.tool ?? "tool",
+        summary: lastTool.summary ?? "",
+        cwd: ident.cwd,
+        sessionId: ident.sessionId,
+        tty: ident.tty,
+        transcriptPath: path,
+        sessionKey: ident.key,
+      })
+    } else if (convo.status === "idle" || hasFinalReply) {
+      clearExternalSessionActivity({
+        cwd: ident.cwd,
+        sessionId: ident.sessionId,
+        tty: ident.tty,
+        transcriptPath: path,
+        sessionKey: ident.key,
+      })
+    }
   }
   return firstRead ? out.slice(-INITIAL_EVENTS_PER_CONVERSATION) : out
 }
