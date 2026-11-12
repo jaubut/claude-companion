@@ -1,13 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, leadSlug } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, isRoutineLeadAck, leadSlug } from "../lib/brain"
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
 import { type ShFn, githubName, isDir, realSh, repoEntriesSafe } from "../lib/live-repo"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInHerdr } from "../lib/spawn-session"
 import { brainLiveness } from "./brain-workers"
-import { orchEmit } from "./orchestrator"
 import type { AgentLookup } from "./takeover-liveness"
 
 // Repo leads (docs/brain-api.md § Repo leads): one persistent `lead-<repo>` herdr
@@ -180,18 +179,18 @@ export const brainLead = createBrainLead({
   },
 })
 
-// ── Brain ↔ Agent Relay (bridges headless brain's ephemeral sockets + lead lifecycle hooks) ──
+// ── Brain ↔ Agent Relay (bridges headless brain's ephemeral sockets without noisy UI turns or ACK ping-pong) ──
 
-/** Tracks sessionIds that already relayed a message to brain during their current turn so Stop doesn't double-post. */
-const relayedInTurn = new Set<string>()
-
-/** Post an `[event]` turn from an agent (`lead-<repo>` or peer session) into the brain thread, waking the brain. */
-export function relayToBrainThread(sender: string, message: string, sessionId?: string): boolean {
+/**
+ * Enqueue an internal `[event]` turn from an agent (`lead-<repo>` or peer session) into the brain thread.
+ * Routine ACKs (`ack ...`, `noted`, `on it`) are dropped so they don't burn a 230k-token Brain turn,
+ * and `orchEmit` is not called so raw `[from ...]` lines never appear as Brain chat bubbles on the phone.
+ */
+export function relayToBrainThread(sender: string, message: string, _sessionId?: string): boolean {
   const clean = message.trim()
-  if (!clean) return false
+  if (!clean || isRoutineLeadAck(clean)) return false
   const from = sender.trim() || "agent"
-  if (sessionId) relayedInTurn.add(sessionId)
-  orchEmit(appendTurn("orchestrator", `[from ${from}] ${clean}`, null, BRAIN_THREAD))
+  appendTurn("orchestrator", `[from ${from}] ${clean}`, null, BRAIN_THREAD)
   return true
 }
 
@@ -219,21 +218,4 @@ export function maybeRelaySendMessageToBrain(opts: {
   if (!isBrainName && !isDeadUds) return false
   const sender = senderTask || (opts.senderLabel ?? "").trim() || "agent"
   return relayToBrainThread(sender, msg, opts.sessionId)
-}
-
-/** Notify the brain when a `lead-<repo>` session starts up or resumes so it never sits unnoticed after an interactive prompt. */
-export function onLeadSessionStart(taskId: string | null | undefined, source: string | undefined, cwd: string, enabled = brainEnabled()): void {
-  if (!enabled || !taskId?.startsWith(LEAD_PREFIX)) return
-  if (source && source !== "startup" && source !== "resume") return
-  relayToBrainThread(taskId, `Session is up and ready (${source ?? "startup"} in ${cwd}).`)
-}
-
-/** Forward a `lead-<repo>` turn's final message to the brain if it wasn't already relayed via `SendMessage` or `bin/sessions`. */
-export function onLeadStop(taskId: string | null | undefined, sessionId: string, lastMessage: string, enabled = brainEnabled()): void {
-  const alreadyRelayed = sessionId ? relayedInTurn.delete(sessionId) : false
-  if (!enabled || !taskId?.startsWith(LEAD_PREFIX)) return
-  if (alreadyRelayed) return
-  const clean = lastMessage.trim()
-  if (!clean) return
-  relayToBrainThread(taskId, clean)
 }

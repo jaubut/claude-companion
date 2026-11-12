@@ -1,4 +1,4 @@
-import { BRAIN_THREAD } from "../lib/brain"
+import { BRAIN_THREAD, isBrainInternalEvent } from "../lib/brain"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
@@ -31,7 +31,10 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
 // Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
 // clients so the one always-open chat stays live on every device.
+// Internal wake events in the brain thread (`[from ...]`, stuck PRs, worker receipts)
+// are for the brain's outbox only and never broadcast as fake Brain chat bubbles.
 export function orchEmit(turn: OrchTurn): void {
+  if (isBrainInternalEvent(turn)) return
   broadcast({ type: "orchestrator", turn })
 }
 

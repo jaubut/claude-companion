@@ -215,7 +215,10 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
     if (!found) return fail(404, "session_not_found")
     const deliver = deps.deliverSession !== undefined ? deps.deliverSession : getBrainDeliver()
     if (!deliver) return fail(503, "deliver_unavailable")
-    const res = await deliver(`[from brain] ${msg}`, found.key)
+    const leadNote = found.taskId?.startsWith(LEAD_PREFIX)
+      ? "\n(Do not send an ack or progress recap back to brain — only message brain when a PR is ready to merge/close or a real blocker/decision needs Jeremie.)"
+      : ""
+    const res = await deliver(`[from brain] ${msg}${leadNote}`, found.key)
     const out = await res.json().catch(() => ({})) as Record<string, unknown>
     return Response.json({ ok: res.ok && out.ok === true, target: found.taskId ?? found.label ?? found.key, key: found.key, ...out }, { status: res.ok ? 200 : res.status })
   }

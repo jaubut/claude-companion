@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { LEAD_PREFIX } from "../lib/brain"
+import { LEAD_PREFIX, isBrainInternalEvent, isRoutineLeadAck } from "../lib/brain"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
 const {
@@ -13,8 +13,6 @@ const {
   leadIsolated,
   leadSettings,
   maybeRelaySendMessageToBrain,
-  onLeadSessionStart,
-  onLeadStop,
   prepareLeadDir,
 } = await import("./brain-lead")
 const { getThread } = await import("../lib/orchestrator-chat")
@@ -233,7 +231,7 @@ describe("brain ↔ lead relay and sandbox exemptions", () => {
     ]))
   })
 
-  test("maybeRelaySendMessageToBrain relays SendMessage to brain, brain-eb, or a dead uds socket and deduplicates Stop", () => {
+  test("maybeRelaySendMessageToBrain relays actionable lead messages, drops routine ACKs, and hides internal events from chat bubbles", () => {
     const before = getThread("brain").length
     expect(maybeRelaySendMessageToBrain({
       tool: "SendMessage",
@@ -244,18 +242,25 @@ describe("brain ↔ lead relay and sandbox exemptions", () => {
     })).toBe(true)
     const afterSend = getThread("brain")
     expect(afterSend.length).toBe(before + 1)
-    expect(afterSend.at(-1)?.text).toBe("[from lead-tls-dashboard-v2] lead report: #421 needs split")
+    const relayedTurn = afterSend.at(-1)!
+    expect(relayedTurn.text).toBe("[from lead-tls-dashboard-v2] lead report: #421 needs split")
+    expect(isBrainInternalEvent(relayedTurn)).toBe(true)
+    expect(isBrainInternalEvent({
+      threadId: "brain",
+      role: "orchestrator",
+      text: "All three are underway on tls-dashboard-v2.",
+      taskId: null,
+    })).toBe(false)
 
-    // Stop for the same turn should not double-post since SendMessage already relayed
-    onLeadStop("lead-tls-dashboard-v2", "sid-lead-1", "fallback stop text", true)
+    // Routine ACKs do not wake the brain or append a turn
+    expect(isRoutineLeadAck("lead-tls-dashboard-v2: ack all three. I'm holding #421 until Jeremie decides.")).toBe(true)
+    expect(maybeRelaySendMessageToBrain({
+      tool: "SendMessage",
+      input: { to: "brain", message: "lead-tls-dashboard-v2: ack all three. I'm holding #421." },
+      senderTaskId: "lead-tls-dashboard-v2",
+      sessionId: "sid-lead-1",
+      enabled: true,
+    })).toBe(false)
     expect(getThread("brain").length).toBe(before + 1)
-
-    // Next turn Stop with no SendMessage relays the final message
-    onLeadStop("lead-tls-dashboard-v2", "sid-lead-1", "turn 2 report", true)
-    expect(getThread("brain").at(-1)?.text).toBe("[from lead-tls-dashboard-v2] turn 2 report")
-
-    // SessionStart notifies brain when lead comes up
-    onLeadSessionStart("lead-tls-dashboard-v2", "startup", "/h/leads/tls-dashboard-v2", true)
-    expect(getThread("brain").at(-1)?.text).toContain("[from lead-tls-dashboard-v2] Session is up and ready")
   })
 })

@@ -51,7 +51,7 @@ import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { workerHookGate } from "../lib/worker-hook-gate"
 import { isBrainHook, isSupervisedTask } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
-import { maybeRelaySendMessageToBrain, onLeadSessionStart, onLeadStop } from "../wiring/brain-lead"
+import { maybeRelaySendMessageToBrain } from "../wiring/brain-lead"
 import { checked, jsonObject } from "../lib/json-body"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
@@ -448,7 +448,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     if (isSupervisedTask(headerMeta.taskId || session?.taskId)) {
       if (session) void gaugeFromTranscript(session, body.transcript_path, body.session_id).catch(() => { /* best effort */ })
       if (isBrainHook(headerMeta.taskId || session?.taskId)) void brainWiring.onStop(body.session_id ?? "", lastMessage).catch(() => { /* logged inside */ })
-      else onLeadStop(headerMeta.taskId || session?.taskId, body.session_id ?? "", lastMessage)
       return Response.json({})
     }
 
@@ -502,7 +501,6 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
       const started = recordSession({ cwd, sessionId: body.session_id ?? "", ...metaFromHeaders(req.headers) })
       if (started && body.source === "compact") void autoCompactor.onCompacted(started.key)
       if (started && isBrainHook(started.taskId)) brainWiring.onSessionStart(started)
-      else if (started) onLeadSessionStart(started.taskId, body.source, cwd)
       const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"
       companionLog(`${cyan}session start${reset} ${cwd.split("/").pop()} ${dim}(${body.source ?? "-"})${reset}`)
     }

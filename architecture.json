@@ -1051,7 +1051,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 244,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1091,6 +1091,8 @@
             "MEMORY_MAX_CHARS",
             "MEMORY_TAG",
             "QUIET_REPLY",
+            "isBrainInternalEvent",
+            "isRoutineLeadAck",
             "flushPrompt",
             "VOICE_CONSENT_MS",
             "ConsentTurn",
@@ -6657,7 +6659,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 394,
+          "lines": 397,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6987,7 +6989,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 569,
+          "lines": 567,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -7210,7 +7212,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 409,
+          "lines": 410,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -7830,7 +7832,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 240,
+          "lines": 222,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -7844,13 +7846,9 @@
             "BrainLead",
             "brainLead",
             "relayToBrainThread",
-            "maybeRelaySendMessageToBrain",
-            "onLeadSessionStart",
-            "onLeadStop"
+            "maybeRelaySendMessageToBrain"
           ],
-          "state": [
-            "relayedInTurn: Set"
-          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -7862,7 +7860,6 @@
             "lib/orchestrator-chat.ts",
             "lib/spawn-session.ts",
             "wiring/brain-workers.ts",
-            "wiring/orchestrator.ts",
             "wiring/takeover-liveness.ts"
           ],
           "listeners": [],
@@ -8499,7 +8496,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 252,
+          "lines": 255,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -10733,6 +10730,7 @@
             "lib/brain-workers.ts",
             "routes/brain.ts",
             "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
             "wiring/brain-handoff.ts",
@@ -15799,12 +15797,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "onLeadStop": {
-          "module": "wiring/brain-lead.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/stop"
-          ]
-        },
         "markWaiting": {
           "module": "wiring/waiting.ts",
           "callers": [
@@ -15830,12 +15822,6 @@
           "callers": [
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/hooks.ts#POST /hooks/session-end"
-          ]
-        },
-        "onLeadSessionStart": {
-          "module": "wiring/brain-lead.ts",
-          "callers": [
-            "routes/hooks.ts#POST /hooks/session-start"
           ]
         },
         "dispatchWiring": {
@@ -15990,7 +15976,6 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/auto-deploy.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -16233,6 +16218,13 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/orchestrator.ts"
+          ]
+        },
+        "isBrainInternalEvent": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/orchestrator.ts"
           ]
         },
         "listPipeline": {
@@ -17081,6 +17073,12 @@
         },
         "spawnInHerdr": {
           "module": "lib/spawn-session.ts",
+          "callers": [
+            "wiring/brain-lead.ts"
+          ]
+        },
+        "isRoutineLeadAck": {
+          "module": "lib/brain.ts",
           "callers": [
             "wiring/brain-lead.ts"
           ]

@@ -173,6 +173,39 @@ const MEMORY_DUTY = (memoryRef: string | null): string =>
 /** The brain's whole reply to events that need nothing from Jeremie: kept out of the thread. */
 export const QUIET_REPLY = "noted"
 
+const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
+const INTERNAL_WORKER_RECEIPT_RE = /^(?:PR ready|completed|blocked|done|filed|cancelled)\s+\[/i
+
+/**
+ * Internal system/agent wake events in the brain thread: delivered to the brain as `[event <id>]`,
+ * but hidden from user-facing Brain chat bubbles so Jeremie only sees his own turns, Brain's replies,
+ * and interactive `worker_blocked` cards.
+ */
+export function isBrainInternalEvent(turn: {
+  threadId: string
+  role: string
+  text: string
+  taskId?: string | null
+  card?: { kind: string } | null
+}): boolean {
+  if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator") return false
+  if (turn.card?.kind === "worker_blocked") return false
+  if (turn.card?.kind === "dispatch") return true
+  const text = turn.text.trim()
+  if (turn.taskId && INTERNAL_WORKER_RECEIPT_RE.test(text)) return true
+  return INTERNAL_BRAIN_EVENT_RE.test(text)
+}
+
+const ROUTINE_LEAD_ACK_RE = /^(?:lead-[\w.-]+:\s*)?(?:ack(?:nowledged)?\b|noted\b|copy\b|on it\b|will do\b)/i
+const ACTIONABLE_LEAD_MSG_RE = /\b(?:merge|close|decision|blocker|blocked|question|failed|error|split|need(?:s)?\s+jeremie)\b/i
+
+/** True when a repo lead message is a pure acknowledgment with no actionable merge/close/blocker for the brain. */
+export function isRoutineLeadAck(message: string): boolean {
+  const clean = message.trim()
+  if (!clean) return true
+  return ROUTINE_LEAD_ACK_RE.test(clean) && !ACTIONABLE_LEAD_MSG_RE.test(clean)
+}
+
 /** Typed before an idle /compact so nothing lives only in the context that compaction drops. */
 export function flushPrompt(memoryRef: string | null): string {
   return `[flush] A context compaction follows. ${MEMORY_DUTY(memoryRef)} Then reply "flushed", nothing else.`

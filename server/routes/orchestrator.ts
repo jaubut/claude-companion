@@ -16,7 +16,7 @@ import {
   type Channel as OrchChannel, createChannel, getChannel, getChannelByNote, isReservedName, listChannels, setChannelNote,
 } from "../lib/orchestrator-channels"
 import type { TurnCard } from "../lib/orchestrator-chat"
-import { BRAIN_THREAD } from "../lib/brain"
+import { BRAIN_THREAD, isBrainInternalEvent } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
 import { GENERAL_CHANNEL } from "../lib/orchestrator-db"
 import {
@@ -328,8 +328,9 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     // poller's last read; never blocks on Turso). queue gains `dispatch`.
     // #Body adds `vitals` (P3): the header line + counts, null when unavailable.
     const vitals = ch.id === BODY_CHANNEL ? { vitals: await bodyVitals(opts.body ?? bodySnapshot, dispatch, opts.vitalsTimeoutMs ?? 1500) } : {}
+    const turns = ch.id === BRAIN_THREAD ? getThread(ch.id).filter((t) => !isBrainInternalEvent(t)) : getThread(ch.id)
     return Response.json({
-      channel: ch.id, channels: listChannels().map(dispatch.decorate), turns: getThread(ch.id),
+      channel: ch.id, channels: listChannels().map(dispatch.decorate), turns,
       tasks: [...listTasks(ch.id).map(toTaskDto), ...dispatch.tasksFor(ch.id)],
       queue: dispatch.queueSummary(), ...vitals,
     })
