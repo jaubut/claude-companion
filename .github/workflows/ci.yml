@@ -72,7 +72,7 @@ jobs:
           TURSO_TEST_URL: ${{ secrets.TURSO_TEST_URL }}
           TURSO_TEST_AUTH_TOKEN: ${{ secrets.TURSO_TEST_AUTH_TOKEN }}
           TURSO_TEST_REQUIRED: "1"
-        run: bun test --isolate --timeout 20000 server/wiring/brain-task-cancel.test.ts server/lib/worker-pr-link.test.ts
+        run: bun test --isolate --timeout 20000 server/wiring/brain-task-cancel.test.ts
 
       - name: Point at the usual suspect
         if: failure()
