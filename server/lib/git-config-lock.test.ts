@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { spawn } from "node:child_process"
-import { chmodSync, existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type ProcReader, clearStaleGitConfigLock } from "./git-config-lock"
@@ -36,14 +36,6 @@ describe("clearStaleGitConfigLock", () => {
         host: "h", home, stateFile, now: () => 0, uuid: () => "u", trust: () => {}, reportJob: () => {},
         sh: async () => ({ ok: true, out: "", err: "", code: 0 }),
       })
-      if (existsSync(lock)) {
-        const st = statSync(lock)
-        console.log("DIAG stub", st.size, (st.mode & 0o777).toString(8), st.uid)
-        for (const p of readdirSync("/proc").filter((x) => /^\d+$/.test(x))) {
-          try { if (readFileSync(`/proc/${p}/mountinfo`, "utf8").includes("config.lock")) console.log("DIAG mounted", p, readFileSync(`/proc/${p}/status`, "utf8").split("\n").filter((l) => /^(Name|State|PPid)/.test(l)).join(" | ")) }
-          catch (e) { console.log("DIAG mi-err", p, (e as NodeJS.ErrnoException).code) }
-        }
-      }
       expect(existsSync(lock)).toBe(false)
       const add = git("-c", "branch.autoSetupMerge=always", "worktree", "add", "-q", "-b", "dispatch/task-2", join(home, "wt"), "main")
       expect(add.stderr.toString()).toBe("")
@@ -86,11 +78,9 @@ describe("clearStaleGitConfigLock", () => {
     })
   })
 
-  test("an unreadable mountinfo or fd link of a live process keeps the stub; an exited process or unreadable fd table does not", () => {
+  test("an unreadable mountinfo of a live process keeps the stub; an exited process or an unreadable fd table or link does not", () => {
     withStub((repoDir, lock) => {
       clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => { throw errno("EACCES") } })
-      expect(existsSync(lock)).toBe(true)
-      clearStaleGitConfigLock(repoDir, { ...idle, fdTarget: () => { throw errno("EACCES") }, fds: () => ["3"] })
       expect(existsSync(lock)).toBe(true)
     })
     withStub((repoDir, lock) => {
@@ -101,6 +91,15 @@ describe("clearStaleGitConfigLock", () => {
       // Unreadable fd tables are everywhere (root daemons, other users, the user's own `(sd-pam)` on CI): with a clean mountinfo they don't hold.
       clearStaleGitConfigLock(repoDir, { ...idle, fds: () => { throw errno("EACCES") } })
       expect(existsSync(lock)).toBe(false)
+    })
+    withStub((repoDir, lock) => {
+      // Same for an fd link a listable table won't resolve (a same-uid process with extra capabilities).
+      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => ["3"], fdTarget: () => { throw errno("EACCES") } })
+      expect(existsSync(lock)).toBe(false)
+    })
+    withStub((repoDir, lock) => {
+      clearStaleGitConfigLock(repoDir, { ...idle, fds: () => ["3"], fdTarget: () => lock })
+      expect(existsSync(lock)).toBe(true) // a readable fd on it does hold
     })
   })
 })

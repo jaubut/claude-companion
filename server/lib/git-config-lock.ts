@@ -18,9 +18,10 @@ const exited = (err: unknown) => { const c = (err as NodeJS.ErrnoException).code
  * in the CLI, no setting turns it off). A sandbox killed mid-command leaves that mount point on the host as a 0-byte
  * 0444 file, and every later `git config` write there fails ("could not lock config file"). Remove it unless some live
  * process still has it mounted or open. A live process whose mountinfo can't be read counts as a holder (that is where
- * a sandbox's hold shows). An unreadable fd table is skipped: root daemons, other users and even the user's own
- * `(sd-pam)` always have one, so counting them would never clear a stub; and an fd holder can't hurt, nothing can have
- * a 0444 file open for writing and the inode check below catches a replaced file. Without /proc (macOS, where the
+ * a sandbox's hold shows). An unreadable fd table or fd link is skipped: root daemons, other users, the user's own
+ * `(sd-pam)` and same-uid processes with extra capabilities always have one (seen on the CI runner), so counting them
+ * would never clear a stub; and an fd holder can't hurt, nothing can have a 0444 file open for writing and the inode
+ * check below catches a replaced file. Without /proc (macOS, where the
  * sandbox doesn't do this) it is left alone.
  */
 export function clearStaleGitConfigLock(repoDir: string, proc: ProcReader = realProc): void {
@@ -35,7 +36,7 @@ export function clearStaleGitConfigLock(repoDir: string, proc: ProcReader = real
       let fds: string[]
       try { fds = proc.fds(pid) } catch { continue }
       for (const fd of fds) {
-        try { if (proc.fdTarget(pid, fd) === lock) return } catch (err) { if (!exited(err)) return }
+        try { if (proc.fdTarget(pid, fd) === lock) return } catch { /* closed, or not ours to read (see above) */ }
       }
     }
     // Same file as the one validated before the scan: a real git lock created meanwhile is a new inode (or not 0444).

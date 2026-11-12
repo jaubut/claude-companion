@@ -2145,7 +2145,7 @@
         },
         {
           "path": "lib/git-config-lock.ts",
-          "lines": 49,
+          "lines": 50,
           "kind": "lib",
           "exports": [
             "ProcReader",
