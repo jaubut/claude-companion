@@ -2144,6 +2144,24 @@
           "externals": []
         },
         {
+          "path": "lib/git-config-lock.ts",
+          "lines": 53,
+          "kind": "lib",
+          "exports": [
+            "ProcReader",
+            "clearStaleGitConfigLock"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/herdr-fake.test-util.ts",
           "lines": 28,
           "kind": "lib",
@@ -6347,7 +6365,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 580,
+          "lines": 560,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6359,7 +6377,6 @@
             "defaultIsPidAlive",
             "defaultKillPid",
             "defaultGetPidIdentity",
-            "clearStaleGitConfigLock",
             "defaultSpawnWorker",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -6371,6 +6388,7 @@
           "apiCalls": [],
           "imports": [
             "lib/builder-jobs.ts",
+            "lib/git-config-lock.ts",
             "lib/jev-model-router.ts",
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
@@ -14539,6 +14557,12 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-lead.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "clearStaleGitConfigLock": {
+          "module": "lib/git-config-lock.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
           ]
         },
         "decideWorkerModel": {

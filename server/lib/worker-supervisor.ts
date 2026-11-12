@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
+import { clearStaleGitConfigLock } from "./git-config-lock"
 import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
@@ -78,27 +79,6 @@ export function defaultGetPidIdentity(pid: number): string | null {
     const out = (ps.stdout ?? "").trim()
     return ps.status === 0 && out ? `ps:${pid}:${out}` : null
   } catch { return null }
-}
-
-/**
- * Claude Code's Linux sandbox ro-binds /dev/null over `.git/config.lock` of the repo a worktree belongs to (hard-coded
- * in the CLI, no setting turns it off). A sandbox killed mid-command leaves that mount point on the host as a 0-byte
- * 0444 file, and every later `git config` write there fails ("could not lock config file"). Remove it unless some live
- * process still has it open or mounted. Without /proc (macOS, where the sandbox doesn't do this) it is left alone.
- */
-export function clearStaleGitConfigLock(repoDir: string): void {
-  const lock = join(repoDir, ".git", "config.lock")
-  try {
-    const st = statSync(lock)
-    if (!st.isFile() || st.size !== 0 || (st.mode & 0o222) !== 0) return
-    const mountPoint = ` ${lock.replace(/ /g, "\\040")} `
-    for (const pid of readdirSync("/proc")) {
-      if (!/^\d+$/.test(pid)) continue
-      try { if (readFileSync(`/proc/${pid}/mountinfo`, "utf8").includes(mountPoint)) return } catch { /* gone or not ours */ }
-      try { for (const fd of readdirSync(`/proc/${pid}/fd`)) if (readlinkSync(`/proc/${pid}/fd/${fd}`) === lock) return } catch { /* gone or not ours */ }
-    }
-    rmSync(lock, { force: true })
-  } catch { /* no stub, or no /proc */ }
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
