@@ -9074,7 +9074,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 63,
+          "lines": 80,
           "kind": "lib",
           "exports": [
             "workerSupervisor",
@@ -9094,6 +9094,7 @@
             "lib/worker-mcp.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
+            "wiring/brain.ts",
             "wiring/builder-jobs.ts",
             "wiring/orchestrator.ts"
           ],
@@ -9332,6 +9333,7 @@
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "wiring/shell-sessions.ts",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -15165,7 +15167,8 @@
           "callers": [
             "routes/brain.ts",
             "routes/worker-mcp.ts",
-            "wiring/brain-lead.ts"
+            "wiring/brain-lead.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "relayToBrainThread": {
@@ -15177,7 +15180,8 @@
         "getBrainDeliver": {
           "module": "wiring/brain.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "REASON_MAX": {
