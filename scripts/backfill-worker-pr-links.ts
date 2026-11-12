@@ -8,12 +8,12 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { type GhFn, realGh } from "../server/lib/triage-pr"
 import { type ExecFn, tursoExec } from "../server/lib/turso"
-import { type LinkOutcome, linkWorkerPr } from "../server/lib/worker-pr-link"
+import { type LinkOutcome, OWNABLE, linkWorkerPr } from "../server/lib/worker-pr-link"
 import { REPO_NAME_RE, TASK_ID_RE } from "../server/lib/worker-invocation"
 
 export interface Linked { taskId: string; repo: string; prUrl: string; outcome: LinkOutcome }
 
-export async function backfill(deps: { gh: GhFn; exec: ExecFn; log(line: string): void }, stateFile: string, apply: boolean): Promise<Linked[]> {
+export async function backfill(deps: { gh: GhFn; exec: ExecFn; sleep?(ms: number): Promise<unknown>; log(line: string): void }, stateFile: string, apply: boolean): Promise<Linked[]> {
   let records: Array<{ taskId?: unknown; repo?: unknown }>
   try {
     records = JSON.parse(readFileSync(stateFile, "utf8")) as typeof records
@@ -24,7 +24,7 @@ export async function backfill(deps: { gh: GhFn; exec: ExecFn; log(line: string)
   for (const r of records) {
     if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId) || typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
     const { taskId, repo } = r
-    const row = (await deps.exec("SELECT 1 FROM tasks WHERE id = ? AND (dispatch_pr_url IS NULL OR dispatch_pr_url = '')", [taskId])).rows
+    const row = (await deps.exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId])).rows
     if (!row.length) continue
     const list = await deps.gh(["pr", "list", "--repo", `jaubut/${repo}`, "--head", `dispatch/${taskId}`, "--state", "open", "--json", "url"])
     let prs: unknown = null
@@ -33,7 +33,7 @@ export async function backfill(deps: { gh: GhFn; exec: ExecFn; log(line: string)
     } catch { /* logged below */ }
     if (!Array.isArray(prs)) { deps.log(`${taskId} ${repo}: gh pr list failed`); continue }
     for (const { url } of prs as Array<{ url: string }>) {
-      const outcome = await linkWorkerPr(deps, { taskId, repo, prUrl: url }, apply)
+      const outcome = await linkWorkerPr(deps, { taskId, repo, prUrl: url }, { write: apply })
       deps.log(`${taskId} ${repo} ${url}: ${outcome}`)
       out.push({ taskId, repo, prUrl: url, outcome })
     }

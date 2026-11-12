@@ -190,6 +190,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
+| `wiring/worker-mcp.ts` | 97 | lib | 2 |  |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |
@@ -201,7 +202,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/worker-mcp.ts` | 90 | route-host | 3 | route: * /api/mcp/workers |
 | `lib/branch-guard.ts` | 89 | lib | 2 | state: PROTECTED_BRANCHES: Set |
 | `state.ts` | 89 | lib | 9 |  |
-| `wiring/worker-mcp.ts` | 89 | lib | 2 |  |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
 | `lib/request-gate.ts` | 86 | lib | 5 | state: NAMES: Set, let tailscaleName |
@@ -229,6 +229,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/herdr-workspace.ts` | 61 | lib | 3 | state: releasing: Set |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
+| `lib/worker-pr-link.ts` | 61 | lib | 3 |  |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |
 | `wiring/dispatch.ts` | 60 | lib | 3 | state: polledListeners: Set · emits: brain_trace |
 | `lib/session-identity.ts` | 58 | lib | 6 |  |
@@ -248,7 +249,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
-| `lib/worker-pr-link.ts` | 39 | lib | 2 |  |
 | `lib/agent-pid.ts` | 38 | lib | 2 |  |
 | `lib/claude-mcp-trust.ts` | 37 | lib | 2 |  |
 | `wiring/brain-pr-park.ts` | 37 | lib | 3 |  |

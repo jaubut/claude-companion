@@ -10,7 +10,7 @@ import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { linkWorkerPr } from "../lib/worker-pr-link"
-import { createWorkerSupervisor } from "../lib/worker-supervisor"
+import { type SupervisedTaskSnapshot, createWorkerSupervisor } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
@@ -21,6 +21,8 @@ const DEFAULT_FAMILY_MODELS = {
   codex: "gpt-5.4",
   gemini: "gemini-3.1-pro-preview",
 } as const
+/** How long "PR ready" waits for the PR link before the brain hears it. */
+const LINK_DEADLINE_MS = 20_000
 
 // Live Inverted MCP worker supervisor & handler wired to Companion's BuilderJobStore and Session registry.
 export const workerSupervisor = createWorkerSupervisor({
@@ -50,37 +52,43 @@ export const workerSupervisor = createWorkerSupervisor({
       setSessionModel(recorded.key, model)
     }
   },
+  // The link lands before the brain hears "PR ready" (the shepherd reads origin through it), bounded so a slow gh
+  // never holds the turn; on timeout it finishes behind. linkWorkerPr never rejects.
   onTaskTerminal: (task) => {
-    if (task.status === "completed" && task.prUrl) {
-      const prUrl = task.prUrl
-      void linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl })
+    const prUrl = task.status === "completed" ? task.prUrl : null
+    const linked = prUrl
+      ? linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl }, { deadlineMs: LINK_DEADLINE_MS })
         .then((outcome) => companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${prUrl}: ${outcome}`))
-    }
-    if (!brainEnabled()) return
-    const text = task.status === "completed"
-      ? task.prUrl
-        ? `PR ready [${task.taskId}] ${task.repo} — ${task.prUrl}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-        : `completed [${task.taskId}] ${task.repo} — ${task.title}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-      : `blocked [${task.taskId}] ${task.repo} — ${task.title}\nError: ${(task.error || "worker failed").slice(0, 400)}`
-    const leadTask = `${LEAD_PREFIX}${task.repo}`
-    const leadSession = listSessions().find((s) => s.taskId === leadTask)
-    const deliver = getBrainDeliver()
-    if (leadSession && deliver) {
-      void deliver(`[from worker] ${text}\n(Inspect CI/reviews and run any fix rounds; only tell-brain when ready to merge/close or if Jeremie must decide.)`, leadSession.key)
-        .then(async (res) => {
-          const out = await res.json().catch(() => ({})) as { ok?: unknown }
-          if (!res.ok || out.ok !== true) {
-            orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
-          }
-        })
-        .catch(() => {
-          orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
-        })
-      return
-    }
-    orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
+      : Promise.resolve()
+    void linked.then(() => notifyBrain(task)).catch((err) => companionLog(`[worker] ${task.taskId.slice(0, 8)} brain notify failed: ${(err as Error)?.message ?? err}`))
   },
 })
+
+function notifyBrain(task: SupervisedTaskSnapshot): void {
+  if (!brainEnabled()) return
+  const text = task.status === "completed"
+    ? task.prUrl
+      ? `PR ready [${task.taskId}] ${task.repo} — ${task.prUrl}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
+      : `completed [${task.taskId}] ${task.repo} — ${task.title}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
+    : `blocked [${task.taskId}] ${task.repo} — ${task.title}\nError: ${(task.error || "worker failed").slice(0, 400)}`
+  const leadTask = `${LEAD_PREFIX}${task.repo}`
+  const leadSession = listSessions().find((s) => s.taskId === leadTask)
+  const deliver = getBrainDeliver()
+  if (leadSession && deliver) {
+    void deliver(`[from worker] ${text}\n(Inspect CI/reviews and run any fix rounds; only tell-brain when ready to merge/close or if Jeremie must decide.)`, leadSession.key)
+      .then(async (res) => {
+        const out = await res.json().catch(() => ({})) as { ok?: unknown }
+        if (!res.ok || out.ok !== true) {
+          orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
+        }
+      })
+      .catch(() => {
+        orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
+      })
+    return
+  }
+  orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
+}
 
 export const workerMcp = createWorkerMcpHandler({
   supervisor: workerSupervisor,

@@ -6347,9 +6347,10 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 39,
+          "lines": 61,
           "kind": "lib",
           "exports": [
+            "OWNABLE",
             "LinkOutcome",
             "linkWorkerPr"
           ],
@@ -9132,7 +9133,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 89,
+          "lines": 97,
           "kind": "lib",
           "exports": [
             "workerSupervisor",
@@ -18914,6 +18915,12 @@
         },
         "linkWorkerPr": {
           "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "SupervisedTaskSnapshot": {
+          "module": "lib/worker-supervisor.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]
