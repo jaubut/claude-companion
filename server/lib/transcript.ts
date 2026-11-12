@@ -275,7 +275,9 @@ export function readTranscriptDelta(
       const lineId = typeof entry.uuid === "string" && entry.uuid ? entry.uuid : `@${offset}`
       const at: LineAt = { path, offset, length, expect: lineExpectation(entry) }
       scanToolResultImages(s, blocks, toolUses, { silent: opts.silent && i !== primeIdx }, at, lineId)
-      scanToolResultArtifacts(s, identityFor(s), blocks, toolUses, opts)
+      if (!s.cwd.endsWith("/claude-companion/brain")) {
+        scanToolResultArtifacts(s, identityFor(s), blocks, toolUses, opts)
+      }
       continue
     }
     if (entry.type !== "assistant") continue
@@ -300,7 +302,9 @@ export function readTranscriptDelta(
       if (s.seenAssistantText.has(key)) continue
       s.seenAssistantText.add(key)
       if (opts.silent) {
-        emitArtifacts(s, identityFor(s), text, undefined, opts)
+        if (!s.cwd.endsWith("/claude-companion/brain")) {
+          emitArtifacts(s, identityFor(s), text, undefined, opts)
+        }
         continue
       }
       appendFeedEvent({
@@ -313,7 +317,9 @@ export function readTranscriptDelta(
       s.streamedThisTurn = true
       emitted++
       scanMarkdownImages(s, text)
-      emitArtifacts(s, identityFor(s), text, undefined, opts)
+      if (!s.cwd.endsWith("/claude-companion/brain")) {
+        emitArtifacts(s, identityFor(s), text, undefined, opts)
+      }
     }
   }
   return emitted

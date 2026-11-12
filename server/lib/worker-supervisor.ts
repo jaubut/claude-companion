@@ -403,6 +403,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 task.sessionStarted = true; task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+                syncTaskSession(task)
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
               if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid) { savePersistedTasks(); syncTaskSession(task) }

@@ -34,6 +34,10 @@
       "Bash(bin/thread:*)",
       "Bash(bin/todo:*)",
       "Bash(bin/worker:*)",
+      "Bash(~/.claude/tools/dispatch.sh:*)",
+      "Bash(/home/aubut/.claude/tools/dispatch.sh:*)",
+      "Bash(DISPATCH_PR_URL=* ~/.claude/tools/dispatch.sh:*)",
+      "Bash(DISPATCH_PR_URL=* /home/aubut/.claude/tools/dispatch.sh:*)",
       "mcp__claude_ai_Gmail__create_draft",
       "mcp__claude_ai_Gmail__get_draft",
       "mcp__claude_ai_Gmail__list_drafts",
@@ -51,7 +55,9 @@
       "bin/*",
       "./bin/*",
       "~/claude-companion/brain/bin/*",
-      "/home/aubut/claude-companion/brain/bin/*"
+      "/home/aubut/claude-companion/brain/bin/*",
+      "~/.claude/tools/dispatch.sh",
+      "/home/aubut/.claude/tools/dispatch.sh"
     ]
   }
 }

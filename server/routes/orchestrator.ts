@@ -381,7 +381,14 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
         orchEmit(turn)
         return Response.json({ ...keyed, turn }, { status: keyed.status })
       }
-      const turn = orchAppendTurn("user", text.trim(), null, ch.id, voiceCard(voice, ch.id))
+      const trimmed = text.trim()
+      if (ch.id === BRAIN_THREAD && !voice) {
+        const lastUser = getThread(ch.id).findLast((t) => t.role === "user")
+        if (lastUser && lastUser.text === trimmed && Date.now() - lastUser.createdAt < 1_500) {
+          return Response.json({ ok: true, turn: lastUser })
+        }
+      }
+      const turn = orchAppendTurn("user", trimmed, null, ch.id, voiceCard(voice, ch.id))
       orchEmit(turn)
       // brain-v2: the brain thread goes to the supervised brain (persisted
       // outbox; 200 even while it is down), never to the front door.
@@ -392,7 +399,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
       // The front door (Jev route → status / quick look / old brain) answers
       // async; the user message is already recorded, so /send returns instantly
       // and the reply/proposal streams in.
-      void frontDoor.handle(text.trim(), ch)
+      void frontDoor.handle(trimmed, ch)
       return Response.json({ ok: true, turn })
     })
   }

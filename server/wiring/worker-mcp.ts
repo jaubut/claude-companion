@@ -34,7 +34,7 @@ export const workerSupervisor = createWorkerSupervisor({
       agent: task.family,
       sessionId: task.sessionId,
       label: `${task.repo} · ${task.taskId}`,
-      title: task.title,
+      title: task.status === "running" && task.step ? `${task.title} · ${task.step}` : task.title,
       taskId: task.taskId,
       herdrPane: `headless:worker:${task.taskId}`,
       herdrAgent: task.builder,

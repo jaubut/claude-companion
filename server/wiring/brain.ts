@@ -554,7 +554,7 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
 export const getBrainDeliver = (): ((text: string, key: string) => Promise<Response>) | null => deliverFn
 
 export const headlessBrainRunner = createHeadlessBrainRunner({
-  noteActivity: (sid) => brainWiring.noteActivity(sid),
+  noteActivity: (sid, call) => brainWiring.noteActivity(sid, call),
   onStop: (sid, reply) => brainWiring.onStop(sid, reply),
 })
 

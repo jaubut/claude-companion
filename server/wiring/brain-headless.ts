@@ -21,7 +21,7 @@ export function getBrainModel(): string {
 }
 
 export function createHeadlessBrainRunner(hooks: {
-  noteActivity(sid: string): void
+  noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void
   onStop(sid: string, reply: string): Promise<void>
 }) {
   let currentSessionId = ""
@@ -162,7 +162,15 @@ export function createHeadlessBrainRunner(hooks: {
               sessionStarted = true
             }
             if (ev.step) {
-              hooks.noteActivity(currentSessionId)
+              let call: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string } | undefined
+              try {
+                const raw = JSON.parse(line) as { message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> } }
+                const tu = Array.isArray(raw.message?.content) ? raw.message.content.find((b) => b?.type === "tool_use" && typeof b.name === "string") : undefined
+                if (tu?.name) {
+                  call = { phase: "pre", tool: tu.name, input: (tu.input && typeof tu.input === "object" ? tu.input : {}), toolUseId: tu.id || `tu_${Date.now()}` }
+                }
+              } catch { /* ignore */ }
+              hooks.noteActivity(currentSessionId, call)
             }
           },
           onStderrLine() {

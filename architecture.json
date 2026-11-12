@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 200,
+          "lines": 196,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -121,7 +121,6 @@
             "routes/brain.ts",
             "routes/worker-blocked.ts",
             "wiring/brain.ts",
-            "wiring/brain-workers.ts",
             "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts"
@@ -2239,7 +2238,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 381,
+          "lines": 367,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -4765,7 +4764,7 @@
         },
         {
           "path": "lib/spawn-session.ts",
-          "lines": 506,
+          "lines": 513,
           "kind": "lib",
           "exports": [
             "ensureFolderTrusted",
@@ -5425,7 +5424,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 532,
+          "lines": 538,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -6347,7 +6346,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 578,
+          "lines": 579,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6381,7 +6380,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 584,
+          "lines": 587,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -7244,7 +7243,7 @@
         },
         {
           "path": "routes/orchestrator.ts",
-          "lines": 410,
+          "lines": 417,
           "kind": "route-host",
           "exports": [
             "OrchestratorRouteOpts",
@@ -7835,7 +7834,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 203,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -7866,7 +7865,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 253,
+          "lines": 267,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -7882,7 +7881,9 @@
             "relayToBrainThread",
             "maybeRelaySendMessageToBrain"
           ],
-          "state": [],
+          "state": [
+            "runtimeLeadStarting: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -7893,8 +7894,9 @@
             "lib/live-repo.ts",
             "lib/orchestrator-chat.ts",
             "lib/spawn-session.ts",
+            "lib/tmux-pane.ts",
+            "lib/tmux-spawn-confirm.ts",
             "lib/worker-supervisor.ts",
-            "wiring/brain-workers.ts",
             "wiring/takeover-liveness.ts"
           ],
           "listeners": [],
@@ -8354,7 +8356,7 @@
         },
         {
           "path": "wiring/dispatch.ts",
-          "lines": 60,
+          "lines": 63,
           "kind": "lib",
           "exports": [
             "dispatchPushEnabled",
@@ -9349,6 +9351,12 @@
             "companion-server.ts"
           ]
         },
+        "startEndedSweep": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "listSessions": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -9373,18 +9381,6 @@
             "wiring/shell-sessions.ts",
             "wiring/worker-mcp.ts",
             "ws.ts"
-          ]
-        },
-        "startShellPoll": {
-          "module": "lib/shell-sessions.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "startEndedSweep": {
-          "module": "lib/ended-sessions.ts",
-          "callers": [
-            "companion-server.ts"
           ]
         },
         "brainEnabled": {
@@ -9412,15 +9408,6 @@
           "module": "wiring/brain-stuck-events.ts",
           "callers": [
             "companion-server.ts"
-          ]
-        },
-        "brainWorkers": {
-          "module": "wiring/brain-workers.ts",
-          "callers": [
-            "companion-server.ts",
-            "routes/brain.ts",
-            "wiring/brain-headless.ts",
-            "wiring/brain-restore.ts"
           ]
         },
         "brainWiring": {
@@ -11005,7 +10992,6 @@
             "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
             "lib/submit-confirm.ts",
-            "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
             "wiring/dialogs.ts"
@@ -11901,7 +11887,8 @@
             "lib/spawn-session.ts",
             "lib/terminal-bridge.ts",
             "lib/tmux-inject.ts",
-            "lib/tmux-spawn-confirm.ts"
+            "lib/tmux-spawn-confirm.ts",
+            "wiring/brain-lead.ts"
           ]
         },
         "TmuxSender": {
@@ -13504,7 +13491,8 @@
           "module": "lib/tmux-spawn-confirm.ts",
           "callers": [
             "lib/shell-sessions.ts",
-            "lib/spawn-session.ts"
+            "lib/spawn-session.ts",
+            "wiring/brain-lead.ts"
           ]
         },
         "uniqueTmuxSessionName": {
@@ -13518,7 +13506,8 @@
           "callers": [
             "lib/shell-sessions.ts",
             "lib/spawn-session.ts",
-            "lib/tmux-spawn-confirm.ts"
+            "lib/tmux-spawn-confirm.ts",
+            "wiring/brain-lead.ts"
           ]
         },
         "spawnSocketPath": {
@@ -15227,6 +15216,14 @@
             "routes/brain.ts"
           ]
         },
+        "brainWorkers": {
+          "module": "wiring/brain-workers.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-headless.ts",
+            "wiring/brain-restore.ts"
+          ]
+        },
         "getBrainDeliver": {
           "module": "wiring/brain.ts",
           "callers": [
@@ -16096,6 +16093,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
             "wiring/brain-pr-merge.ts",
             "wiring/front-door.ts",
             "wiring/orchestrator.ts"
@@ -16279,6 +16277,7 @@
           "module": "lib/brain.ts",
           "callers": [
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -17125,20 +17124,13 @@
             "wiring/brain-workers.ts"
           ]
         },
-        "brainLiveness": {
-          "module": "wiring/brain-workers.ts",
-          "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain-restore.ts"
-          ]
-        },
         "folderTrusted": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "wiring/brain-lead.ts"
           ]
         },
-        "spawnInHerdr": {
+        "spawnInTmuxDetached": {
           "module": "lib/spawn-session.ts",
           "callers": [
             "wiring/brain-lead.ts"
@@ -17179,6 +17171,12 @@
         },
         "envValue": {
           "module": "lib/brain-workers.ts",
+          "callers": [
+            "wiring/brain-restore.ts"
+          ]
+        },
+        "brainLiveness": {
+          "module": "wiring/brain-workers.ts",
           "callers": [
             "wiring/brain-restore.ts"
           ]
