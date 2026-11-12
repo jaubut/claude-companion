@@ -326,7 +326,7 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
     if (p === "/api/brain/trace" && req.method === "GET") {
       const raw = url.searchParams.get("since")
       const since = raw && /^\d{1,15}$/.test(raw) ? Number(raw) : null
-      return Response.json({ ok: true, rows: since === null ? latestRows() : rowsSince(since) })
+      return Response.json({ ok: true, rows: since === null || since === 0 ? latestRows() : rowsSince(since) })
     }
     if (p === "/api/brain/workers" && req.method === "GET") {
       const s = await (deps.workers ?? brainWorkers).survey()

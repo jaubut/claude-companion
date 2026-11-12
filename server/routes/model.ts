@@ -32,7 +32,7 @@ const HEADLESS_MODELS: HeadlessModelEntry[] = [
   { id: "gemini-3.1-pro-preview", family: "gemini", text: "Gemini 3.1 Pro · Google flagship multimodal agent", aliases: ["gemini-3.1-pro-preview", "gemini"] },
 ]
 
-function isHeadlessSession(session: Session | null): session is Session {
+function isHeadlessSession(session: Session | null): boolean {
   if (!session) return false
   if (typeof session.herdrPane === "string" && session.herdrPane.startsWith("headless:")) return true
   if (session.agent === "gemini" || session.agent === "codex") return true
@@ -125,7 +125,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const session = key ? resolveSession(key) : null
     if (key && !session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
 
-    if (isHeadlessSession(session)) {
+    if (session && isHeadlessSession(session)) {
       const choices = buildHeadlessChoices(session)
       log(`open (headless) → ${choices.length} models on ${session.label || session.key}`)
       return Response.json({
@@ -192,7 +192,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     if (typeof index !== "number") return Response.json({ ok: false, error: "invalid-args" }, { status: 400 })
 
     const session = key ? resolveSession(key) : null
-    if (isHeadlessSession(session)) {
+    if (session && isHeadlessSession(session)) {
       const catalog = headlessCatalogFor(session)
       if (index < 0 || index >= catalog.length) {
         return Response.json({ ok: false, error: "no_such_model" }, { status: 400 })
@@ -267,7 +267,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
     const body = checked(await jsonObject<{ key?: string }>(req, {}), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
-    if (isHeadlessSession(session)) {
+    if (session && isHeadlessSession(session)) {
       return Response.json({ ok: true, closed: true })
     }
 

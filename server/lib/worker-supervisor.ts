@@ -170,6 +170,7 @@ export interface WorkerSupervisorDeps {
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
+  onTaskTerminal?(task: SupervisedTaskSnapshot): void
 }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
@@ -617,6 +618,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }
               }
               savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
+              try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
             },
           })
         } catch (err) {

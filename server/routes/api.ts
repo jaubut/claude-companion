@@ -490,9 +490,9 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
         repo: existing?.repo || basename(target.cwd),
         title: existing?.title || target.title || taskId,
         prompt: text,
-        mode: existing?.mode ?? "auto",
+        mode: "auto",
         family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
-        model: target.model || existing?.model,
+        model: (target.model || existing?.model) ?? undefined,
       })
       if (!dispatched.ok) {
         return Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })

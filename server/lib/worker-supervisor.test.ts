@@ -553,4 +553,29 @@ describe("createWorkerSupervisor", () => {
       prUrl: "https://github.com/jaubut/claude-companion/pull/501",
     })
   })
+
+  test("invokes onTaskTerminal when a turn completes or fails so the Brain wakes immediately", async () => {
+    const home = join(tmpdir(), `worker-sup-term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const terminalEvents: Array<{ taskId: string; status: string; prUrl: string | null }> = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => "dddd1111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {},
+      onTaskTerminal: (t) => { terminalEvents.push({ taskId: t.taskId, status: t.status, prUrl: t.prUrl }) },
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 8888, kill() {} } },
+    })
+    try {
+      await sup.dispatchTask({ taskId: "wake-1", repo: "claude-companion", prompt: "Ship PR" })
+      spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", result: "Done https://github.com/jaubut/claude-companion/pull/999" }))
+      spawned[0]!.onExit(0, null)
+      expect(terminalEvents).toEqual([{ taskId: "wake-1", status: "completed", prUrl: "https://github.com/jaubut/claude-companion/pull/999" }])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })
