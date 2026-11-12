@@ -5,7 +5,19 @@ import { join } from "node:path"
 import { LEAD_PREFIX } from "../lib/brain"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-lead-")), "test.db")
-const { createBrainLead, leadArgs, leadCheckout, leadDir, leadIsolated, leadSettings, prepareLeadDir } = await import("./brain-lead")
+const {
+  createBrainLead,
+  leadArgs,
+  leadCheckout,
+  leadDir,
+  leadIsolated,
+  leadSettings,
+  maybeRelaySendMessageToBrain,
+  onLeadSessionStart,
+  onLeadStop,
+  prepareLeadDir,
+} = await import("./brain-lead")
+const { getThread } = await import("../lib/orchestrator-chat")
 const { fakeHerdr } = await import("../lib/herdr-fake.test-util")
 const { folderTrusted, spawnInHerdr } = await import("../lib/spawn-session")
 
@@ -206,4 +218,44 @@ test("leadCheckout: the lead's own clone or a REPO_MAP checkout counts, a bare n
   expect(leadCheckout(repo, h, [{ match: /x/, path: mapped, github: `jaubut/${repo}` }])).toBe(true)
   mkdirSync(leadDir(repo, h), { recursive: true })
   expect(leadCheckout(repo, h, [])).toBe(true)
+})
+
+describe("brain ↔ lead relay and sandbox exemptions", () => {
+  test("leadSettings exempts brain/bin/worker and brain/bin/sessions from bwrap so loopback 127.0.0.1:4245 is reachable", () => {
+    const s = leadSettings([], "/h/leads/tls-dashboard-v2")
+    expect(s.permissions.allow).toEqual(expect.arrayContaining([
+      "Bash(~/claude-companion/brain/bin/worker:*)",
+      "Bash(~/claude-companion/brain/bin/sessions:*)",
+    ]))
+    expect(s.sandbox.excludedCommands).toEqual(expect.arrayContaining([
+      "~/claude-companion/brain/bin/worker *",
+      "~/claude-companion/brain/bin/sessions *",
+    ]))
+  })
+
+  test("maybeRelaySendMessageToBrain relays SendMessage to brain, brain-eb, or a dead uds socket and deduplicates Stop", () => {
+    const before = getThread("brain").length
+    expect(maybeRelaySendMessageToBrain({
+      tool: "SendMessage",
+      input: { to: "uds:/tmp/nonexistent-brain-2666705.sock", message: "lead report: #421 needs split" },
+      senderTaskId: "lead-tls-dashboard-v2",
+      sessionId: "sid-lead-1",
+      enabled: true,
+    })).toBe(true)
+    const afterSend = getThread("brain")
+    expect(afterSend.length).toBe(before + 1)
+    expect(afterSend.at(-1)?.text).toBe("[from lead-tls-dashboard-v2] lead report: #421 needs split")
+
+    // Stop for the same turn should not double-post since SendMessage already relayed
+    onLeadStop("lead-tls-dashboard-v2", "sid-lead-1", "fallback stop text", true)
+    expect(getThread("brain").length).toBe(before + 1)
+
+    // Next turn Stop with no SendMessage relays the final message
+    onLeadStop("lead-tls-dashboard-v2", "sid-lead-1", "turn 2 report", true)
+    expect(getThread("brain").at(-1)?.text).toBe("[from lead-tls-dashboard-v2] turn 2 report")
+
+    // SessionStart notifies brain when lead comes up
+    onLeadSessionStart("lead-tls-dashboard-v2", "startup", "/h/leads/tls-dashboard-v2", true)
+    expect(getThread("brain").at(-1)?.text).toContain("[from lead-tls-dashboard-v2] Session is up and ready")
+  })
 })

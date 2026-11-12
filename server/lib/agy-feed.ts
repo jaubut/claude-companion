@@ -334,7 +334,7 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
   if (end <= start) {
     if (convo.status === "idle" && ident.key) {
       clearExternalSessionActivity({
-        cwd: ident.cwd,
+        cwd: ident.cwd ?? "",
         sessionId: ident.sessionId,
         tty: ident.tty,
         transcriptPath: path,
@@ -364,7 +364,7 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
         verb: verbFor(lastTool.tool ?? "tool"),
         tool: lastTool.tool ?? "tool",
         summary: lastTool.summary ?? "",
-        cwd: ident.cwd,
+        cwd: ident.cwd ?? "",
         sessionId: ident.sessionId,
         tty: ident.tty,
         transcriptPath: path,
@@ -372,7 +372,7 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
       })
     } else if (convo.status === "idle" || hasFinalReply) {
       clearExternalSessionActivity({
-        cwd: ident.cwd,
+        cwd: ident.cwd ?? "",
         sessionId: ident.sessionId,
         tty: ident.tty,
         transcriptPath: path,

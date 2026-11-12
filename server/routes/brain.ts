@@ -6,14 +6,14 @@ import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
-import { type BrainWiring, brainWiring } from "../wiring/brain"
+import { type BrainWiring, brainWiring, getBrainDeliver } from "../wiring/brain"
 import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { updateAgentPr } from "../wiring/brain-pr-update-branch"
 import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
-import { type BrainLead, brainLead, leadCheckout } from "../wiring/brain-lead"
+import { type BrainLead, brainLead, leadCheckout, relayToBrainThread } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 
@@ -73,6 +73,8 @@ export interface BrainRouteDeps {
   checkout?: (repo: string) => boolean
   /** bin/media (default: the real fetch + analyse, lib/link-media.ts). */
   media?: typeof analyseLink
+  /** Session message injector for `bin/sessions send` (default: wiring/brain.ts getBrainDeliver). */
+  deliverSession?: ((text: string, key: string) => Promise<Response>) | null
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -161,16 +163,61 @@ async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 
-/** The brain's own workspaces only (wiring/brain-workers.ts decides ownership and every close). */
+/** Verify a loopback lead-<repo> caller for `tell-brain`. */
+function leadCallerTaskId(req: Request, deps: BrainRouteDeps): string | null {
+  const origin = clientOrigin(req, peerOf(req))
+  if (origin.transport !== "loopback") return null
+  const taskId = req.headers.get("x-companion-task-id")?.trim() ?? ""
+  const pid = req.headers.get("x-companion-pid")?.trim() ?? ""
+  if (!taskId.startsWith(LEAD_PREFIX) || !pid) return null
+  const found = deps.sessions().find((x) => x.pid === pid && x.taskId === taskId)
+  return found ? taskId : null
+}
+
+/** The brain's own workspaces + live session messaging (`list`, `close`, `send`, `tell-brain`). */
 async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
-  const refused = proposeRefusal(req, deps)
-  if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
+  if (body.op === "tell-brain") {
+    const leadTask = leadCallerTaskId(req, deps)
+    const brainOk = !proposeRefusal(req, deps)
+    if (!leadTask && !brainOk) return fail(403, "forbidden")
+    const msg = str(body.message, PROMPT_MAX)
+    if (!msg) return fail(400, "message required")
+    const sender = leadTask ?? (str(body.sender, 64) ?? BRAIN_AGENT)
+    relayToBrainThread(sender, msg)
+    return Response.json({ ok: true, relayed: true, sender })
+  }
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
   const workers = deps.workers ?? brainWorkers
   if (body.op === "list") {
     const s = await workers.survey()
-    return Response.json({ ok: true, sessions: s.sessions, mode: s.mode })
+    const liveSessions = deps.sessions().map((x) => ({
+      key: x.key,
+      sessionId: x.sessionId,
+      taskId: x.taskId ?? null,
+      label: x.label,
+      title: x.title ?? null,
+      cwd: x.cwd,
+      agent: x.agent ?? "claude",
+      waiting: !!x.waitingReasons?.length,
+    }))
+    return Response.json({ ok: true, sessions: s.sessions, mode: s.mode, liveSessions })
+  }
+  if (body.op === "send") {
+    const target = str(body.target, 128)
+    const msg = str(body.message, PROMPT_MAX)
+    if (!target || !msg) return fail(400, "target and message required")
+    const found = deps.sessions().find(
+      (x) => x.taskId === target || x.key === target || x.sessionId === target || x.label === target,
+    )
+    if (!found) return fail(404, "session_not_found")
+    const deliver = deps.deliverSession !== undefined ? deps.deliverSession : getBrainDeliver()
+    if (!deliver) return fail(503, "deliver_unavailable")
+    const res = await deliver(`[from brain] ${msg}`, found.key)
+    const out = await res.json().catch(() => ({})) as Record<string, unknown>
+    return Response.json({ ok: res.ok && out.ok === true, target: found.taskId ?? found.label ?? found.key, key: found.key, ...out }, { status: res.ok ? 200 : res.status })
   }
   if (body.op === "close") {
     const ws = typeof body.workspaceId === "string" && WORKSPACE_ID.test(body.workspaceId) ? body.workspaceId : null

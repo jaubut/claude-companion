@@ -45,5 +45,13 @@
       "mcp__turso__note_update",
       "mcp__turso__query"
     ]
+  },
+  "sandbox": {
+    "excludedCommands": [
+      "bin/*",
+      "./bin/*",
+      "~/claude-companion/brain/bin/*",
+      "/home/aubut/claude-companion/brain/bin/*"
+    ]
   }
 }

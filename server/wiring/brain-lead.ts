@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { leadSlug } from "../lib/brain"
+import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, leadSlug } from "../lib/brain"
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
 import { type ShFn, githubName, isDir, realSh, repoEntriesSafe } from "../lib/live-repo"
+import { appendTurn } from "../lib/orchestrator-chat"
 import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInHerdr } from "../lib/spawn-session"
 import { brainLiveness } from "./brain-workers"
+import { orchEmit } from "./orchestrator"
 import type { AgentLookup } from "./takeover-liveness"
 
 // Repo leads (docs/brain-api.md § Repo leads): one persistent `lead-<repo>` herdr
@@ -24,8 +26,8 @@ export const leadCheckout = (repo: string, home = homedir(), entries = repoEntri
 const settingsFile = (dir: string): string => join(dir, ".claude", "settings.local.json")
 
 interface LeadSettings {
-  permissions: { deny: string[] }
-  sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; failIfUnavailable: boolean; filesystem: { denyWrite: string[] } }
+  permissions: { allow: string[]; deny: string[] }
+  sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; failIfUnavailable: boolean; excludedCommands: string[]; filesystem: { denyWrite: string[] } }
 }
 
 const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanMode", "ExitPlanMode"]
@@ -34,10 +36,34 @@ const NO_FILE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterPlanM
  * Project settings, unlike launch args, survive a herdr restore (`claude --resume` with no args), and the sandbox
  * refuses a lead's Bash writing or moving them. No way out of the sandbox: no unsandboxed Bash, no running without one,
  * and every user-level `excludedCommands` entry is denied, since those run unsandboxed and project settings can't remove them.
+ * Only `brain/bin/worker` and `brain/bin/sessions` are allowed outside the bwrap network/PID namespace so a lead can
+ * talk to the local Companion loopback (`127.0.0.1:4245`) and verify its own `claude` PID.
  */
 export function leadSettings(excluded: string[], dir: string): LeadSettings {
+  const home = dirname(dirname(dir))
   const commands = excluded.flatMap((c) => [`Bash(${c})`, `Bash(${c.replace(/ \*$/, ":*")})`])
-  return { permissions: { deny: [...NO_FILE_TOOLS, ...new Set(commands)] }, sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true, filesystem: { denyWrite: [join(dir, ".claude"), join(dir, ".git")] } } }
+  const allow = [
+    "Bash(~/claude-companion/brain/bin/worker:*)",
+    "Bash(~/claude-companion/brain/bin/sessions:*)",
+    `Bash(${join(home, "claude-companion/brain/bin/worker")}:*)`,
+    `Bash(${join(home, "claude-companion/brain/bin/sessions")}:*)`,
+  ]
+  const excludedBins = [
+    "~/claude-companion/brain/bin/worker *",
+    "~/claude-companion/brain/bin/sessions *",
+    `${join(home, "claude-companion/brain/bin/worker")} *`,
+    `${join(home, "claude-companion/brain/bin/sessions")} *`,
+  ]
+  return {
+    permissions: { allow, deny: [...NO_FILE_TOOLS, ...new Set(commands)] },
+    sandbox: {
+      enabled: true,
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: true,
+      excludedCommands: excludedBins,
+      filesystem: { denyWrite: [join(dir, ".claude"), join(dir, ".git")] },
+    },
+  }
 }
 
 /** The user's `sandbox.excludedCommands`. Thrown on an unreadable file: a lead without the full deny list doesn't start. */
@@ -153,3 +179,61 @@ export const brainLead = createBrainLead({
     return out.ok ? spawnInHerdr(out.dir, "claude", { COMPANION_TASK_ID: name }, realHerdr, { name, args: leadArgs(name) }) : { ok: false, error: out.error }
   },
 })
+
+// ── Brain ↔ Agent Relay (bridges headless brain's ephemeral sockets + lead lifecycle hooks) ──
+
+/** Tracks sessionIds that already relayed a message to brain during their current turn so Stop doesn't double-post. */
+const relayedInTurn = new Set<string>()
+
+/** Post an `[event]` turn from an agent (`lead-<repo>` or peer session) into the brain thread, waking the brain. */
+export function relayToBrainThread(sender: string, message: string, sessionId?: string): boolean {
+  const clean = message.trim()
+  if (!clean) return false
+  const from = sender.trim() || "agent"
+  if (sessionId) relayedInTurn.add(sessionId)
+  orchEmit(appendTurn("orchestrator", `[from ${from}] ${clean}`, null, BRAIN_THREAD))
+  return true
+}
+
+/**
+ * Intercept `SendMessage` tool calls from non-brain sessions aimed at `brain`, `brain-*` (auto-suffixed headless
+ * `claude -p` names like `brain-eb`), or a dead `uds:/run/user/.../cc-socks/<pid>.sock` from a finished headless brain turn.
+ */
+export function maybeRelaySendMessageToBrain(opts: {
+  tool: string
+  input: Record<string, unknown>
+  senderTaskId?: string | null
+  senderLabel?: string | null
+  sessionId?: string
+  enabled?: boolean
+}): boolean {
+  if ((opts.enabled ?? brainEnabled()) !== true) return false
+  if (opts.tool !== "SendMessage") return false
+  const senderTask = (opts.senderTaskId ?? "").trim()
+  if (senderTask === BRAIN_AGENT) return false
+  const to = (typeof opts.input.to === "string" ? opts.input.to : typeof opts.input.recipient === "string" ? opts.input.recipient : "").trim()
+  const msg = (typeof opts.input.message === "string" ? opts.input.message : typeof opts.input.content === "string" ? opts.input.content : "").trim()
+  if (!to || !msg) return false
+  const isBrainName = to === BRAIN_AGENT || to.startsWith(`${BRAIN_AGENT}-`)
+  const isDeadUds = to.startsWith("uds:") && (senderTask.startsWith(LEAD_PREFIX) || !existsSync(to.slice(4)))
+  if (!isBrainName && !isDeadUds) return false
+  const sender = senderTask || (opts.senderLabel ?? "").trim() || "agent"
+  return relayToBrainThread(sender, msg, opts.sessionId)
+}
+
+/** Notify the brain when a `lead-<repo>` session starts up or resumes so it never sits unnoticed after an interactive prompt. */
+export function onLeadSessionStart(taskId: string | null | undefined, source: string | undefined, cwd: string, enabled = brainEnabled()): void {
+  if (!enabled || !taskId?.startsWith(LEAD_PREFIX)) return
+  if (source && source !== "startup" && source !== "resume") return
+  relayToBrainThread(taskId, `Session is up and ready (${source ?? "startup"} in ${cwd}).`)
+}
+
+/** Forward a `lead-<repo>` turn's final message to the brain if it wasn't already relayed via `SendMessage` or `bin/sessions`. */
+export function onLeadStop(taskId: string | null | undefined, sessionId: string, lastMessage: string, enabled = brainEnabled()): void {
+  const alreadyRelayed = sessionId ? relayedInTurn.delete(sessionId) : false
+  if (!enabled || !taskId?.startsWith(LEAD_PREFIX)) return
+  if (alreadyRelayed) return
+  const clean = lastMessage.trim()
+  if (!clean) return
+  relayToBrainThread(taskId, clean)
+}

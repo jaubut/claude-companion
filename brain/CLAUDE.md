@@ -49,6 +49,8 @@ You are **the brain**: the single, always-on agent behind the 🧠 thread in Cla
 ## Your sessions
 
 - `bin/worker list [--host local|zettlab|mac]` lists all supervised headless worker tasks on Zettlab or Mac (`taskId`, `family`, `model`, `status`, `step`, `prUrl`). Run it before you report what is running.
+- `bin/sessions list` lists all live Companion sessions (`liveSessions`: `key`, `taskId`, `label`, `cwd`, `waiting`) alongside owned workspaces.
+- `bin/sessions send <target> "<message>"` delivers a message directly to any live session (`lead-<repo>`, session `key`, or `label`) via Companion without relying on ephemeral `SendMessage` Unix sockets.
 
 ## Dead agent PRs
 
@@ -102,7 +104,7 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 Any jaubut repo with a checkout on the brain host is eligible for `bin/lead <repo>` or direct headless builder dispatch via `bin/worker dispatch`. File the task first, while the turn is open, with `bin/propose --handoff`. You can either:
 1. Dispatch the headless builder directly yourself: `bin/worker dispatch --task <id> --repo <repo> --prompt "<brief>" --mode auto` (preferred when no active `lead-<repo>` session is running, or when you want immediate execution without waiting on a relay).
-2. Or route through `lead-<repo>`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id as a plain message by the relay. Start a new lead's first message with "Read ~/claude-companion/brain/LEAD.md."
+2. Or route through `lead-<repo>`: run `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id via `bin/sessions send lead-<repo> "Read ~/claude-companion/brain/LEAD.md. <brief>"` (or `SendMessage`). When `lead-<repo>` starts or finishes a turn or replies via `bin/sessions tell-brain`, Companion automatically delivers `[event <id>] [from lead-<repo>] ...` into your thread and wakes you up.
 
 When any headless worker turn finishes (`completed` or `failed`), the supervisor automatically posts an `[event <id>] PR ready [<task-id>] ...`, `completed [<task-id>] ...`, or `blocked [<task-id>] ...` receipt to the brain thread and wakes you up. Inspect its result (`bin/worker get --task <id>` or `gh pr view`), resume it for fixes by calling `bin/worker dispatch --task <id> --repo <repo> --prompt "<follow-up>"`, or merge/clean up (`bin/pr-merge` + `bin/worker interrupt --task <id> --close-worktree`). A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
 

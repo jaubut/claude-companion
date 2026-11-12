@@ -12,13 +12,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 |---|---|---|---|---|
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 597 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `wiring/brain.ts` | 593 | lib | 11 | state: let deliverFn · emits: brain_trace, brain |
+| `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 584 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 578 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 575 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
+| `routes/hooks.ts` | 569 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
-| `routes/hooks.ts` | 565 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/worker-supervisor.ts` | 542 | lib | 12 |  |
@@ -44,6 +44,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/triage-engine.ts` | 402 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
+| `routes/brain.ts` | 394 | lib | 3 |  |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
 | `lib/secret-store.ts` | 385 | lib | 27 | state: FLAGS: Set, let lock |
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
@@ -51,7 +52,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/herdr.ts` | 381 | lib | 34 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
-| `routes/brain.ts` | 347 | lib | 3 |  |
 | `lib/orchestrator-chat.ts` | 346 | lib | 27 | state: appendedListeners: Set |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/resolver.ts` | 339 | lib | 13 |  |
@@ -89,6 +89,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `lib/brain.ts` | 244 | lib | 45 |  |
 | `ws.ts` | 244 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
+| `wiring/brain-lead.ts` | 240 | lib | 14 | state: relayedInTurn: Set |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
@@ -145,7 +146,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
-| `wiring/brain-lead.ts` | 156 | lib | 10 |  |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/merge-gate.ts` | 153 | lib | 7 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
@@ -425,31 +425,31 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `QueryFn()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/canvas.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/note-media.ts`, `lib/pipeline.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-autofile.ts`, `lib/trip-dashboard.ts`, `routes/body.ts`, `routes/canvas.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/resolver.ts` |
 | `listSessions()` | `lib/sessions.ts` | `companion-server.ts`, `lib/agy-feed.ts`, `lib/codex-feed.ts`, `lib/discover.ts`, `lib/session-resolve.ts`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/shell/close`, `routes/api.ts#* /api/status`, `routes/api.ts#* /api/feed`, `routes/brain.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/session-end`, `routes/worker-mcp.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/dialogs.ts`, `wiring/orchestrator.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `ExecFn()` | `lib/turso.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-pr.ts`, `routes/my-tasks.ts`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-park.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/resolver-dry-run.ts` |
-| `appendTurn()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts` |
+| `appendTurn()` | `lib/orchestrator-chat.ts` | `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts` |
 | `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts`, `wiring/triage.ts` |
 | `Row()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/pipeline.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-dashboard.ts`, `lib/turso-test-db.test-util.ts`, `routes/goals.ts`, `wiring/auto-compact.ts`, `wiring/brain-task-cancel.ts` |
 | `tursoQuery()` | `lib/turso.ts` | `companion-server.ts`, `lib/receipt-qa-worker.ts`, `lib/turso-test-db.test-util.ts`, `routes/body.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/canvas.ts`, `wiring/dispatch.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/trips.ts` |
 | `TursoUnreachable()` | `lib/turso.ts` | `lib/dispatch-poller.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/triage-engine.ts`, `lib/turso-test-db.test-util.ts`, `routes/body.ts`, `routes/goals.ts#GET /api/goals`, `routes/my-tasks.ts`, `routes/orchestrator.ts`, `routes/tasks-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/orchestrator.ts`, `wiring/triage-repos.ts` |
+| `orchEmit()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
+| `BRAIN_THREAD()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-handoff.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/worker-mcp.ts` |
 | `herdrPaneOf()` | `lib/herdr.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/ended-sessions.ts`, `lib/herdr-workspace.ts`, `lib/keyboard-inject.ts`, `lib/model-control.ts`, `lib/pane-clean.ts`, `lib/pane-mirror.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/submit-confirm.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/auto-compact.ts`, `wiring/dialogs.ts` |
 | `Herdr()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/ended-sessions.ts`, `lib/herdr-fake.test-util.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/orphan-question.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/brain-lead.ts`, `wiring/brain-restore.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
-| `orchEmit()` | `wiring/orchestrator.ts` | `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
-| `BRAIN_THREAD()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/worker-mcp.ts` |
 | `recordSession()` | `lib/sessions.ts` | `lib/discover.ts`, `lib/rehydrate.ts`, `routes/hooks.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `routes/model.ts#POST /api/model/set`, `wiring/brain-headless.ts`, `wiring/brain.ts`, `wiring/worker-mcp.ts` |
 | `redactSecrets()` | `lib/secret-redact.ts` | `lib/approval-history.ts`, `lib/body-investigator.ts`, `lib/jev-route-log.ts`, `lib/quick-look.ts`, `lib/worker-blocked.ts`, `lib/worker-invocation.ts`, `lib/worker-supervisor.ts`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts` |
 | `realHerdr()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/ended-sessions.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/brain-lead.ts`, `wiring/brain-restore.ts`, `wiring/brain-workers.ts`, `wiring/dialogs.ts` |
 | `SourceItem()` | `lib/triage.ts` | `lib/mytask-triage.ts`, `lib/outbound.ts`, `lib/resolver-engine.ts`, `lib/resolver-prompt.ts`, `lib/resolver-work.ts`, `lib/resolver.ts`, `lib/triage-engine.ts`, `lib/triage-repos.ts`, `lib/triage-sources.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts` |
 | `pushToAll()` | `lib/push.ts` | `lib/records-expiry.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/receipt-qa.ts`, `wiring/worker-blocked.ts` |
+| `BRAIN_AGENT()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/worker-mcp.ts`, `wiring/brain-headless.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-restore.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts` |
 | `HOST_INFO()` | `state.ts` | `companion-server.ts`, `routes/api.ts#* /api/status`, `wiring/body-agent.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/orchestrator.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts`, `ws.ts` |
 | `brainWiring()` | `wiring/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/worker-mcp.ts`, `ws.ts` |
 | `resolveSession()` | `lib/sessions.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed`, `routes/attach.ts#POST /api/attach`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `ws.ts` |
-| `BRAIN_AGENT()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/worker-mcp.ts`, `wiring/brain-headless.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-restore.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts` |
 | `keyGate()` | `lib/key-gate.ts` | `lib/command-scrape.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/session-pane.ts`, `lib/submit-confirm.ts`, `lib/tmux-inject.ts`, `routes/api.ts#POST /api/sessions/resume`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/pane-mirror.ts` |
 | `peerOf()` | `lib/vault-guard.ts` | `lib/pane-mirror.ts`, `lib/request-gate.ts`, `lib/terminal-bridge.ts`, `routes/brain.ts`, `routes/builder-jobs.ts#POST /hooks/builder-progress`, `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/records.ts`, `routes/vault.ts`, `routes/worker-mcp.ts` |
+| `brainEnabled()` | `lib/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/worker-mcp.ts#* /api/mcp/workers`, `wiring/brain-lead.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts`, `ws.ts` |
 | `summarize()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts`, `lib/approval-history-auto.ts`, `lib/approval-history.ts`, `lib/codex-feed.ts`, `lib/question-hook.ts`, `lib/transcript-backfill.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/permission-request`, `wiring/events.ts` |
 | `DispatchTask()` | `lib/dispatch-tasks.ts` | `lib/brain-trace.ts`, `lib/dispatch-mirror.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/pipeline.ts`, `lib/status-answer.ts`, `lib/triage-sources.ts`, `routes/orchestrator.ts`, `wiring/brain-workers.ts`, `wiring/triage.ts` |
 | `paneKey()` | `lib/tmux-pane.ts` | `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/pane-mirror.ts`, `lib/session-pane.ts`, `lib/submit-confirm.ts`, `lib/tmux-inject.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/dialogs.ts`, `wiring/pane-mirror.ts` |
 | `apnsConfigured()` | `lib/apns.ts` | `lib/push.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#GET /api/push/tokens`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/events.ts` |
-| `brainEnabled()` | `lib/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/worker-mcp.ts#* /api/mcp/workers`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts`, `ws.ts` |
 | `checkBearer()` | `lib/auth.ts` | `companion-server.ts#* /ws`, `lib/request-gate.ts`, `routes/brain.ts`, `routes/builder-jobs.ts#POST /hooks/builder-progress`, `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/worker-mcp.ts`, `routes/worker-mcp.ts#* /api/mcp/workers` |
 | `companionDbPath()` | `lib/db-path.ts` | `lib/approval-history.ts`, `lib/learned-allow.ts`, `lib/orchestrator-db.ts`, `lib/push-tokens.ts`, `lib/receipt-qa-store.ts`, `lib/session-titles.ts`, `lib/voice-memo.ts`, `wiring/auto-compact.ts`, `wiring/canvas.ts` |
 | `BODY_CHANNEL()` | `lib/body.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts` |
@@ -618,6 +618,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `openDialogFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
 | `screenSnapshotFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `wiring/auto-compact.ts`, `ws.ts` |
 | `CompactionStats()` | `lib/auto-compact-stats.ts` | `routes/body.ts`, `routes/body.ts#GET /api/body/tokens`, `wiring/auto-compact.ts` |
+| `LEAD_PREFIX()` | `lib/brain.ts` | `routes/brain.ts`, `routes/worker-mcp.ts`, `wiring/brain-lead.ts` |
 | `REASON_MAX()` | `wiring/brain-pr-close.ts` | `routes/brain.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-task-cancel.ts` |
 | `createLimiter()` | `lib/vault-guard.ts` | `routes/capture.ts`, `routes/records.ts`, `routes/trips.ts` |
 | `UpstreamConfig()` | `lib/vault-upstream.ts` | `routes/capture.ts`, `routes/records.ts`, `routes/vault.ts` |
@@ -787,7 +788,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `bodyInvestigator()` | `wiring/body-investigate.ts` | `routes/body.ts`, `wiring/triage.ts` |
 | `BrainWiring()` | `wiring/brain.ts` | `routes/brain.ts`, `routes/worker-mcp.ts` |
 | `leadSlug()` | `lib/brain.ts` | `routes/brain.ts`, `wiring/brain-lead.ts` |
-| `LEAD_PREFIX()` | `lib/brain.ts` | `routes/brain.ts`, `routes/worker-mcp.ts` |
 | `latestRows()` | `lib/brain-trace.ts` | `routes/brain.ts`, `ws.ts` |
 | `SendResult()` | `lib/canvas.ts` | `routes/canvas.ts`, `wiring/canvas.ts` |
 | `CanvasStore()` | `lib/canvas.ts` | `routes/canvas.ts`, `wiring/canvas.ts` |
