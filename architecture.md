@@ -12,7 +12,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 |---|---|---|---|---|
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 597 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `lib/worker-supervisor.ts` | 595 | lib | 13 |  |
+| `lib/worker-supervisor.ts` | 597 | lib | 13 |  |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 584 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 578 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -168,11 +168,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-stuck-events.ts` | 136 | lib | 4 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/transcript-backfill.ts` | 131 | lib | 6 |  |
+| `lib/worker-pr-link.ts` | 131 | lib | 7 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
-| `lib/worker-pr-link.ts` | 120 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
@@ -191,10 +191,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
-| `wiring/worker-mcp.ts` | 98 | lib | 3 |  |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |
+| `wiring/worker-mcp.ts` | 94 | lib | 3 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `lib/turso-test-db.test-util.ts` | 93 | lib | 5 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |

@@ -45,8 +45,8 @@ export interface WorkerSupervisorDeps {
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
   onTaskTerminal?(task: SupervisedTaskSnapshot): void
-  /** Once, at a task id's first dispatch: may this worker task link its PR to the Turso row of the same id? Persisted. */
-  bindTask?(taskId: string, repo: string): Promise<boolean>
+  /** May this worker task link its PR to the Turso row of its id? Persisted once answered; null (lookup failed) = ask next turn. */
+  bindTask?(taskId: string, repo: string): Promise<boolean | null>
   /** A bound task's turn reported a PR: link it before the turn is marked completed. Bounded by the caller, never rejects. */
   linkPr?(task: SupervisedTaskSnapshot): Promise<string>
 }
@@ -108,11 +108,11 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
 
 interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
-  /** bindTask said yes at this id's first dispatch: only then is its PR linked to the Turso row. */
-  prLinkBound?: boolean
+  /** bindTask's answer for this id: only true links the PR to the Turso row. Absent / null = not answered yet. */
+  prLinkBound?: boolean | null
 }
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null
   activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
@@ -205,7 +205,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
         pid: survivingPid, pidIdentity: survivingIdentity, reloadedFromDisk: survivingPid !== null,
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
-        prLinkBound: r.prLinkBound === true,
+        prLinkBound: typeof r.prLinkBound === "boolean" ? r.prLinkBound : null,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       }
@@ -335,7 +335,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
-        const prLinkBound = existing ? existing.prLinkBound : await (deps.bindTask?.(taskId, repo) ?? Promise.resolve(false)).catch(() => false)
+        const prLinkBound = existing && existing.prLinkBound !== null ? existing.prLinkBound
+          : deps.bindTask ? await deps.bindTask(taskId, repo).catch(() => null) : false
 
         const now = deps.now()
         const familyChanged = !!existing && existing.family !== family
@@ -370,6 +371,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
 
         clearTimers(task)
+        task.prLinkBound = prLinkBound
         task.title = title; task.family = family; task.model = effectiveModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
@@ -443,7 +445,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               if (code === 0 && !sig && !task.error) {
                 // The link lands before the turn reads completed (await_task, the brain): the shepherd reads origin through it.
-                if (task.prUrl && task.prLinkBound && deps.linkPr) {
+                if (task.prUrl && task.prLinkBound === true && deps.linkPr) {
                   task.step = `Linking PR: ${task.prUrl}`
                   savePersistedTasks()
                   void deps.linkPr(toSnapshot(task)).catch(() => "link_failed").then((link) => {

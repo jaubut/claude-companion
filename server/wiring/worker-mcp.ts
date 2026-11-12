@@ -9,7 +9,7 @@ import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
-import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "../lib/worker-pr-link"
+import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { getBrainDeliver } from "./brain"
@@ -67,11 +67,7 @@ export function replayWorkerPrLinks(): void {
 
 function notifyBrain(task: SupervisedTaskSnapshot): void {
   if (!brainEnabled()) return
-  const text = task.status === "completed"
-    ? task.prUrl
-      ? `PR ready [${task.taskId}] ${task.repo} — ${task.prUrl}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-      : `completed [${task.taskId}] ${task.repo} — ${task.title}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-    : `blocked [${task.taskId}] ${task.repo} — ${task.title}\nError: ${(task.error || "worker failed").slice(0, 400)}`
+  const text = workerReceipt(task)
   const leadTask = `${LEAD_PREFIX}${task.repo}`
   const leadSession = listSessions().find((s) => s.taskId === leadTask)
   const deliver = getBrainDeliver()

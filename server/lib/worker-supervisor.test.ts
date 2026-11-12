@@ -14,6 +14,7 @@ import {
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
+import { workerReceipt } from "./worker-pr-link"
 
 describe("parseStreamJsonLine", () => {
   test("parses assistant tool_use, text with PR URL, result, and ignores malformed JSON", () => {
@@ -581,7 +582,7 @@ describe("createWorkerSupervisor", () => {
 
   describe("PR link binding (tasks.dispatch_pr_url)", () => {
     const PR = "https://github.com/jaubut/claude-companion/pull/999"
-    function harness(home: string, o: { bind?: boolean; link?: (t: { taskId: string; prUrl: string | null; status: string }) => Promise<string> } = {}) {
+    function harness(home: string, o: { bind?: boolean | null | (() => Promise<boolean | null>); link?: (t: { taskId: string; prUrl: string | null; status: string }) => Promise<string> } = {}) {
       const spawned: SpawnWorkerOpts[] = []
       const binds: Array<[string, string]> = []
       const links: Array<{ taskId: string; prUrl: string | null; status: string }> = []
@@ -591,7 +592,7 @@ describe("createWorkerSupervisor", () => {
         host: "zettlab", home, now: () => 1700000000000, uuid: () => `eeee1111-2222-4333-8444-55555555555${uuidN++ % 10}`,
         trust: () => {}, reportJob: () => {},
         onTaskTerminal: (t) => { terminal.push(`${t.status}:${t.step}`) },
-        bindTask: async (taskId, repo) => { binds.push([taskId, repo]); return o.bind ?? true },
+        bindTask: async (taskId, repo) => { binds.push([taskId, repo]); return typeof o.bind === "function" ? o.bind() : o.bind === undefined ? true : o.bind },
         linkPr: async (t) => { links.push({ taskId: t.taskId, prUrl: t.prUrl, status: t.status }); return o.link ? o.link(t) : "linked" },
         sh: async (_cmd, args) => {
           if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
@@ -705,6 +706,43 @@ describe("createWorkerSupervisor", () => {
       } finally {
         rmSync(home, { recursive: true, force: true })
       }
+    })
+
+    test("a failed bind lookup persists no answer and is retried on the next turn", async () => {
+      const home = tmpHome()
+      try {
+        const answers: Array<boolean | null> = [null, true]
+        const a = harness(home, { bind: async () => answers.shift()! })
+        await a.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Ship PR" })
+        a.finish(0)
+        await flush(); await flush()
+        expect(a.links).toEqual([])
+        const file = join(home, ".claude", "state", "companion-worker-tasks.json")
+        const saved = (JSON.parse(readFileSync(file, "utf8")) as Array<{ taskId: string; prLinkBound?: unknown }>).find((r) => r.taskId === "bind-7")!
+        expect(saved.prLinkBound ?? null).toBeNull()
+
+        const b = harness(home, { bind: async () => answers.shift()! })
+        await b.sup.dispatchTask({ taskId: "bind-7", repo: "claude-companion", prompt: "Fix round" })
+        expect(b.binds).toEqual([["bind-7", "claude-companion"]])
+        b.finish(0)
+        await flush(); await flush()
+        expect(b.links.map((l) => l.taskId)).toEqual(["bind-7"])
+        const again = (JSON.parse(readFileSync(file, "utf8")) as Array<{ taskId: string; prLinkBound?: unknown }>).find((r) => r.taskId === "bind-7")!
+        expect(again.prLinkBound).toBe(true)
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("the brain's PR-ready receipt says when the link is still pending or was refused", () => {
+      const base = { taskId: "t1", repo: "claude-companion", title: "T", status: "completed" as const, prUrl: PR, result: "", error: null }
+      expect(workerReceipt({ ...base, step: `PR ready: ${PR}` })).toBe(`PR ready [t1] claude-companion — ${PR}`)
+      const pending = workerReceipt({ ...base, step: `PR ready: ${PR} (PR link still pending)` })
+      expect(pending).toBe(`PR ready [t1] claude-companion — ${PR} (PR link still pending)`)
+      expect(pending).toMatch(/^PR ready\s+\[/)
+      expect(workerReceipt({ ...base, step: `PR ready: ${PR} (not linked: branch_mismatch)` })).toEndWith("(not linked: branch_mismatch)")
+      expect(workerReceipt({ ...base, prUrl: null, step: "Turn completed", result: "ok" })).toBe("completed [t1] claude-companion — T\nResult: ok")
+      expect(workerReceipt({ ...base, status: "failed", prUrl: null, step: "Failed", error: "boom" })).toBe("blocked [t1] claude-companion — T\nError: boom")
     })
   })
 })

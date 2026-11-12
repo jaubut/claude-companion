@@ -6348,13 +6348,14 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 120,
+          "lines": 131,
           "kind": "lib",
           "exports": [
             "OWNABLE",
             "LinkOutcome",
             "bindWorkerTask",
             "linkWorkerPr",
+            "workerReceipt",
             "Linked",
             "backfillWorkerPrLinks"
           ],
@@ -6374,7 +6375,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 595,
+          "lines": 597,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -9139,7 +9140,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 98,
+          "lines": 94,
           "kind": "lib",
           "exports": [
             "workerSupervisor",
@@ -18954,6 +18955,12 @@
         },
         "SupervisedTaskSnapshot": {
           "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "workerReceipt": {
+          "module": "lib/worker-pr-link.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

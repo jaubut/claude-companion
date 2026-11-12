@@ -169,7 +169,7 @@ describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
     expect(await bindWorkerTask(tursoExec, ID, "TLS-Dashboard-V2")).toBe(true)
   })
 
-  test("no binding: another repo's row, no row, a done / claimed / linked row, a failed read", async () => {
+  test("no binding: another repo's row, no row, a done / claimed / linked row; a failed read is no answer (null)", async () => {
     await seed(ID)
     expect(await bindWorkerTask(tursoExec, ID, "claude-config")).toBe(false)
     expect(await bindWorkerTask(tursoExec, `${ID.slice(0, 31)}z`, "tls-dashboard-v2")).toBe(false)
@@ -178,7 +178,7 @@ describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
     await seed(ids[1]!, { owner: "zettlab" })
     await seed(ids[2]!, { pr: URL("tls-dashboard-v2", 1) })
     for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2")).toBe(false)
-    expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2")).toBe(false)
+    expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2")).toBeNull()
   })
 })
 

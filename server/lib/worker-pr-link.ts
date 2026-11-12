@@ -7,7 +7,7 @@ import { REPO_NAME_RE, TASK_ID_RE } from "./worker-invocation"
 // Two halves, both needed:
 //  - bindWorkerTask, once, when the supervisor first dispatches a task id (the trusted side): the Turso row of that id
 //    must be OWNABLE (a brain handoff, open, never claimed by dispatch-run or the relay, unlinked) and its description
-//    must name the repo. The supervisor persists the answer; an unbound worker task never links, and the supervisor
+//    must name the repo. The supervisor persists a definitive answer (a failed read is retried next turn); an unbound worker task never links, and the supervisor
 //    refuses the same id under another repo (task_repo_mismatch).
 //  - linkWorkerPr, on "PR ready" of a bound task: GitHub must show jaubut/<repo> with head `dispatch/<task id>` from that
 //    repo (not a fork); GitHub's canonical url is written by a compare-and-set on OWNABLE, so a link is never overwritten.
@@ -51,12 +51,12 @@ async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<L
   }
 }
 
-/** Dispatch-time binding: the row of this id is OWNABLE and its description names the repo. Any failure = unbound. */
-export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string): Promise<boolean> {
+/** Dispatch-time binding: the row of this id is OWNABLE and its description names the repo. null = the read failed (no answer). */
+export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string): Promise<boolean | null> {
   try {
     return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE} AND instr(lower(COALESCE(description, '')), lower(?)) > 0`, [taskId, repo])).rows.length > 0
   } catch {
-    return false
+    return null
   }
 }
 
@@ -74,6 +74,17 @@ export function linkWorkerPr(deps: LinkDeps, t: LinkTarget, opts: { write?: bool
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<LinkOutcome>((resolve) => { timer = setTimeout(() => resolve("timeout"), opts.deadlineMs) })
   return Promise.race([run, deadline]).finally(() => clearTimeout(timer))
+}
+
+/** The brain's terminal message for a worker turn. "PR ready [" stays first (lib/brain.ts receipt match); the step's
+ *  link note, e.g. "(PR link still pending)", follows the url so the brain hears when the link hasn't landed. */
+export function workerReceipt(t: { taskId: string; repo: string; title: string; status: string; step: string | null; prUrl: string | null; result: string; error: string | null }): string {
+  const result = t.result ? `\nResult: ${t.result.slice(0, 600)}` : ""
+  if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}`
+  if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}`
+  const head = `PR ready: ${t.prUrl}`
+  const note = t.step?.startsWith(head) ? t.step.slice(head.length) : ""
+  return `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${note}${result}`
 }
 
 export interface Linked { taskId: string; repo: string; prUrl: string; outcome: LinkOutcome }
@@ -101,7 +112,7 @@ export async function backfillWorkerPrLinks(
     const { taskId, repo } = r
     const eligible = r.prLinkBound === true
       ? await deps.exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId]).then((x) => x.rows.length > 0, () => false)
-      : opts.includeUnbound === true && await bindWorkerTask(deps.exec, taskId, repo)
+      : opts.includeUnbound === true && await bindWorkerTask(deps.exec, taskId, repo) === true
     if (!eligible) continue
     const list = await deps.gh(["pr", "list", "--repo", `jaubut/${repo}`, "--head", `dispatch/${taskId}`, "--state", "open", "--json", "url"]).catch(() => null)
     let prs: unknown = null
