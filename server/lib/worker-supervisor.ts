@@ -49,7 +49,7 @@ export interface WorkerSupervisorDeps {
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
-  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo)].filter(Boolean)
+  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo), join(home, ".cache", "dispatch-repos", repo)].filter(Boolean)
   for (const c of candidates) if (existsSync(join(c, ".git"))) return c
   return null
 }
@@ -132,6 +132,16 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+
+  // No checkout on this host: a full clone of jaubut/<repo> into ~/apps/<repo>, where the resolver finds it next time.
+  // Never ~/leads/<repo>: a lead's clone is shallow, lead-writable and wiped on every lead respawn.
+  async function cloneRepo(repo: string): Promise<string | null> {
+    const dir = join(deps.home, "apps", repo)
+    if (existsSync(dir)) return null
+    mkdirSync(dirname(dir), { recursive: true })
+    const r = await deps.sh("git", ["clone", "-q", `https://github.com/jaubut/${repo}.git`, dir], { cwd: deps.home, timeoutMs: 300_000 })
+    return r.ok && existsSync(join(dir, ".git")) ? dir : null
+  }
 
   function syncTaskSession(t: InternalTask): void {
     try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null) } catch { /* best effort */ }
@@ -320,7 +330,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       inFlightDispatches.add(taskId); inFlightWorktrees.add(wtKey)
       try {
         if (existing && !(await reconcileSurvivingProcess(existing))) return { ok: false, status: 409, error: "task_already_running" }
-        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home)
+        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(repo)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
