@@ -48,19 +48,12 @@ import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistor
 // before the split.
 
 export async function handleApiRoute(req: Request, url: URL): Promise<Response | null> {
-  // ── Approval resolve (HTTP — for iOS notification actions) ──
-  // The WebSocket route does the same thing for PWA clients, but iOS
-  // notification-action handlers have ~30s of background runtime and a
-  // single POST is faster + cheaper than negotiating a WS.
+  // Approval resolve (HTTP — for iOS notification actions)
   if (url.pathname === "/api/resolve" && req.method === "POST") {
     return withIdempotency(req, "resolve", () => handleResolve(req))
   }
 
-  // ── AskUserQuestion answer (HTTP) ──
-  // Counterpart to /api/resolve, but for the structured-question flow.
-  // Body: { id, answers: [{selected: string[], otherText?}] } — one
-  // entry per question, in order. Resolves the pending question; the
-  // PreToolUse hook handler then drives the local picker via tmux.
+  // AskUserQuestion answer (HTTP)
   if (url.pathname === "/api/answer" && req.method === "POST") {
     return withIdempotency(req, "answer", () => handleAnswer(req))
   }
@@ -441,20 +434,7 @@ async function handleInject(req: Request): Promise<Response> {
 export async function deliverInject(text: string, key?: string, cwd?: string, boundSid?: string, canDeliver?: () => boolean): Promise<Response> {
   const lookup = key || cwd || ""
   let target = lookup ? resolveSession(lookup) : null
-  // The target the caller actually named, captured before the fallback below
-  // reassigns `target`. Only this one may have its waiting badge cleared:
-  // the fallback is a delivery convenience and picks whichever session was
-  // active last, which is not the session the text was addressed to.
   const explicit = target
-
-  // No explicit target: pick the most-recently-active registered
-  // session as "frontmost". On Linux this is the only sane fallback —
-  // the legacy pbcopy + Cmd+V path is macOS-only and ENOENTs on Bun
-  // under Linux. On macOS this is also a safer default than blind
-  // System Events paste into whatever app happens to be frontmost
-  // (Cursor, Safari, anything). Caller that truly wants the
-  // System-Events fallback can still send key="" + cwd="" on a
-  // server with no registered sessions; injectText handles that.
   if (!lookup) {
     const recent = listSessions().find(s => !!s.tty || s.herdrPane?.startsWith("headless:"))
     if (recent) target = recent
@@ -462,71 +442,35 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
 
   // Headless session delivery (BKM-Q24R): brain, Inverted MCP workers, and headless Antigravity conversations.
   if (target?.herdrPane?.startsWith("headless:")) {
-    if (boundSid && target.sessionId !== boundSid) {
-      return Response.json({ ok: false, error: "target_changed", key, cwd }, { status: 409 })
-    }
-    if (canDeliver && !canDeliver()) {
+    if ((boundSid && target.sessionId !== boundSid) || (canDeliver && !canDeliver())) {
       return Response.json({ ok: false, error: "target_changed", key, cwd }, { status: 409 })
     }
     const { cleared } = clearWaitingForTarget(explicit, "turn-end")
     announceWaiting(cleared)
-    recordUserPrompt({
-      text,
-      cwd: target.cwd,
-      sessionId: target.sessionId,
-      tty: target.tty,
-      sessionKey: target.key,
-    })
+    recordUserPrompt({ text, cwd: target.cwd, sessionId: target.sessionId, tty: target.tty, sessionKey: target.key })
     if (target.herdrPane === "headless:brain") {
       const r = await headlessBrainRunner.deliver(text)
-      if (!r.ok) return r
-      return Response.json({ ok: true, confirmed: true })
+      return r.ok ? Response.json({ ok: true, confirmed: true }) : r
     }
     if (target.herdrPane.startsWith("headless:worker:")) {
       const taskId = target.taskId || target.herdrPane.slice("headless:worker:".length)
       const existing = workerSupervisor.getTask(taskId)
       const dispatched = await workerSupervisor.dispatchTask({
-        taskId,
-        repo: existing?.repo || basename(target.cwd),
-        title: existing?.title || target.title || taskId,
-        prompt: text,
-        mode: "auto",
-        family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
+        taskId, repo: existing?.repo || basename(target.cwd), title: existing?.title || target.title || taskId,
+        prompt: text, mode: "auto", family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
         model: (target.model || existing?.model) ?? undefined,
       })
-      if (!dispatched.ok) {
-        return Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
-      }
-      return Response.json({ ok: true, confirmed: true })
+      return dispatched.ok
+        ? Response.json({ ok: true, confirmed: true })
+        : Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
     }
     if (target.herdrPane.startsWith("headless:agy:")) {
-      const ok = deliverHeadlessAgyTurn({
-        sessionId: target.sessionId,
-        cwd: target.cwd,
-        prompt: text,
-      })
+      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text })
       return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
     }
   }
 
-  // A dialog the COMPANION opened (the /help command scrape) is ours to
-  // close, not the user's problem — stop it and take the pane back before
-  // the refusal check even looks. If we could NOT take it back, the pane is
-  // in an unknown state (the scrape may still have its modal up and the
-  // watcher is still skipping that session, so the dialog check below would
-  // pass on a stale null): it is a `busy_flow` refusal below, not a blind
-  // send-keys.
   const paneFree = await yieldPaneForInject(target)
-
-  // Refuse before clearing any waiting reason (see lib/inject-guard.ts):
-  // target not registered, no live tty, or a dialog in the way. A dialog is
-  // modal in the pane — typing into one answers it instead of reaching the
-  // input box — so it is a refusal, not a delivery problem.
-  // With the pane still held there is nothing to learn from the watcher —
-  // it is skipping that session for the duration of the flow.
-  // Last, the pane itself: an input box that is on screen and empty, or a
-  // refusal (pane_not_ready) — the agents panel, the shortcuts overlay and a
-  // late /help take keys without ever becoming a Dialog.
   const refusal = injectRefusal({
     lookup, target, paneFree,
     dialog: paneFree ? await openDialogFor(target) : null,
@@ -534,10 +478,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
     paneWidth: paneFree ? await paneWidthFor(target) : undefined,
   })
   if (refusal) {
-    const dim = "\x1b[2m"; const reset = "\x1b[0m"; const red = "\x1b[31m"
-    // label is often empty (a session with no resolved title), so fall back
-    // to the key — an unnamed refusal reads as "inject refused — has a
-    // dialog open", which names nothing.
+    const reset = "\x1b[0m"; const red = "\x1b[31m"
     const who = target?.label || target?.key || lookup
     const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
       : refusal.error === "target_idle" ? `target ${who} has no live tty`
@@ -546,26 +487,16 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
       : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
       : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
     companionLog(`${red}inject refused${reset} — ${why}`)
-    // 409 for the dialog and for a pane we could not take back: the request
-    // is fine and the target is alive, it just can't accept text yet. 410
-    // stays the "this target is gone" code the phone already maps to a
-    // re-pin prompt.
     const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" || refusal.error === "pane_too_narrow" ? 409 : 410
     return Response.json({
       ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt, width: refusal.width,
     }, { status })
   }
 
-  const dim = "\x1b[2m"
-  const reset = "\x1b[0m"
-  const cyan = "\x1b[36m"
+  const reset = "\x1b[0m"; const cyan = "\x1b[36m"
   const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
   companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
 
-  // Clear only what the caller named, and only its turn-end reason: typed
-  // text answers neither a pending approval nor an open dialog. With no
-  // explicit target and more than one session waiting on a turn-end, clear
-  // nothing rather than blank the wrong badge.
   const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
   announceWaiting(cleared)
   if (!cleared && refused > 0) {

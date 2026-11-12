@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-11",
+  "generatedAt": "2026-11-12",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -176,7 +176,7 @@
         },
         {
           "path": "lib/agent-pid.ts",
-          "lines": 37,
+          "lines": 38,
           "kind": "lib",
           "exports": [
             "isAgentPidAlive",
@@ -189,6 +189,43 @@
           "apiCalls": [],
           "imports": [
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/agy-feed.ts",
+          "lines": 358,
+          "kind": "lib",
+          "exports": [
+            "AgyConversationSummary",
+            "agyRootDir",
+            "agySummariesDbPath",
+            "agyTranscriptPath",
+            "readAgyModel",
+            "extractAgyUserPrompt",
+            "parseAgyTranscriptLine",
+            "eventsFromAgyTranscript",
+            "readRecentAgyConversations",
+            "startAgyFeedMonitor",
+            "deliverHeadlessAgyTurn"
+          ],
+          "state": [
+            "offsets: Map",
+            "let timer"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feed.ts",
+            "lib/sessions.ts",
+            "lib/tool-format.ts",
+            "lib/transcript.ts",
+            "lib/transcript-cursor.ts",
+            "lib/transcript-backfill.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1011,7 +1048,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 248,
+          "lines": 244,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1020,7 +1057,6 @@
             "RESERVED_CHANNELS",
             "BRAIN_TAKE_PREFIX",
             "BrainState",
-            "LEAD_REPOS",
             "LEAD_PREFIX",
             "leadSlug",
             "brainEnabled",
@@ -1687,7 +1723,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 501,
+          "lines": 578,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1727,7 +1763,8 @@
             "lib/dispatch-worker.ts",
             "lib/tmux-pane.ts",
             "lib/log.ts",
-            "lib/herdr.ts"
+            "lib/herdr.ts",
+            "lib/agy-feed.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2197,7 +2234,7 @@
         },
         {
           "path": "lib/herdr.ts",
-          "lines": 380,
+          "lines": 381,
           "kind": "lib",
           "exports": [
             "ExecResult",
@@ -2548,7 +2585,7 @@
         },
         {
           "path": "lib/keyboard-inject.ts",
-          "lines": 572,
+          "lines": 568,
           "kind": "lib",
           "exports": [
             "InjectTarget",
@@ -4559,7 +4596,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 600,
+          "lines": 597,
           "kind": "lib",
           "exports": [
             "Session",
@@ -5291,12 +5328,13 @@
         },
         {
           "path": "lib/transcript-backfill.ts",
-          "lines": 119,
+          "lines": 131,
           "kind": "lib",
           "exports": [
             "HISTORY_MAX",
             "HistorySession",
             "eventsFromTranscript",
+            "filterHistoryRows",
             "historyRows",
             "historyFor"
           ],
@@ -5306,6 +5344,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/agy-feed.ts",
             "lib/feed.ts",
             "lib/recent-sessions.ts",
             "lib/session-titles.ts",
@@ -6212,8 +6251,41 @@
           "externals": []
         },
         {
+          "path": "lib/worker-invocation.ts",
+          "lines": 194,
+          "kind": "lib",
+          "exports": [
+            "TASK_ID_RE",
+            "REPO_NAME_RE",
+            "SAFE_IDENTIFIER_RE",
+            "ALLOWED_MODES",
+            "WorkerFamily",
+            "ALLOWED_FAMILIES",
+            "WorkerTaskStatus",
+            "StreamJsonEvent",
+            "parseStreamJsonLine",
+            "buildWorkerEnv",
+            "resolveWorkerFamily",
+            "buildHeadlessClaudeArgs",
+            "buildHeadlessCodexArgs",
+            "buildHeadlessGeminiArgs",
+            "buildHeadlessWorkerInvocation"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/secret-redact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-mcp.ts",
-          "lines": 267,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "WORKER_MCP_TOOLS",
@@ -6239,16 +6311,9 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 594,
+          "lines": 542,
           "kind": "lib",
           "exports": [
-            "TASK_ID_RE",
-            "REPO_NAME_RE",
-            "SAFE_IDENTIFIER_RE",
-            "ALLOWED_MODES",
-            "WorkerTaskStatus",
-            "StreamJsonEvent",
-            "parseStreamJsonLine",
             "DispatchTaskInput",
             "SupervisedTaskSnapshot",
             "SpawnedWorkerHandle",
@@ -6259,8 +6324,6 @@
             "defaultKillPid",
             "defaultGetPidIdentity",
             "defaultSpawnWorker",
-            "buildWorkerEnv",
-            "buildHeadlessClaudeArgs",
             "createWorkerSupervisor",
             "WorkerSupervisor"
           ],
@@ -6272,7 +6335,8 @@
           "imports": [
             "lib/builder-jobs.ts",
             "lib/live-repo.ts",
-            "lib/secret-redact.ts"
+            "lib/secret-redact.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6280,7 +6344,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 600,
+          "lines": 584,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -6426,6 +6490,9 @@
           "apiCalls": [],
           "imports": [
             "lib/pty-manager.ts",
+            "lib/agy-feed.ts",
+            "wiring/brain.ts",
+            "wiring/worker-mcp.ts",
             "lib/log.ts",
             "lib/questions.ts",
             "lib/submit-confirm.ts",
@@ -6587,7 +6654,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 345,
+          "lines": 347,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6716,12 +6783,14 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 212,
+          "lines": 261,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
           ],
-          "state": [],
+          "state": [
+            "let cachedAgyCommands"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [
@@ -6738,6 +6807,7 @@
           ],
           "apiCalls": [],
           "imports": [
+            "lib/command-list.ts",
             "lib/command-menu.ts",
             "lib/shell-sessions.ts",
             "lib/log.ts",
@@ -6914,7 +6984,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 556,
+          "lines": 565,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -7037,7 +7107,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 207,
+          "lines": 294,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -7073,7 +7143,9 @@
             "lib/sessions.ts",
             "lib/session-pane.ts",
             "wiring/dialogs.ts",
-            "lib/json-body.ts"
+            "lib/json-body.ts",
+            "wiring/brain.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7724,12 +7796,42 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-headless.ts",
+          "lines": 182,
+          "kind": "lib",
+          "exports": [
+            "BRAIN_DIR",
+            "HEADLESS_BRAIN_PANE",
+            "getBrainModel",
+            "createHeadlessBrainRunner"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/last-assistant.ts",
+            "lib/session-titles.ts",
+            "lib/sessions.ts",
+            "lib/spawn-session.ts",
+            "lib/worker-supervisor.ts",
+            "wiring/brain-workers.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-lead.ts",
-          "lines": 152,
+          "lines": 156,
           "kind": "lib",
           "exports": [
             "leadArgs",
             "leadDir",
+            "leadCheckout",
             "leadSettings",
             "leadIsolated",
             "prepareLeadDir",
@@ -8023,7 +8125,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 600,
+          "lines": 593,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -8033,8 +8135,9 @@
             "proposalHandedOff",
             "createBrainWiring",
             "BrainWiring",
-            "BRAIN_DIR",
             "setBrainDeliver",
+            "headlessBrainRunner",
+            "setBrainModel",
             "brainWiring"
           ],
           "state": [
@@ -8059,18 +8162,13 @@
             "lib/dispatch-tasks.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
-            "lib/herdr.ts",
-            "lib/last-assistant.ts",
-            "lib/session-titles.ts",
             "lib/push.ts",
             "lib/apns.ts",
             "wiring/gauge.ts",
-            "wiring/auto-compact.ts",
-            "wiring/brain-workers.ts",
-            "wiring/brain-restore.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
-            "wiring/dispatch.ts"
+            "wiring/dispatch.ts",
+            "wiring/brain-headless.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8966,7 +9064,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 25,
+          "lines": 63,
           "kind": "lib",
           "exports": [
             "workerSupervisor",
@@ -8978,12 +9076,16 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/brain.ts",
             "lib/live-repo.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/worker-mcp.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
-            "wiring/builder-jobs.ts"
+            "wiring/builder-jobs.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9202,7 +9304,9 @@
           "module": "lib/sessions.ts",
           "callers": [
             "companion-server.ts",
+            "lib/agy-feed.ts",
             "lib/codex-feed.ts",
+            "lib/discover.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/shell/close",
@@ -9243,6 +9347,7 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/worker-blocked.ts",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -9263,8 +9368,8 @@
           "callers": [
             "companion-server.ts",
             "routes/brain.ts",
-            "wiring/brain-restore.ts",
-            "wiring/brain.ts"
+            "wiring/brain-headless.ts",
+            "wiring/brain-restore.ts"
           ]
         },
         "brainWiring": {
@@ -9655,6 +9760,7 @@
           "callers": [
             "lib/activity.ts",
             "lib/agent-pid.ts",
+            "lib/agy-feed.ts",
             "lib/canvas.ts",
             "lib/command-menu.ts",
             "lib/dialog-watch.ts",
@@ -9672,8 +9778,10 @@
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
+            "routes/model.ts",
             "routes/worker-mcp.ts",
             "wiring/auto-compact.ts",
+            "wiring/brain-headless.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/dialogs.ts",
@@ -9704,6 +9812,7 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/transcript-artifacts.ts",
             "lib/transcript.ts"
@@ -9731,6 +9840,7 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/agy-feed.ts",
             "lib/approval-history-auto.ts",
             "lib/approval-history.ts",
             "lib/codex-feed.ts",
@@ -9745,6 +9855,7 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
+            "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/transcript-backfill.ts",
             "lib/transcript.ts"
@@ -9766,6 +9877,37 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/activity.ts"
+          ]
+        },
+        "FeedEvent": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/codex-feed.ts",
+            "lib/transcript-artifacts.ts",
+            "lib/transcript-backfill.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "THINKING_MAX": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "HistorySession": {
+          "module": "lib/transcript-backfill.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "readTailLines": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "lib/transcript.ts"
           ]
         },
         "ApnsEnv": {
@@ -9914,6 +10056,7 @@
             "lib/jev-route-log.ts",
             "lib/quick-look.ts",
             "lib/worker-blocked.ts",
+            "lib/worker-invocation.ts",
             "lib/worker-supervisor.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
@@ -10545,6 +10688,7 @@
             "lib/brain-workers.ts",
             "routes/brain.ts",
             "routes/worker-mcp.ts",
+            "wiring/brain-headless.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -10569,7 +10713,8 @@
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "Judgement": {
@@ -10589,15 +10734,6 @@
           "callers": [
             "lib/canvas.ts",
             "lib/transcript.ts",
-            "wiring/events.ts"
-          ]
-        },
-        "FeedEvent": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "lib/codex-feed.ts",
-            "lib/transcript-artifacts.ts",
-            "lib/transcript-backfill.ts",
             "wiring/events.ts"
           ]
         },
@@ -10634,7 +10770,8 @@
           "callers": [
             "lib/command-menu.ts",
             "lib/command-offpane-cache.ts",
-            "lib/command-offpane.ts"
+            "lib/command-offpane.ts",
+            "routes/command.ts"
           ]
         },
         "Dialog": {
@@ -10802,7 +10939,6 @@
             "wiring/brain-lead.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-workers.ts",
-            "wiring/brain.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -11072,8 +11208,26 @@
             "lib/discover.ts"
           ]
         },
+        "AgyConversationSummary": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "mapTtysToPanes": {
           "module": "lib/tmux-pane.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "readRecentAgyConversations": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "readAgyModel": {
+          "module": "lib/agy-feed.ts",
           "callers": [
             "lib/discover.ts"
           ]
@@ -11090,7 +11244,11 @@
             "routes/hooks.ts#POST /hooks/permission-request",
             "routes/hooks.ts#POST /hooks/stop",
             "routes/hooks.ts#POST /hooks/session-start",
-            "wiring/brain.ts"
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts#POST /api/model/set",
+            "wiring/brain-headless.ts",
+            "wiring/brain.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "seenKey": {
@@ -12030,7 +12188,7 @@
             "lib/orphan-question.ts",
             "lib/transcript-backfill.ts",
             "wiring/auto-compact.ts",
-            "wiring/brain.ts",
+            "wiring/brain-headless.ts",
             "wiring/events.ts"
           ]
         },
@@ -12146,6 +12304,7 @@
           "callers": [
             "lib/project-catalog.ts",
             "lib/spawn-seed.ts",
+            "wiring/brain-lead.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts"
           ]
@@ -13318,6 +13477,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "lib/spawn-seed.ts",
+            "wiring/brain-lead.ts",
             "wiring/repo-view.ts"
           ]
         },
@@ -13654,19 +13814,6 @@
             "lib/transcript-artifacts.ts"
           ]
         },
-        "readTailLines": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/transcript-backfill.ts",
-            "lib/transcript.ts"
-          ]
-        },
-        "THINKING_MAX": {
-          "module": "lib/transcript.ts",
-          "callers": [
-            "lib/transcript-backfill.ts"
-          ]
-        },
         "getFeed": {
           "module": "lib/feed.ts",
           "callers": [
@@ -13680,6 +13827,18 @@
           "callers": [
             "lib/transcript-backfill.ts",
             "wiring/events.ts"
+          ]
+        },
+        "agyTranscriptPath": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "eventsFromAgyTranscript": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/transcript-backfill.ts"
           ]
         },
         "findTranscript": {
@@ -14203,6 +14362,96 @@
             "lib/worker-mcp.ts"
           ]
         },
+        "TASK_ID_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "REPO_NAME_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "SAFE_IDENTIFIER_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "ALLOWED_MODES": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "ALLOWED_FAMILIES": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "WorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "WorkerTaskStatus": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "StreamJsonEvent": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessClaudeArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessCodexArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessGeminiArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "parseStreamJsonLine": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildWorkerEnv": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "resolveWorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessWorkerInvocation": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "BuilderReport": {
           "module": "lib/builder-jobs.ts",
           "callers": [
@@ -14350,6 +14599,7 @@
           "module": "lib/live-repo.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-lead.ts",
             "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
@@ -14364,6 +14614,7 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
+            "wiring/brain-headless.ts",
             "wiring/brain-lead.ts",
             "wiring/brain.ts"
           ]
@@ -14486,6 +14737,7 @@
           "module": "lib/spawn-session.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/brain-headless.ts",
             "wiring/brain-lead.ts",
             "wiring/worker-mcp.ts"
           ]
@@ -14541,6 +14793,47 @@
             "ws.ts"
           ]
         },
+        "clearWaitingForTarget": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "announceWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "recordUserPrompt": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit"
+          ]
+        },
+        "headlessBrainRunner": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "workerSupervisor": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "deliverHeadlessAgyTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "yieldPaneForInject": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -14580,20 +14873,6 @@
             "ws.ts"
           ]
         },
-        "clearWaitingForTarget": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "announceWaiting": {
-          "module": "wiring/waiting.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
         "injectConfirmed": {
           "module": "lib/submit-confirm.ts",
           "callers": [
@@ -14612,14 +14891,6 @@
           "module": "lib/submit-confirm.ts",
           "callers": [
             "routes/api.ts#* /api/feed"
-          ]
-        },
-        "recordUserPrompt": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit"
           ]
         },
         "HISTORY_STATES": {
@@ -14880,6 +15151,12 @@
           "callers": [
             "routes/brain.ts",
             "wiring/brain-lead.ts"
+          ]
+        },
+        "leadCheckout": {
+          "module": "wiring/brain-lead.ts",
+          "callers": [
+            "routes/brain.ts"
           ]
         },
         "LEAD_PREFIX": {
@@ -15457,7 +15734,7 @@
           "module": "lib/last-assistant.ts",
           "callers": [
             "routes/hooks.ts#POST /hooks/stop",
-            "wiring/brain.ts"
+            "wiring/brain-headless.ts"
           ]
         },
         "isSupervisedTask": {
@@ -15523,6 +15800,13 @@
             "wiring/triage.ts"
           ]
         },
+        "ModelChoice": {
+          "module": "lib/model-control.ts",
+          "callers": [
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
         "SessionPane": {
           "module": "lib/session-pane.ts",
           "callers": [
@@ -15555,6 +15839,21 @@
           "module": "lib/model-control.ts",
           "callers": [
             "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "setBrainModel": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "setSessionModel": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set",
+            "wiring/brain-headless.ts",
+            "wiring/events.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "setKeys": {
@@ -15640,7 +15939,8 @@
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "writeCtx": {
@@ -15672,7 +15972,8 @@
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage.ts",
-            "wiring/worker-blocked.ts"
+            "wiring/worker-blocked.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "getTask": {
@@ -16653,6 +16954,34 @@
             "wiring/events.ts"
           ]
         },
+        "getKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-headless.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "SpawnedWorkerHandle": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "setKv": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-headless.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "defaultSpawnWorker": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
         "AgentLookup": {
           "module": "wiring/takeover-liveness.ts",
           "callers": [
@@ -16678,8 +17007,7 @@
           "module": "wiring/brain-workers.ts",
           "callers": [
             "wiring/brain-lead.ts",
-            "wiring/brain-restore.ts",
-            "wiring/brain.ts"
+            "wiring/brain-restore.ts"
           ]
         },
         "folderTrusted": {
@@ -16691,8 +17019,7 @@
         "spawnInHerdr": {
           "module": "lib/spawn-session.ts",
           "callers": [
-            "wiring/brain-lead.ts",
-            "wiring/brain.ts"
+            "wiring/brain-lead.ts"
           ]
         },
         "parked": {
@@ -16720,20 +17047,6 @@
           "module": "lib/brain-workers.ts",
           "callers": [
             "wiring/brain-restore.ts"
-          ]
-        },
-        "getKv": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain.ts"
-          ]
-        },
-        "setKv": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain.ts"
           ]
         },
         "getTaskByDispatchId": {
@@ -16986,6 +17299,24 @@
             "wiring/brain.ts"
           ]
         },
+        "BRAIN_DIR": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "HEADLESS_BRAIN_PANE": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "getBrainModel": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "createBrainActivity": {
           "module": "wiring/brain-activity.ts",
           "callers": [
@@ -17005,14 +17336,8 @@
             "wiring/worker-blocked.ts"
           ]
         },
-        "brainRestore": {
-          "module": "wiring/brain-restore.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "realAutoCompactDeps": {
-          "module": "wiring/auto-compact.ts",
+        "createHeadlessBrainRunner": {
+          "module": "wiring/brain-headless.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -17355,12 +17680,6 @@
         },
         "modelFromTranscript": {
           "module": "lib/transcript.ts",
-          "callers": [
-            "wiring/events.ts"
-          ]
-        },
-        "setSessionModel": {
-          "module": "lib/sessions.ts",
           "callers": [
             "wiring/events.ts"
           ]

@@ -547,12 +547,7 @@ export function removeSessionByTty(tty: string): boolean {
   return removed
 }
 
-// Precise removal by tmux pane — the tmux equivalent of removeSessionByTty,
-// for workers whose hooks report a pane but no usable tty. Without it a
-// session-end from one worker falls through to removeSessionByCwd and takes
-// every sibling session in that directory with it.
-// With `socket` (the hook's $TMUX socket) only that server's pane matches;
-// omitted keeps the old any-server match.
+// Precise removal by tmux pane — the tmux equivalent of removeSessionByTty.
 export function removeSessionByTmuxPane(pane: string, socket?: string): boolean {
   if (!pane) return false
   let removed = false
