@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFil
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
+import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 import {
@@ -318,11 +319,22 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const familyChanged = !!existing && existing.family !== family
         const resume = !!existing && existing.sessionStarted && !familyChanged
         const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
-        const effectiveModel = model ?? existing?.model ?? (family === "claude" ? "claude-sonnet-5-5" : null)
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
+        const myTurn = (existing?.turnCount ?? 0) + 1
+        const routedModel = family === "claude"
+          ? (await decideWorkerModel({
+              repo,
+              title,
+              prompt,
+              turnCount: myTurn,
+              explicitModel: model ?? null,
+              existingModel: existing?.model ?? null,
+            })).model
+          : null
+        const explicitNonAuto = model && model.toLowerCase() !== "auto" ? model : null
+        const effectiveModel = explicitNonAuto ?? routedModel ?? existing?.model ?? null
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
-        const myTurn = (existing?.turnCount ?? 0) + 1
         // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
         const myJobId = myTurn === 1 ? taskId : `${taskId}:t${myTurn}`
 

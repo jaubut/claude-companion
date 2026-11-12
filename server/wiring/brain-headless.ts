@@ -3,7 +3,9 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
+import { decideBrainTurnModel } from "../lib/jev-model-router"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
+import { companionLog } from "../lib/log"
 import { transcriptPath } from "../lib/session-titles"
 import { type Session, recordSession, setSessionModel } from "../lib/sessions"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
@@ -27,13 +29,14 @@ export function createHeadlessBrainRunner(hooks: {
   let brainAlive = false
   let activeHandle: SpawnedWorkerHandle | null = null
   let activePid: number | null = null
+  let delivering = false
   let lastTurnReply = ""
   let sweptLegacyHerdr = false
 
-  function syncSession(): Session | null {
+  function syncSession(activeTurnModel?: string): Session | null {
     if (!brainAlive || !currentSessionId) return null
-    const model = getBrainModel()
-    const busyNow = activeHandle !== null
+    const model = activeTurnModel || getBrainModel()
+    const busyNow = activeHandle !== null || delivering
     const s = recordSession({
       cwd: BRAIN_DIR,
       agent: "claude",
@@ -98,7 +101,7 @@ export function createHeadlessBrainRunner(hooks: {
       syncSession()
     },
     agentStatus(): Promise<string> {
-      return Promise.resolve(activeHandle !== null ? "busy" : "idle")
+      return Promise.resolve(activeHandle !== null || delivering ? "busy" : "idle")
     },
     async lastReply(s: Session): Promise<string> {
       if (lastTurnReply) return lastTurnReply
@@ -108,16 +111,31 @@ export function createHeadlessBrainRunner(hooks: {
       if (!brainAlive || !currentSessionId) {
         return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
       }
-      if (activeHandle !== null) {
+      if (activeHandle !== null || delivering) {
         return Response.json({ ok: false, error: "busy" }, { status: 409 })
       }
+      delivering = true
       const turnSid = currentSessionId
+      let turnModel = getBrainModel()
+      try {
+        const decision = await decideBrainTurnModel(text, turnModel)
+        turnModel = decision.model
+        if (decision.source === "jev" || decision.reason === "control_turn") {
+          companionLog(`brain model-router → ${turnModel} (${decision.reason}, ${decision.jevMs}ms)`)
+        }
+      } catch {
+        // Fallback to configured model on any unexpected error.
+      }
+      if (!brainAlive || currentSessionId !== turnSid) {
+        delivering = false
+        return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
+      }
       const args = buildHeadlessClaudeArgs({
         prompt: text,
         sessionId: turnSid,
         resume: sessionStarted,
         mode: "auto",
-        model: getBrainModel(),
+        model: turnModel,
       })
       lastTurnReply = ""
       let settled = false
@@ -153,6 +171,7 @@ export function createHeadlessBrainRunner(hooks: {
           onExit(code, sig) {
             if (settled) return
             settled = true
+            delivering = false
             activeHandle = null
             activePid = null
             if (code === 0 && !sig) sessionStarted = true
@@ -163,14 +182,16 @@ export function createHeadlessBrainRunner(hooks: {
             })()
           },
         })
+        delivering = false
         if (!settled) {
           activeHandle = handle
           activePid = handle.pid > 1 ? handle.pid : null
-          syncSession()
+          syncSession(turnModel)
         }
         return Response.json({ ok: true })
       } catch (err) {
         settled = true
+        delivering = false
         activeHandle = null
         activePid = null
         syncSession()

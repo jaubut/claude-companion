@@ -17,6 +17,7 @@ interface HeadlessModelEntry {
 }
 
 const HEADLESS_MODELS: HeadlessModelEntry[] = [
+  { id: "auto", family: "claude", text: "Auto (Jev Router) · Opus for planning & complex work, Sonnet for routine", aliases: ["auto", "jev"] },
   { id: "claude-opus-5-5", family: "claude", text: "Opus 5.5 · Most capable for complex work", aliases: ["opus", "claude-opus-5-5", "opus 5.5"] },
   { id: "claude-sonnet-5-5", family: "claude", text: "Sonnet 5.5 · Best for everyday tasks", aliases: ["sonnet", "claude-sonnet-5-5", "sonnet 5.5"] },
   { id: "claude-fable-5-1", family: "claude", text: "Fable 5.1 · Fast & expressive", aliases: ["fable", "claude-fable-5-1", "fable 5.1"] },

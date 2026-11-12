@@ -20,11 +20,11 @@ The builder stays yours once it runs: you brief it, follow it up and ask for its
 
 ## Sizing a task
 
-Decide this at the build step and say it in your first message to the builder.
+Decide this at the build step and say it in your first message to the builder. Omit `--model` (or pass `--model auto`) unless you need to force a specific family (`--family codex|gemini`): Companion's Jev router automatically evaluates your brief and selects `claude-sonnet-5-5` for routine/focused tasks and `claude-opus-5-5` for cross-module, security, money, or retry-escalated tasks.
 
-- Routine fix: the builder just builds on the default model (`claude-sonnet-5-5`) since the brain's Opus brief already names the exact files and verify step.
-- Fuzzy multi-file work: the builder (`claude-sonnet-5-5`) answers with a written plan before it edits. No plan mode for it or for you: nobody can approve ExitPlanMode.
-- Cross-module, money, security, or architecture change (the floor is 3 files across 2 modules): pass `--model claude-opus-5-5` (or `--family codex`), and have the builder run `/change` and answer with the plan at the gate. The PR carries the plan's tables and the `change-drift` verdict; DRIFT counts as findings.
+- Routine fix: the builder just builds (Jev routes to `claude-sonnet-5-5`).
+- Fuzzy multi-file work: the builder answers with a written plan before it edits. No plan mode for it or for you: nobody can approve ExitPlanMode.
+- Cross-module, money, security, or architecture change (the floor is 3 files across 2 modules): Jev routes to `claude-opus-5-5` (or pass `--family codex`), and have the builder run `/change` and answer with the plan at the gate. The PR carries the plan's tables and the `change-drift` verdict; DRIFT counts as findings.
 
 You are the gate: read the plan to the end and answer `go` or your objection, never wait for Jeremie's go. Keep plan work in plain messages. Send `TASK <id>:` only for the turn that opens the PR, and tell the builder to end that turn with the PR URL: the relay links the row when that turn ends.
 
