@@ -378,7 +378,7 @@ No WS frame or iOS change.
 
 **Out of scope:** F1-F6, the brain's own env, the `tasks` schema, and the iOS app.
 
-**Decisions (Jeremie, 2026-11-12):** 1 stacked on #309, merge back to back, never #309 alone · 2 Mac reads unknown until the key file is copied · 3 codex/agy disk reads out of scope, named as residual · 4 no single-use · 5 the 3 taint reasons untouched · 6 key auto-generated on first mint (0600) · 7 integration tests skipped in workers accepted · 8 claim scope id+repo+turn.
+**Decisions (Jeremie, 2026-11-12):** 1 stacked on #309, then (same day) retargeted: #311 carries #309 to main as one PR, #309 closed as superseded · 2 Mac reads unknown until the key file is copied · 3 codex/agy disk reads out of scope, named as residual · 4 no single-use · 5 the 3 taint reasons untouched · 6 key auto-generated on first mint (0600) · 7 integration tests skipped in workers accepted · 8 claim scope id+repo+turn.
 **Build notes:** the claude shim (`~/.bun/bin/claude` via `tls-agent-env`) exports KB_TRAINER_INGEST_TOKEN, KB_TRAINER_TOKEN, TELEGRAM_BOT_TOKEN, TURSO_AUTH_TOKEN, TURSO_DATABASE_URL (names only); no GH auth, so `CLAUDE_NO_AGENT_ENV=1` drops nothing a worker needs. `worker-supervisor.ts` went to 609 lines → state-file read/write split into `lib/worker-task-store.ts`. `routes/api.ts` unchanged (its claimless re-dispatch is covered in `worker-supervisor.test.ts`). Claim status in the dispatch result is `verified|refused|pending|absent`; the refusal reason is in the server log only. A live lead's settings get the key-file Read deny in place (not a respawn).
 
 **Needs Jeremie decision** (answered above)
