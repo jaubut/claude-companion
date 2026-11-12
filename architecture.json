@@ -2145,18 +2145,23 @@
         },
         {
           "path": "lib/git-config-lock.ts",
-          "lines": 50,
+          "lines": 76,
           "kind": "lib",
           "exports": [
             "ProcReader",
+            "linuxProc",
             "clearStaleGitConfigLock"
           ],
-          "state": [],
+          "state": [
+            "let libc"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/log.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -10032,6 +10037,7 @@
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
+            "lib/git-config-lock.ts",
             "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",
             "lib/key-gate.ts",
