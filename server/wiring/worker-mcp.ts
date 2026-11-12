@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { BRAIN_THREAD, LEAD_PREFIX, brainEnabled } from "../lib/brain"
 import { realSh } from "../lib/live-repo"
+import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
+import { realGh } from "../lib/triage-pr"
+import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
+import { linkWorkerPr } from "../lib/worker-pr-link"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { getBrainDeliver } from "./brain"
@@ -47,6 +51,11 @@ export const workerSupervisor = createWorkerSupervisor({
     }
   },
   onTaskTerminal: (task) => {
+    if (task.status === "completed" && task.prUrl) {
+      const prUrl = task.prUrl
+      void linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl })
+        .then((outcome) => companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${prUrl}: ${outcome}`))
+    }
     if (!brainEnabled()) return
     const text = task.status === "completed"
       ? task.prUrl
