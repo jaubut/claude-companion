@@ -5,6 +5,7 @@ import { redactSecrets } from "../lib/secret-redact"
 import { type GhFn, realGh } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
 import { REASON_MAX } from "./brain-pr-close"
+import { hasRecentUserMergeApproval } from "./brain-pr-merge"
 import { parked } from "./brain-pr-park"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
@@ -27,7 +28,7 @@ const READBACK_TRIES = 5
 const READBACK_MS = 1_000
 
 interface PrUpdateInput { repo: string; pr: number; reason: string }
-interface PrUpdateDeps { gh: GhFn; exec: ExecFn; event(text: string): void; sleep(ms: number): Promise<unknown> }
+interface PrUpdateDeps { gh: GhFn; exec: ExecFn; event(text: string): void; sleep(ms: number): Promise<unknown>; humanApproved?(pr: number, repo: string): boolean }
 interface Out { status: number; body: Record<string, unknown> }
 interface PrView { state: string; headRefName: string; headRefOid: string; mergeable: string; url: string; title: string; labels: Array<{ name?: string }> }
 
@@ -68,9 +69,10 @@ export async function updateAgentPr(p: PrUpdateInput, deps: PrUpdateDeps = realD
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  const humanApproved = deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
   try {
-    park = await parked(deps.exec, v)
+    park = await parked(deps.exec, v, humanApproved)
   } catch (err) {
     companionLog(`[brain] pr-update-branch: turso ${(err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
@@ -111,4 +113,5 @@ const realDeps: PrUpdateDeps = {
   exec: (sql, args) => dispatchWiring.exec(sql, args),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   sleep: (ms) => Bun.sleep(ms),
+  humanApproved: (pr) => hasRecentUserMergeApproval(pr),
 }
