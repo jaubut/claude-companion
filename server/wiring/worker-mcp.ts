@@ -9,8 +9,8 @@ import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
-import { linkWorkerPr } from "../lib/worker-pr-link"
-import { type SupervisedTaskSnapshot, createWorkerSupervisor } from "../lib/worker-supervisor"
+import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "../lib/worker-pr-link"
+import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
@@ -21,7 +21,7 @@ const DEFAULT_FAMILY_MODELS = {
   codex: "gpt-5.4",
   gemini: "gemini-3.1-pro-preview",
 } as const
-/** How long "PR ready" waits for the PR link before the brain hears it. */
+/** How long a "PR ready" turn waits for its PR link before it reads completed. */
 const LINK_DEADLINE_MS = 20_000
 
 // Live Inverted MCP worker supervisor & handler wired to Companion's BuilderJobStore and Session registry.
@@ -52,17 +52,18 @@ export const workerSupervisor = createWorkerSupervisor({
       setSessionModel(recorded.key, model)
     }
   },
-  // The link lands before the brain hears "PR ready" (the shepherd reads origin through it), bounded so a slow gh
-  // never holds the turn; on timeout it finishes behind. linkWorkerPr never rejects.
-  onTaskTerminal: (task) => {
-    const prUrl = task.status === "completed" ? task.prUrl : null
-    const linked = prUrl
-      ? linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl }, { deadlineMs: LINK_DEADLINE_MS })
-        .then((outcome) => companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${prUrl}: ${outcome}`))
-      : Promise.resolve()
-    void linked.then(() => notifyBrain(task)).catch((err) => companionLog(`[worker] ${task.taskId.slice(0, 8)} brain notify failed: ${(err as Error)?.message ?? err}`))
-  },
+  // Bind once at dispatch, link before the turn reads completed (lib/worker-pr-link.ts); bounded, never fails the turn.
+  bindTask: (taskId, repo) => bindWorkerTask(tursoExec, taskId, repo),
+  linkPr: (task) => linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl: task.prUrl ?? "" }, { deadlineMs: LINK_DEADLINE_MS })
+    .then((outcome) => { companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${task.prUrl}: ${outcome}`); return outcome }),
+  onTaskTerminal: (task) => notifyBrain(task),
 })
+
+/** A link lost to a restart or past the retries: once at server start, bound tasks whose row is still unlinked. */
+export function replayWorkerPrLinks(): void {
+  if (process.env.NODE_ENV === "test") return // real gh + the real state file
+  void backfillWorkerPrLinks({ gh: realGh, exec: tursoExec, log: (l) => companionLog(`[worker] pr link replay ${l}`) }, workerStateFile(homedir()), { write: true })
+}
 
 function notifyBrain(task: SupervisedTaskSnapshot): void {
   if (!brainEnabled()) return

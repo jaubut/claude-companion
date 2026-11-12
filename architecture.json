@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 200,
+          "lines": 202,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -124,7 +124,8 @@
             "wiring/brain-workers.ts",
             "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
-            "wiring/auto-deploy.ts"
+            "wiring/auto-deploy.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6347,12 +6348,15 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 61,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "OWNABLE",
             "LinkOutcome",
-            "linkWorkerPr"
+            "bindWorkerTask",
+            "linkWorkerPr",
+            "Linked",
+            "backfillWorkerPrLinks"
           ],
           "state": [],
           "emits": [],
@@ -6361,7 +6365,8 @@
           "apiCalls": [],
           "imports": [
             "lib/triage-pr.ts",
-            "lib/turso.ts"
+            "lib/turso.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6369,7 +6374,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 568,
+          "lines": 595,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6377,6 +6382,7 @@
             "SpawnedWorkerHandle",
             "SpawnWorkerOpts",
             "WorkerSupervisorDeps",
+            "workerStateFile",
             "defaultResolveRepoDir",
             "defaultIsPidAlive",
             "defaultKillPid",
@@ -9133,10 +9139,11 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 97,
+          "lines": 98,
           "kind": "lib",
           "exports": [
             "workerSupervisor",
+            "replayWorkerPrLinks",
             "workerMcp"
           ],
           "state": [],
@@ -9408,6 +9415,12 @@
         },
         "startEndedSweep": {
           "module": "lib/ended-sessions.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "replayWorkerPrLinks": {
+          "module": "wiring/worker-mcp.ts",
           "callers": [
             "companion-server.ts"
           ]
@@ -14467,12 +14480,14 @@
         "TASK_ID_RE": {
           "module": "lib/worker-invocation.ts",
           "callers": [
+            "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts"
           ]
         },
         "REPO_NAME_RE": {
           "module": "lib/worker-invocation.ts",
           "callers": [
+            "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts"
           ]
         },
@@ -18913,8 +18928,26 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "bindWorkerTask": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "linkWorkerPr": {
           "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "backfillWorkerPrLinks": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "workerStateFile": {
+          "module": "lib/worker-supervisor.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

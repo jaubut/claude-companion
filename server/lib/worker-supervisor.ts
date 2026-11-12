@@ -45,7 +45,13 @@ export interface WorkerSupervisorDeps {
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
   onTaskTerminal?(task: SupervisedTaskSnapshot): void
+  /** Once, at a task id's first dispatch: may this worker task link its PR to the Turso row of the same id? Persisted. */
+  bindTask?(taskId: string, repo: string): Promise<boolean>
+  /** A bound task's turn reported a PR: link it before the turn is marked completed. Bounded by the caller, never rejects. */
+  linkPr?(task: SupervisedTaskSnapshot): Promise<string>
 }
+
+export const workerStateFile = (home: string): string => join(home, ".claude", "state", "companion-worker-tasks.json")
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
@@ -102,9 +108,11 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
 
 interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
+  /** bindTask said yes at this id's first dispatch: only then is its PR linked to the Turso row. */
+  prLinkBound?: boolean
 }
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean
   activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
@@ -130,7 +138,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
-  const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
+  const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
 
   function syncTaskSession(t: InternalTask): void {
@@ -141,7 +149,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     try {
       mkdirSync(dirname(stateFile), { recursive: true })
       const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
-        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted,
+        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound,
       }))
       const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
       writeFileSync(tmp, JSON.stringify(records))
@@ -197,6 +205,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
         pid: survivingPid, pidIdentity: survivingIdentity, reloadedFromDisk: survivingPid !== null,
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
+        prLinkBound: r.prLinkBound === true,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       }
@@ -326,6 +335,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
+        const prLinkBound = existing ? existing.prLinkBound : await (deps.bindTask?.(taskId, repo) ?? Promise.resolve(false)).catch(() => false)
 
         const now = deps.now()
         const familyChanged = !!existing && existing.family !== family
@@ -354,7 +364,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           taskId, repo, repoDir, title, builder, family, model: effectiveModel, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false,
+          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
@@ -417,25 +427,42 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
-              if (code === 0 && !sig && !task.error) {
+              const finish = () => {
+                savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
+                try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
+              }
+              const complete = (link: string | null) => {
+                const note = link === "timeout" ? " (PR link still pending)" : link && link !== "linked" && link !== "not_linked" ? ` (not linked: ${link})` : ""
                 task.sessionStarted = true; task.status = "completed"; task.pct = 100
-                task.step = task.prUrl ? `PR ready: ${task.prUrl}` : "Turn completed"
+                task.step = task.prUrl ? `PR ready: ${task.prUrl}${note}` : "Turn completed"
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
                   deps.reportJob({ event: "done", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: 100 })
                 }
-              } else {
-                task.status = "failed"
-                const tail = task.stderrTail.join(" | ")
-                task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
-                task.step = `Failed: ${task.error.slice(0, 100)}`
-                if (!task.turnReportedTerminal) {
-                  task.turnReportedTerminal = true
-                  deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
-                }
+                finish()
               }
-              savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
-              try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
+              if (code === 0 && !sig && !task.error) {
+                // The link lands before the turn reads completed (await_task, the brain): the shepherd reads origin through it.
+                if (task.prUrl && task.prLinkBound && deps.linkPr) {
+                  task.step = `Linking PR: ${task.prUrl}`
+                  savePersistedTasks()
+                  void deps.linkPr(toSnapshot(task)).catch(() => "link_failed").then((link) => {
+                    if (task.activeTurn === myTurn && task.status === "running") complete(link)
+                  })
+                  return
+                }
+                complete(null)
+                return
+              }
+              task.status = "failed"
+              const tail = task.stderrTail.join(" | ")
+              task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
+              task.step = `Failed: ${task.error.slice(0, 100)}`
+              if (!task.turnReportedTerminal) {
+                task.turnReportedTerminal = true
+                deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+              }
+              finish()
             },
           })
         } catch (err) {

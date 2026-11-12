@@ -12,13 +12,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 |---|---|---|---|---|
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 597 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/worker-supervisor.ts` | 595 | lib | 13 |  |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 584 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 578 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 575 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
-| `lib/worker-supervisor.ts` | 568 | lib | 12 |  |
 | `routes/hooks.ts` | 567 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
@@ -122,7 +122,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `wiring/brain-headless.ts` | 203 | lib | 4 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
-| `companion-server.ts` | 200 | route-host | 1 | routes: 10 |
+| `companion-server.ts` | 202 | route-host | 1 | routes: 10 |
 | `wiring/canvas.ts` | 200 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `routes/trips.ts` | 196 | lib | 5 |  |
@@ -172,6 +172,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
+| `lib/worker-pr-link.ts` | 120 | lib | 6 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
@@ -190,7 +191,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
-| `wiring/worker-mcp.ts` | 97 | lib | 2 |  |
+| `wiring/worker-mcp.ts` | 98 | lib | 3 |  |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `lib/model-prices.ts` | 95 | lib | 8 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |
@@ -229,7 +230,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/herdr-workspace.ts` | 61 | lib | 3 | state: releasing: Set |
 | `lib/tasks-agent-store.ts` | 61 | lib | 4 |  |
-| `lib/worker-pr-link.ts` | 61 | lib | 3 |  |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |
 | `wiring/dispatch.ts` | 60 | lib | 3 | state: polledListeners: Set · emits: brain_trace |
 | `lib/session-identity.ts` | 58 | lib | 6 |  |
@@ -774,6 +774,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `createNote()` | `lib/dashboard-client.ts` | `lib/voice-memo.ts`, `routes/notes.ts` |
 | `patchInbox()` | `lib/dashboard-client.ts` | `lib/voice-memo.ts`, `routes/capture.ts` |
 | `BRAIN_TAKE_PREFIX()` | `lib/brain.ts` | `lib/voice-memo.ts`, `routes/capture.ts` |
+| `TASK_ID_RE()` | `lib/worker-invocation.ts` | `lib/worker-pr-link.ts`, `lib/worker-supervisor.ts` |
+| `REPO_NAME_RE()` | `lib/worker-invocation.ts` | `lib/worker-pr-link.ts`, `lib/worker-supervisor.ts` |
 | `registerToken()` | `lib/push-tokens.ts` | `routes/api.ts`, `routes/api.ts#POST /api/register-token` |
 | `getPending()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `clients()` | `state.ts` | `routes/api.ts#* /api/status`, `ws.ts` |

@@ -3,12 +3,11 @@ import { randomUUID } from "node:crypto"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { backfill } from "../../scripts/backfill-worker-pr-links"
 import { installHranaStub } from "./hrana-stub.test-util"
 import type { GhFn } from "./triage-pr"
 import { type SqlArg, tursoExec } from "./turso"
 import { openTestDb, schemaDb, testDbConfigured } from "./turso-test-db.test-util"
-import { linkWorkerPr } from "./worker-pr-link"
+import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "./worker-pr-link"
 
 // linkWorkerPr (worker PR ready → tasks.dispatch_pr_url) and the backfill script, with the production tursoExec.
 // Default: the Hrana stub over bun:sqlite on production's schema; with TURSO_TEST_URL + TURSO_TEST_AUTH_TOKEN, tls-test.
@@ -35,11 +34,11 @@ afterEach(() => restore())
 
 const sql = (s: string, args: SqlArg[] = []) => tursoExec(s, args)
 // A bin/worker row as the brain files it (fileHandoff): handoff assignee, no dispatch state, not done.
-interface Row { pr?: string | null; assignee?: string; status?: string | null; owner?: string | null; done?: number }
+interface Row { pr?: string | null; assignee?: string; status?: string | null; owner?: string | null; done?: number; description?: string }
 const seed = (id: string, r: Row | string | null = {}) => {
   const o: Row = typeof r === "object" && r !== null ? r : { pr: r }
-  return sql("INSERT INTO tasks (id, note_id, text, done, assignee, dispatch_status, dispatch_owner, dispatch_pr_url, origin) VALUES (?, ?, 't', ?, ?, ?, ?, ?, 'jeremie')",
-    [id, NOTE, o.done ?? 0, o.assignee ?? "handoff", o.status ?? null, o.owner ?? null, o.pr ?? null])
+  return sql("INSERT INTO tasks (id, note_id, text, description, done, assignee, dispatch_status, dispatch_owner, dispatch_pr_url, origin) VALUES (?, ?, 't', ?, ?, ?, ?, ?, ?, 'jeremie')",
+    [id, NOTE, o.description ?? "Salvage jaubut/tls-dashboard-v2#392 onto main", o.done ?? 0, o.assignee ?? "handoff", o.status ?? null, o.owner ?? null, o.pr ?? null])
 }
 const prOf = async (id: string) => (await sql("SELECT dispatch_pr_url FROM tasks WHERE id = ?", [id])).rows[0]?.dispatch_pr_url
 const URL = (repo = "tls-dashboard-v2", n = 423) => `https://github.com/jaubut/${repo}/pull/${n}`
@@ -163,7 +162,27 @@ describe("linkWorkerPr", () => {
   })
 })
 
-describe("backfill script", () => {
+describe("bindWorkerTask (at dispatch, by the supervisor)", () => {
+  test("binds an open, unclaimed, unlinked handoff row whose description names the repo", async () => {
+    await seed(ID)
+    expect(await bindWorkerTask(tursoExec, ID, "tls-dashboard-v2")).toBe(true)
+    expect(await bindWorkerTask(tursoExec, ID, "TLS-Dashboard-V2")).toBe(true)
+  })
+
+  test("no binding: another repo's row, no row, a done / claimed / linked row, a failed read", async () => {
+    await seed(ID)
+    expect(await bindWorkerTask(tursoExec, ID, "claude-config")).toBe(false)
+    expect(await bindWorkerTask(tursoExec, `${ID.slice(0, 31)}z`, "tls-dashboard-v2")).toBe(false)
+    const ids = [`${ID.slice(0, 30)}e1`, `${ID.slice(0, 30)}e2`, `${ID.slice(0, 30)}e3`]
+    await seed(ids[0]!, { done: 1 })
+    await seed(ids[1]!, { owner: "zettlab" })
+    await seed(ids[2]!, { pr: URL("tls-dashboard-v2", 1) })
+    for (const id of ids) expect(await bindWorkerTask(tursoExec, id, "tls-dashboard-v2")).toBe(false)
+    expect(await bindWorkerTask(async () => { throw new Error("turso down") }, ID, "tls-dashboard-v2")).toBe(false)
+  })
+})
+
+describe("backfillWorkerPrLinks (script + startup replay)", () => {
   function stateFile(records: unknown[]): string {
     const f = join(mkdtempSync(join(tmpdir(), "cc-prlink-")), "tasks.json")
     writeFileSync(f, JSON.stringify(records))
@@ -174,16 +193,27 @@ describe("backfill script", () => {
     await seed(ID)
     const linked = `${ID.slice(0, 31)}x`
     await seed(linked, URL("tls-dashboard-v2", 1))
-    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2" }, { taskId: linked, repo: "tls-dashboard-v2" }])
+    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2", prLinkBound: true }, { taskId: linked, repo: "tls-dashboard-v2", prLinkBound: true }])
     const { gh, calls } = fakeGh(() => `dispatch/${ID}`, { open: [URL()] })
     const lines: string[] = []
 
-    expect(await backfill({ gh, exec: tursoExec, sleep: noSleep, log: (l) => lines.push(l) }, file, false)).toEqual([{ taskId: ID, repo: "tls-dashboard-v2", prUrl: URL(), outcome: "would_link" }])
+    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: (l) => lines.push(l) }, file, { write: false })).toEqual([{ taskId: ID, repo: "tls-dashboard-v2", prUrl: URL(), outcome: "would_link" }])
     expect(await prOf(ID)).toBeNull()
     expect(calls.filter((c) => c[1] === "list")).toHaveLength(1)
 
-    expect((await backfill({ gh, exec: tursoExec, sleep: noSleep, log: (l) => lines.push(l) }, file, true))[0]!.outcome).toBe("linked")
+    expect((await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: (l) => lines.push(l) }, file, { write: true }))[0]!.outcome).toBe("linked")
     expect(await prOf(ID)).toBe(URL())
     expect(await prOf(linked)).toBe(URL("tls-dashboard-v2", 1))
+  })
+
+  test("skips a worker task with no dispatch-time binding unless the run includes unbound (legacy) records", async () => {
+    await seed(ID)
+    const file = stateFile([{ taskId: ID, repo: "tls-dashboard-v2" }])
+    const { gh, calls } = fakeGh(() => `dispatch/${ID}`, { open: [URL()] })
+    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: () => {} }, file, { write: true })).toEqual([])
+    expect(calls).toEqual([])
+    expect(await prOf(ID)).toBeNull()
+    expect(await backfillWorkerPrLinks({ gh, exec: tursoExec, sleep: noSleep, log: () => {} }, file, { write: false, includeUnbound: true })).toEqual([{ taskId: ID, repo: "tls-dashboard-v2", prUrl: URL(), outcome: "would_link" }])
+    expect(await prOf(ID)).toBeNull()
   })
 })
