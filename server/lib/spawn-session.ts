@@ -115,8 +115,9 @@ function envPrefix(env?: Record<string, string>): string {
 // The command tmux runs inside the new session, shared by every spawn path
 // (headless tmux, shells) so they can't drift apart. The env prefix
 // precedes the `cd`, and therefore also the kimi `. kimi.env` sourcing.
-export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, string>): string {
-  return `${envPrefix(env)}cd '${escapeForShellSingleQuoted(cwd)}' && ${agentLaunchCommand(agent)}`
+export function buildInner(cwd: string, agent: SpawnAgent, env?: Record<string, string>, args?: string[]): string {
+  const extra = args?.length ? ` ${args.join(" ")}` : ""
+  return `${envPrefix(env)}cd '${escapeForShellSingleQuoted(cwd)}' && ${agentLaunchCommand(agent)}${extra}`
 }
 
 export interface SpawnResult {
@@ -234,17 +235,22 @@ export async function spawnInTmuxDetached(
   agent: SpawnAgent,
   env?: Record<string, string>,
   deps: DetachedDeps = realDetachedDeps,
+  opts?: HerdrSpawnOpts,
 ): Promise<SpawnResult> {
   // tmux new-session -d exits 0 even when the agent dies at once (2026-10-21:
   // a launchd PATH without ~/.local/bin → `claude: not found`, the server quit,
   // the phone waited for a card that never came) — check before and after.
+  const agentArgs = opts?.args ?? []
+  const badArg = agentArgs.find((a) => !AGENT_ARG.test(a))
+  if (badArg !== undefined) return { ok: false, app: "tmux", error: `spawn args: unsafe value ${JSON.stringify(badArg)}` }
   const bin = agent === "codex" ? "codex" : "claude"
   if (!deps.which(bin)) return { ok: false, app: "tmux", error: `agent_not_found: ${bin} not on PATH (${process.env.PATH ?? ""})` }
   const has = async (n: string) => (await deps.run([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${n}`])).code === 0
-  const sessionName = await uniqueTmuxSessionName(cwd, agent, has)
+  if (opts?.name && await has(opts.name)) return { ok: false, app: "tmux", error: `name_taken: ${opts.name}` }
+  const sessionName = opts?.name ?? await uniqueTmuxSessionName(cwd, agent, has)
   // Sized create (see detachedNewSessionArgs — an 80x24 pane cripples every
   // dialog we read); the inner command runs via /bin/sh.
-  const error = await createConfirmed(sessionName, detachedSpawnArgv(sessionName, buildInner(cwd, agent, env)), deps)
+  const error = await createConfirmed(sessionName, detachedSpawnArgv(sessionName, buildInner(cwd, agent, env, agentArgs)), deps)
   if (error) return { ok: false, app: "tmux", error }
   // Socket path resolved after the create: the server (and its dir) now exist.
   return { ok: true, app: "tmux", sessionName, tmuxSocket: spawnSocketPath() }
@@ -500,12 +506,7 @@ export async function spawnCompanionSession(opts: {
   if (agent !== "codex") ensureFolderTrusted(resolved, opts.mcpFrom)
 
   if (opts.herdr) {
-    const { fallback: _gate, ...r } = await spawnInHerdr(resolved, agent, opts.env, realHerdr, opts.herdr)
-    return r
+    return spawnInTmuxDetached(resolved, agent, opts.env, realDetachedDeps, opts.herdr)
   }
-  if (process.platform !== "darwin") return spawnLinux(resolved, app, agent, opts.env)
-
-  if (app === "ghostty") return spawnInGhostty(resolved, agent, opts.env)
-  if (app === "herdr") return spawnInHerdr(resolved, agent, opts.env)
-  return spawnMacAuto(resolved, agent, opts.env)
+  return spawnInTmuxDetached(resolved, agent, opts.env)
 }

@@ -5,9 +5,10 @@ import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, isRoutineLeadAck,
 import { type Herdr, herdrWorkspacePanes, herdrWorkspaces, realHerdr } from "../lib/herdr"
 import { type ShFn, githubName, isDir, realSh, repoEntriesSafe } from "../lib/live-repo"
 import { appendTurn } from "../lib/orchestrator-chat"
-import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInHerdr } from "../lib/spawn-session"
+import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInTmuxDetached } from "../lib/spawn-session"
+import { spawnServerFlags, tmuxArgv } from "../lib/tmux-pane"
+import { realDetachedDeps } from "../lib/tmux-spawn-confirm"
 import { defaultResolveRepoDir } from "../lib/worker-supervisor"
-import { brainLiveness } from "./brain-workers"
 import type { AgentLookup } from "./takeover-liveness"
 
 // Repo leads (docs/brain-api.md § Repo leads): one persistent `lead-<repo>` herdr
@@ -198,17 +199,30 @@ export function createBrainLead(deps: LeadDeps) {
 
 export type BrainLead = ReturnType<typeof createBrainLead>
 
-export const brainLead = createBrainLead({
-  herdr: realHerdr,
-  // alive(), not the agent record: herdr can keep the record of a claude that exited.
-  running: (name) => brainLiveness.alive(name),
-  isolated: (repo) => leadIsolated(repo),
-  agentOf: (name) => brainLiveness.agentOf(name),
-  spawn: async (repo, name) => {
-    const out = await prepareLeadDir(repo, homedir(), realSh, (dir) => { ensureFolderTrusted(dir); return folderTrusted(dir) })
-    return out.ok ? spawnInHerdr(out.dir, "claude", { COMPANION_TASK_ID: name }, realHerdr, { name, args: leadArgs(name) }) : { ok: false, error: out.error }
+const runtimeLeadStarting = new Set<string>()
+
+export const brainLead: BrainLead = {
+  async ensure(repo: string, name: string): Promise<{ ok: boolean; name: string; state: string; error?: string }> {
+    if (runtimeLeadStarting.has(repo)) return { ok: true, name, state: "starting" }
+    runtimeLeadStarting.add(repo)
+    try {
+      const has = await realDetachedDeps.run([...tmuxArgv(), ...spawnServerFlags(), "has-session", "-t", `=${name}`], 3_000)
+      const live = has.code === 0
+      if (live && leadIsolated(repo)) return { ok: true, name, state: "running" }
+      if (live) {
+        await realDetachedDeps.run([...tmuxArgv(), ...spawnServerFlags(), "kill-session", "-t", `=${name}`], 3_000)
+      }
+      const out = await prepareLeadDir(repo, homedir(), realSh, (dir) => { ensureFolderTrusted(dir); return folderTrusted(dir) })
+      if (!out.ok) return { ok: false, name, state: "down", error: out.error }
+      const spawned = await spawnInTmuxDetached(out.dir, "claude", { COMPANION_TASK_ID: name }, realDetachedDeps, { name, args: leadArgs(name) })
+      return spawned.ok ? { ok: true, name, state: "started" } : { ok: false, name, state: "down", error: spawned.error }
+    } catch (err) {
+      return { ok: false, name, state: "down", error: (err as Error)?.message ?? String(err) }
+    } finally {
+      runtimeLeadStarting.delete(repo)
+    }
   },
-})
+}
 
 // ── Brain ↔ Agent Relay (bridges headless brain's ephemeral sockets without noisy UI turns or ACK ping-pong) ──
 
