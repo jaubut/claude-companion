@@ -1,35 +1,29 @@
-import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
-  BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
+  BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainState, type DeliveryTurn,
   BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import {
   clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
-  openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
+  openDeliveries, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { createBrainActivity } from "./brain-activity"
-import { type Turn, appendTurn, createProposal, getTask, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
+import { type Turn, appendTurn, getTask, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
-import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
-import { type Session, getSessionByKey, listSessions, recordSession, setSessionModel } from "../lib/sessions"
-import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
-import { extractLastAssistantMessage } from "../lib/last-assistant"
-import { transcriptPath } from "../lib/session-titles"
+import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import { pushToAll } from "../lib/push"
 import { apnsConfigured } from "../lib/apns"
-import type { ApnsPayload } from "../lib/apns"
 import { gauge } from "./gauge"
-import { brainWorkers } from "./brain-workers"
-import { emitChannel, emitTask, orchEmit } from "./orchestrator"
-import { approveProposal } from "./proposals"
-import { type DispatchWiring, dispatchWiring } from "./dispatch"
-import { type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
+import { emitChannel, orchEmit } from "./orchestrator"
+import { dispatchWiring } from "./dispatch"
+import { BRAIN_DIR, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, getBrainModel } from "./brain-headless"
+import { proposeFromBrain } from "./brain-propose"
+import type { BrainDeps, BrainStatus, ProposeInput } from "./brain-types"
 
 // brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent (herdr pane,
 // interactive claude under Remote Control `brain`), relays Jeremie's brain-thread
@@ -41,38 +35,7 @@ import { type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, 
 // never a cwd or the most-recent fallback. not_submitted → `maybe`, never
 // retyped. The paused flag is re-read before every spawn, adoption and delivery.
 
-export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string; activity: BrainActivity | null }
-
-export interface ProposeInput { title: string; prompt: string; noteId: string; agent: string | null; reasoning: string; sourceTurnId: string }
-
-export interface BrainDeps {
-  now(): number
-  alive(): Promise<boolean>
-  /** herdr's `brain` agent pane ("" when absent): what to adopt after a Companion restart. */
-  agentPane(): Promise<string>
-  /** Start the brain: resume that conversation (claude --resume), or a fresh one when null. */
-  spawn(resume: string | null): Promise<SpawnResult>
-  stopAgent(): Promise<void>
-  sessions(): Session[]
-  sessionByKey(key: string): Session | null
-  /** Set taskId "brain" on a session found in the spawned pane. */
-  tagBrain(key: string): boolean
-  deliver(text: string, key: string): Promise<Response>
-  /** Claude Code's own status for the session ("busy" | "waiting" | "idle" | ""). */
-  agentStatus(key: string): Promise<string>
-  /** The text the brain wrote after its last prompt, read from its transcript ("" when none). */
-  lastReply(s: Session): Promise<string>
-  /** Esc into the brain's pane: cancels a running /compact. */
-  interrupt(key: string): Promise<void>
-  broadcast(frame: Record<string, unknown>): void
-  push(payload: ApnsPayload): void
-  paused: { read(): boolean; write(on: boolean): void }
-  contextPct(key: string): number | null
-  compact(key: string, text: string): Promise<boolean>
-  dispatch: DispatchWiring
-  host: string
-  log(msg: string): void
-}
+export type { BrainStatus, ProposeInput, BrainDeps } from "./brain-types"
 
 export function emitTrace(rows: TraceRow[]): void {
   if (rows.length) broadcast({ type: "brain_trace", op: "row", rows })
@@ -453,47 +416,8 @@ export function createBrainWiring(deps: BrainDeps) {
     },
 
     /** A proposal from bin/propose (POST /hooks/brain/propose, auth done by the route). */
-    async propose(p: ProposeInput): Promise<{ status: number; body: Record<string, unknown> }> {
-      const agent = resolveAgent(p.agent ?? DEFAULT_AGENT)
-      if (!agent) return { status: 400, body: { ok: false, error: "unknown_agent" } }
-      let note: Awaited<ReturnType<typeof getNote>>
-      try {
-        note = await getNote(deps.dispatch.query, p.noteId)
-      } catch {
-        return { status: 503, body: { ok: false, error: "turso_unreachable" } }
-      }
-      if (!note) return { status: 404, body: { ok: false, error: "no such note" } }
-      // Dedupe and create with no await between: two identical calls can never both create.
-      const hash = createHash("sha256").update(p.prompt).digest("hex").slice(0, 32)
-      const seen = proposeSeen(p.sourceTurnId, hash)
-      if (seen) return { status: 200, body: { ok: true, proposalId: seen, replay: true } }
-      const task = createProposal(p.prompt, "", p.reasoning, BRAIN_THREAD, { noteId: note.noteId, agent, title: p.title })
-      brainFiling.add(task.taskId) // no await since the insert: triage never sees it un-flagged
-      rememberPropose(p.sourceTurnId, hash, task.taskId)
-      const project = note.ref ?? note.title ?? note.noteId
-      const repoId = rowId.repo(p.sourceTurnId, project)
-      trace([
-        upsertRow({ id: repoId, parentId: rowId.turn(p.sourceTurnId), turnId: p.sourceTurnId, kind: "repo", status: "running", title: note.title ?? project, detail: project }),
-        upsertRow({ id: rowId.agent(task.taskId), parentId: repoId, turnId: p.sourceTurnId, kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "waits for your tap" }),
-      ])
-      emitTask(task.taskId)
-      // The brain hands off: filed and queued at once, no Approve card (Jeremie, 2026-10-29).
-      // The trace row is what he sees; a failed file stays a proposal he can tap.
-      let res: Response, body: Record<string, unknown>
-      try {
-        res = await approveProposal(task, {}, deps.dispatch)
-        body = await res.json() as Record<string, unknown>
-      } finally {
-        brainFiling.delete(task.taskId)
-      }
-      if (res.ok) {
-        trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: body.status === "queued" ? "dispatched" : "waits for the dashboard stamp", ref: { taskId: String(body.dispatchTaskId ?? "") } })])
-        return { status: 200, body: { ...body, proposalId: task.taskId } }
-      }
-      deps.log(`[brain] auto-file failed (${String(body.error)}): left as a proposal`)
-      trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "couldn't dispatch — tap to file it" })])
-      return { status: 200, body: { ok: true, proposalId: task.taskId, status: "proposed", error: body.error ?? null } }
-    },
+    /** A proposal from bin/propose (POST /hooks/brain/propose, auth done by the route). */
+    propose: (p: ProposeInput) => proposeFromBrain(deps, trace, p),
 
     /** A brain voice take was archived (POST /api/capture/voice/start brainTurnId): the turn card gets its audio id. */
     attachAudio(turnId: string, audioId: string): void {
@@ -545,14 +469,9 @@ export type BrainWiring = ReturnType<typeof createBrainWiring>
 
 // ── Real Headless Brain Deps (BKM-Q24R: stream-json supervisor, zero herdr/tmux) ──
 
-const PAUSED_FLAG = join(homedir(), ".claude-companion", ".brain-paused")
-/** The brain's cwd: its CLAUDE.md + .claude/settings.json (repo `brain/`, or COMPANION_BRAIN_DIR). */
-export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
-export const HEADLESS_BRAIN_PANE = "headless:brain"
+export { BRAIN_DIR, HEADLESS_BRAIN_PANE, getBrainModel }
 
-export function getBrainModel(): string {
-  return getKv("brain_model") || "claude-sonnet-5-5"
-}
+const PAUSED_FLAG = join(homedir(), ".claude-companion", ".brain-paused")
 
 export function setBrainModel(model: string): void {
   const m = model.trim()
@@ -567,160 +486,10 @@ export function setBrainDeliver(fn: (text: string, key?: string) => Promise<Resp
   deliverFn = fn
 }
 
-function createHeadlessBrainRunner() {
-  let currentSessionId = ""
-  let sessionStarted = false
-  let brainAlive = false
-  let activeHandle: SpawnedWorkerHandle | null = null
-  let activePid: number | null = null
-  let lastTurnReply = ""
-  let sweptLegacyHerdr = false
-
-  function syncSession(): Session | null {
-    if (!brainAlive || !currentSessionId) return null
-    const model = getBrainModel()
-    const busyNow = activeHandle !== null
-    const s = recordSession({
-      cwd: BRAIN_DIR,
-      agent: "claude",
-      sessionId: currentSessionId,
-      label: "brain",
-      title: "Brain",
-      taskId: BRAIN_AGENT,
-      herdrPane: HEADLESS_BRAIN_PANE,
-      herdrAgent: BRAIN_AGENT,
-      agentStatus: busyNow ? "busy" : "idle",
-      pid: String(activePid ?? process.pid),
-      model,
-    }, { sessionIdConfirmed: true })
-    if (s) setSessionModel(s.key, model)
-    return s
-  }
-
-  return {
-    syncSession,
-    async alive(): Promise<boolean> {
-      if (brainAlive && currentSessionId) {
-        syncSession()
-        return true
-      }
-      return false
-    },
-    async agentPane(): Promise<string> {
-      return brainAlive ? HEADLESS_BRAIN_PANE : ""
-    },
-    async spawn(resume: string | null): Promise<SpawnResult> {
-      if (!sweptLegacyHerdr) {
-        sweptLegacyHerdr = true
-        void brainWorkers.stopBrain().catch(() => undefined)
-      }
-      ensureFolderTrusted(BRAIN_DIR)
-      const hasResumeTranscript = !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
-      currentSessionId = hasResumeTranscript ? resume! : randomUUID()
-      sessionStarted = hasResumeTranscript
-      brainAlive = true
-      lastTurnReply = ""
-      syncSession()
-      return { ok: true, app: "herdr", herdrPane: HEADLESS_BRAIN_PANE, sessionName: BRAIN_AGENT }
-    },
-    async stopAgent(): Promise<void> {
-      brainAlive = false
-      const h = activeHandle
-      activeHandle = null
-      activePid = null
-      if (h) h.kill("SIGTERM")
-    },
-    async interrupt(): Promise<void> {
-      const h = activeHandle
-      activeHandle = null
-      activePid = null
-      if (h) h.kill("SIGTERM")
-      syncSession()
-    },
-    agentStatus(): Promise<string> {
-      return Promise.resolve(activeHandle !== null ? "busy" : "idle")
-    },
-    async lastReply(s: Session): Promise<string> {
-      if (lastTurnReply) return lastTurnReply
-      return extractLastAssistantMessage(transcriptPath(s.cwd, s.sessionId))
-    },
-    async deliver(text: string): Promise<Response> {
-      if (!brainAlive || !currentSessionId) {
-        return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
-      }
-      if (activeHandle !== null) {
-        return Response.json({ ok: false, error: "busy" }, { status: 409 })
-      }
-      const turnSid = currentSessionId
-      const args = buildHeadlessClaudeArgs({
-        prompt: text,
-        sessionId: turnSid,
-        resume: sessionStarted,
-        mode: "auto",
-        model: getBrainModel(),
-      })
-      lastTurnReply = ""
-      let settled = false
-      try {
-        const handle = defaultSpawnWorker({
-          cmd: "claude",
-          args,
-          cwd: BRAIN_DIR,
-          env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1" },
-          onStdoutLine(line) {
-            if (settled) return
-            const ev = parseStreamJsonLine(line)
-            if (!ev) return
-            if (ev.sessionId) {
-              currentSessionId = ev.sessionId
-              sessionStarted = true
-            }
-            if (ev.assistantText) {
-              lastTurnReply = ev.assistantText
-              sessionStarted = true
-            }
-            if (ev.resultText) {
-              lastTurnReply = ev.resultText
-              sessionStarted = true
-            }
-            if (ev.step) {
-              brainWiring.noteActivity(currentSessionId)
-            }
-          },
-          onStderrLine() {
-            if (!settled) brainWiring.noteActivity(currentSessionId)
-          },
-          onExit(code, sig) {
-            if (settled) return
-            settled = true
-            activeHandle = null
-            activePid = null
-            if (code === 0 && !sig) sessionStarted = true
-            syncSession()
-            void (async () => {
-              const reply = lastTurnReply || await extractLastAssistantMessage(transcriptPath(BRAIN_DIR, currentSessionId)).catch(() => "")
-              await brainWiring.onStop(currentSessionId, reply)
-            })()
-          },
-        })
-        if (!settled) {
-          activeHandle = handle
-          activePid = handle.pid > 1 ? handle.pid : null
-          syncSession()
-        }
-        return Response.json({ ok: true })
-      } catch (err) {
-        settled = true
-        activeHandle = null
-        activePid = null
-        syncSession()
-        return Response.json({ ok: false, error: (err as Error)?.message ?? String(err) }, { status: 500 })
-      }
-    },
-  }
-}
-
-export const headlessBrainRunner = createHeadlessBrainRunner()
+export const headlessBrainRunner = createHeadlessBrainRunner({
+  noteActivity: (sid) => brainWiring.noteActivity(sid),
+  onStop: (sid, reply) => brainWiring.onStop(sid, reply),
+})
 
 export const brainWiring = createBrainWiring({
   now: Date.now,
