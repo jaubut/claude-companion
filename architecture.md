@@ -208,9 +208,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
 | `lib/tasks-agent-testdb.test-util.ts` | 82 | lib | 4 |  |
+| `lib/git-config-lock.ts` | 80 | lib | 3 | state: let libc |
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/tmux-inject.ts` | 77 | lib | 5 |  |
-| `lib/git-config-lock.ts` | 76 | lib | 3 | state: let libc |
 | `lib/rehydrate.ts` | 76 | lib | 1 |  |
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
