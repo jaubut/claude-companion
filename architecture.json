@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12",
+  "generatedAt": "2026-11-13",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -131,7 +131,7 @@
         },
         {
           "path": "lib/activity.ts",
-          "lines": 575,
+          "lines": 586,
           "kind": "lib",
           "exports": [
             "Activity",
@@ -197,26 +197,31 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 588,
+          "lines": 868,
           "kind": "lib",
           "exports": [
             "AgyConversationSummary",
             "agyRootDir",
             "agySummariesDbPath",
             "agyTranscriptPath",
+            "agyFullTranscriptPath",
             "readAgyModel",
             "extractAgyUserPrompt",
             "formatAgyQuestionsMarkdown",
             "formatAgyQuestionAnswers",
             "parseAgyTranscriptLine",
             "eventsFromAgyTranscript",
+            "inferAgyTranscriptStatus",
             "readRecentAgyConversations",
+            "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
             "startAgyFeedMonitor",
+            "readAgyTranscriptDelta",
             "ensureHeadlessAgySession",
             "deliverHeadlessAgyTurn"
           ],
           "state": [
+            "pendingToolsBySession: Map",
             "let cachedRecentAgyConversations",
             "offsets: Map",
             "raisedAgyQuestions: Map",
@@ -5433,7 +5438,7 @@
         },
         {
           "path": "lib/transcript.ts",
-          "lines": 538,
+          "lines": 551,
           "kind": "lib",
           "exports": [
             "SessionMeta",
@@ -7945,12 +7950,13 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 238,
+          "lines": 270,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
             "MERGE_CAP",
             "hasRecentUserMergeApproval",
+            "hasRecentUserTaskCancelApproval",
             "mergeAgentPr"
           ],
           "state": [],
@@ -8086,7 +8092,7 @@
         },
         {
           "path": "wiring/brain-task-cancel.ts",
-          "lines": 110,
+          "lines": 137,
           "kind": "lib",
           "exports": [
             "TASK_CANCEL_ACTION",
@@ -8108,6 +8114,7 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -9933,6 +9940,14 @@
             "lib/activity.ts"
           ]
         },
+        "readTailLines": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "lib/transcript.ts"
+          ]
+        },
         "QuestionItem": {
           "module": "lib/questions.ts",
           "callers": [
@@ -9996,14 +10011,6 @@
             "lib/agy-feed.ts"
           ]
         },
-        "readTailLines": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/agy-feed.ts",
-            "lib/transcript-backfill.ts",
-            "lib/transcript.ts"
-          ]
-        },
         "cancelQuestionsFor": {
           "module": "lib/questions.ts",
           "callers": [
@@ -10055,6 +10062,15 @@
             "wiring/brain-headless.ts",
             "wiring/brain.ts",
             "wiring/worker-mcp.ts"
+          ]
+        },
+        "getFeed": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
           ]
         },
         "clearExternalSessionActivity": {
@@ -13900,14 +13916,6 @@
             "lib/transcript-artifacts.ts"
           ]
         },
-        "getFeed": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "lib/transcript-backfill.ts",
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
         "sessionRetention": {
           "module": "lib/feed.ts",
           "callers": [
@@ -17219,6 +17227,12 @@
             "wiring/brain-workers.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts"
+          ]
+        },
+        "hasRecentUserTaskCancelApproval": {
+          "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "wiring/brain-task-cancel.ts"
           ]
         },
         "addTodo": {
