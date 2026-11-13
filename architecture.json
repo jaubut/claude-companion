@@ -198,22 +198,26 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 722,
+          "lines": 868,
           "kind": "lib",
           "exports": [
             "AgyConversationSummary",
             "agyRootDir",
             "agySummariesDbPath",
             "agyTranscriptPath",
+            "agyFullTranscriptPath",
             "readAgyModel",
             "extractAgyUserPrompt",
             "formatAgyQuestionsMarkdown",
             "formatAgyQuestionAnswers",
             "parseAgyTranscriptLine",
             "eventsFromAgyTranscript",
+            "inferAgyTranscriptStatus",
             "readRecentAgyConversations",
+            "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
             "startAgyFeedMonitor",
+            "readAgyTranscriptDelta",
             "ensureHeadlessAgySession",
             "deliverHeadlessAgyTurn"
           ],
@@ -10043,6 +10047,14 @@
             "lib/activity.ts"
           ]
         },
+        "readTailLines": {
+          "module": "lib/transcript-cursor.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "lib/transcript.ts"
+          ]
+        },
         "QuestionItem": {
           "module": "lib/questions.ts",
           "callers": [
@@ -10106,14 +10118,6 @@
             "lib/agy-feed.ts"
           ]
         },
-        "readTailLines": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/agy-feed.ts",
-            "lib/transcript-backfill.ts",
-            "lib/transcript.ts"
-          ]
-        },
         "cancelQuestionsFor": {
           "module": "lib/questions.ts",
           "callers": [
@@ -10165,6 +10169,15 @@
             "wiring/brain-headless.ts",
             "wiring/brain.ts",
             "wiring/worker-mcp.ts"
+          ]
+        },
+        "getFeed": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
           ]
         },
         "clearExternalSessionActivity": {
@@ -14018,14 +14031,6 @@
           "module": "lib/sent-files.ts",
           "callers": [
             "lib/transcript-artifacts.ts"
-          ]
-        },
-        "getFeed": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "lib/transcript-backfill.ts",
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
           ]
         },
         "sessionRetention": {

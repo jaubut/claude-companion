@@ -183,4 +183,127 @@ describe("transcript backfill", () => {
     syncAgyOpenQuestion([askStep, answerStep], convo, ident)
     expect(getPendingQuestions().find((q) => q.sessionId === "agy-q-convo")).toBeUndefined()
   })
+
+  test("Antigravity backgrounded tool (status: RUNNING) does not freeze delta cursor or keep completed turn busy", async () => {
+    const {
+      agyTranscriptPath,
+      agyFullTranscriptPath,
+      inferAgyTranscriptStatus,
+      readAgyTranscriptDelta,
+      resetAgyFeedStateForTests,
+    } = await import("./agy-feed")
+    resetAgyFeedStateForTests()
+
+    const sid = "a63bd666-aeca-47af-9be5-5e494a36ecda"
+    const txPath = agyTranscriptPath(sid, dir)
+    const fullTxPath = agyFullTranscriptPath(sid, dir)
+    mkdirSync(join(txPath, ".."), { recursive: true })
+
+    const convo = {
+      id: sid,
+      title: "GCP Cloud Run Setup",
+      cwd: "/Users/jeremieaubut",
+      status: "busy" as const,
+      updatedAtMs: Date.now(),
+      stepCount: 2,
+    }
+
+    // Initial read before backgrounded command
+    writeFileSync(txPath, [
+      JSON.stringify({
+        step_index: 8678,
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: at(0),
+        content: "<USER_REQUEST>\nim in\n</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 8679,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: at(1),
+        thinking: "Checking gcloud auth.",
+        tool_calls: [{ name: "default_api:run_command", args: { CommandLine: "\"gcloud projects list\"", toolSummary: "\"List GCP projects\"" } }],
+      }),
+    ].join("\n") + "\n")
+
+    const firstBatch = readAgyTranscriptDelta(convo, dir)
+    expect(firstBatch.map((e) => e.kind)).toEqual(["user_prompt", "assistant_thinking", "tool_start"])
+
+    // Now Antigravity appends a backgrounded GENERIC step (status: "RUNNING" permanently in append-only JSONL)
+    // followed by the completion and a truncated PLANNER_RESPONSE whose full text is in transcript_full.jsonl
+    const fullProse = ("Awesome — `jeremie.aubut@gmail.com` is authenticated!\n\n" + "Detailed Cloud Run steps ".repeat(60)).trim()
+    const truncatedProse = "Awesome — `jeremie.aubut@gmail.com` is authenticated!\n<truncated 829 bytes>\nDone!"
+
+    writeFileSync(fullTxPath, [
+      JSON.stringify({
+        step_index: 8682,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: at(5),
+        content: fullProse,
+      }),
+    ].join("\n") + "\n")
+
+    // Simulate a phone-injected prompt already in the live feed
+    const injectedId = crypto.randomUUID()
+    appendFeedEvent({
+      id: injectedId,
+      ts: Date.parse(at(6)) + 200,
+      kind: "user_prompt",
+      text: "https://developers.google.com/profile/benefits return 404",
+      cwd: convo.cwd,
+      sessionId: sid,
+    })
+
+    appendFileSync(txPath, [
+      JSON.stringify({
+        step_index: 8680,
+        type: "GENERIC",
+        status: "RUNNING",
+        created_at: at(2),
+        content: "Created At: 2026-11-13T03:42:31-05:00\nTool is running as a background task with task id: 525120ff-c846-47e9-8dd6-f9ed66cb8bc8.",
+      }),
+      JSON.stringify({
+        step_index: 8681,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: at(4),
+        content: "<SYSTEM_MESSAGE>\nBackground task finished\n</SYSTEM_MESSAGE>",
+      }),
+      JSON.stringify({
+        step_index: 8682,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: at(5),
+        content: truncatedProse,
+        truncated_fields: ["content"],
+      }),
+      JSON.stringify({
+        step_index: 8683,
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: at(6),
+        content: "<USER_REQUEST>\nhttps://developers.google.com/profile/benefits return 404\n</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 8684,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: at(7),
+        content: "Use https://developers.google.com/profile/u/0/benefits instead!",
+      }),
+    ].join("\n") + "\n")
+
+    const secondBatch = readAgyTranscriptDelta({ ...convo, status: "idle", stepCount: 7 }, dir)
+    // Should emit tool_end for 8680, full untruncated assistant_text for 8682, skip duplicate injected user_prompt 8683, and emit assistant_text for 8684
+    expect(secondBatch.map((e) => e.kind)).toEqual(["tool_end", "assistant_text", "assistant_text"])
+    expect(secondBatch[0]!.outputExcerpt).toBe("Running in background")
+    expect(secondBatch[1]!.text).toBe(fullProse)
+    expect(secondBatch[1]!.text).not.toContain("<truncated ")
+    expect(secondBatch[2]!.text).toBe("Use https://developers.google.com/profile/u/0/benefits instead!")
+
+    // Verify inferAgyTranscriptStatus reports "idle" even though step 8680 had status:"RUNNING"
+    expect(inferAgyTranscriptStatus(sid, dir, true)).toBe("idle")
+  })
 })

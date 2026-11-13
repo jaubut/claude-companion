@@ -8,11 +8,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 268 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (722)
+⚠ over cap: `lib/agy-feed.ts` (868)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/agy-feed.ts` | 722 ⚠ 722 > cap 600 | lib | 15 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer |
+| `lib/agy-feed.ts` | 868 ⚠ 868 > cap 600 | lib | 19 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
@@ -525,6 +525,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `shellNetworkRefusal()` | `lib/terminal-bridge.ts` | `companion-server.ts#* /ws`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/shell/close` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts` |
 | `cancelQuestionsFor()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `routes/hooks.ts`, `wiring/dialogs.ts` |
+| `getFeed()` | `lib/feed.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `routes/api.ts#* /api/feed`, `ws.ts` |
 | `InvestigationRecord()` | `lib/body-investigate.ts` | `lib/body-agent.ts`, `lib/body-investigate-engine.ts`, `routes/body.ts`, `wiring/body-agent.ts` |
 | `localBodyHost()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver.ts` |
 | `InvestigationStore()` | `lib/body-investigate.ts` | `lib/body-investigate-engine.ts`, `lib/triage-sources.ts`, `wiring/body-investigate.ts`, `wiring/triage.ts` |
@@ -575,8 +576,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getTaskByDispatchId()` | `lib/orchestrator-chat.ts` | `wiring/brain-task-cancel.ts`, `wiring/brain-workers.ts`, `wiring/dispatch.ts`, `wiring/events.ts` |
 | `keyCommandGate()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
 | `getShellSession()` | `lib/shell-sessions.ts` | `companion-server.ts#* /ws`, `routes/command.ts#POST /api/command/list`, `wiring/shell-sessions.ts` |
-| `parseQuestionInput()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `readTailLines()` | `lib/transcript-cursor.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `lib/transcript.ts` |
+| `parseQuestionInput()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `addQuestionRequest()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `withPickerIO()` | `lib/keyboard-inject.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `driveQuestionPicker()` | `lib/question-driver.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
@@ -613,7 +614,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `realDetachedDeps()` | `lib/tmux-spawn-confirm.ts` | `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `wiring/brain-lead.ts` |
 | `githubName()` | `lib/live-repo.ts` | `lib/spawn-seed.ts`, `wiring/brain-lead.ts`, `wiring/repo-view.ts` |
 | `MINE()` | `lib/my-tasks.ts` | `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `wiring/auto-compact.ts` |
-| `getFeed()` | `lib/feed.ts` | `lib/transcript-backfill.ts`, `routes/api.ts#* /api/feed`, `ws.ts` |
 | `ResolvingItem()` | `lib/triage.ts` | `lib/triage-engine.ts`, `lib/triage-repos.ts`, `wiring/triage.ts` |
 | `TriageStore()` | `lib/triage-store.ts` | `lib/triage-engine.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts` |
 | `TripRow()` | `lib/trip-dashboard.ts` | `lib/trip-classify.ts`, `lib/trip-service.ts`, `wiring/trips.ts` |
