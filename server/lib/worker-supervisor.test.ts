@@ -780,21 +780,61 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("no inheritance: a claimless redispatch after a completed turn (anyone holding the task id) runs unbound and its PR is not linked", async () => {
+    test("a bound task refuses a claimless redispatch after a completed turn (anyone holding the task id): 409 claim_required, nothing spawned, binding intact", async () => {
       const home = tmpHome()
       const h = harness(home)
+      const saved = () => (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown; prLinkBound?: unknown; turnCount?: unknown }>)
       try {
         await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         await flush(); await flush()
-        // a lead or bearer peer that only read the id off list_tasks, or a phone inject (routes/api.ts: no claim field)
+        const before = JSON.stringify(saved())
+        // a lead or bearer peer that only read the id off list_tasks
         const borrowed = await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", title: "T", prompt: "ship something unrelated", mode: "auto", family: "claude" })
-        expect(borrowed.ok && borrowed.claim).toBe("absent")
+        expect(borrowed).toEqual({ ok: false, status: 409, error: "claim_required" })
+        expect(h.spawned).toHaveLength(1)
+        expect(h.binds).toHaveLength(1)
+        expect(JSON.stringify(saved())).toBe(before)
+        expect(saved().find((r) => r.taskId === "claim-3")).toMatchObject({ handoffClaim: CLAIM, prLinkBound: true })
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("claimed -> claimless (refused) -> claimed again: verified, still bound, links", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-10", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        expect(await h.sup.dispatchTask({ taskId: "claim-10", repo: "claude-companion", prompt: "Fix round" })).toEqual({ ok: false, status: 409, error: "claim_required" })
+        const again = await h.sup.dispatchTask({ taskId: "claim-10", repo: "claude-companion", prompt: "Fix round", claim: CLAIM })
+        expect(again.ok && again.claim).toBe("verified")
+        expect(h.binds).toHaveLength(1)
         h.finish(1)
         await flush(); await flush()
-        expect(h.linkClaims).toEqual([CLAIM]) // turn 1 only
+        expect(h.linkClaims).toEqual([CLAIM, CLAIM])
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("Jeremie's phone inject (routes/api.ts, inheritClaim) on a bound task resumes with the stored claim and still links", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-11", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        // routes/api.ts deliverInject's shape: no claim field, the server asks for the stored one
+        const inject = await h.sup.dispatchTask({ taskId: "claim-11", repo: "claude-companion", title: "T", prompt: "also fix the typo", mode: "auto", family: "claude", inheritClaim: true })
+        expect(inject.ok && inject.claim).toBe("verified")
         expect(h.binds).toHaveLength(1)
-        expect(h.boundArgs.at(-1)).toBe("terminal:false") // and no status sync for the unbound turn
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.linkClaims).toEqual([CLAIM, CLAIM])
+        expect(JSON.stringify(inject)).not.toContain("hc1.")
       } finally {
         rmSync(home, { recursive: true, force: true })
       }
@@ -838,29 +878,26 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("a claimed task that failed: anyone's redispatch without a claim runs unbound and drops the stored claim", async () => {
+    test("a bound task that failed refuses a claimless redispatch (409, binding intact); a fresh valid claim resumes it", async () => {
       const home = tmpHome()
       const h = harness(home)
+      const saved = () => (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown; prLinkBound?: unknown; turnCount?: unknown }>)
       try {
         await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.spawned[0]!.onExit(1, null) // failed before any PR was linked
         const borrowed = await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "something else entirely" })
-        expect(borrowed.ok && borrowed.claim).toBe("absent")
-        h.finish(1)
-        await flush(); await flush()
-        expect(h.links).toEqual([])
-        expect(h.binds).toHaveLength(1)
-        const saved = (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown; prLinkBound?: unknown }>).find((r) => r.taskId === "claim-6")!
-        expect(saved).toMatchObject({ handoffClaim: null, prLinkBound: false })
-        // a fresh valid claim still brings it back
+        expect(borrowed).toEqual({ ok: false, status: 409, error: "claim_required" })
+        expect(h.spawned).toHaveLength(1)
+        expect(saved().find((r) => r.taskId === "claim-6")).toMatchObject({ handoffClaim: CLAIM, prLinkBound: true, turnCount: 1 })
         const again = await h.sup.dispatchTask({ taskId: "claim-6", repo: "claude-companion", prompt: "Retry", claim: CLAIM })
         expect(again.ok && again.claim).toBe("verified")
+        expect(h.binds).toHaveLength(1)
       } finally {
         rmSync(home, { recursive: true, force: true })
       }
     })
 
-    test("a worker reset to a new session (family change) doesn't inherit the claim either", async () => {
+    test("a bound worker reset to a new session (family change) still refuses a claimless dispatch", async () => {
       const home = tmpHome()
       const h = harness(home)
       try {
@@ -868,33 +905,39 @@ describe("createWorkerSupervisor", () => {
         h.finish(0)
         await flush(); await flush()
         h.sup.setTaskModel("claim-7", "gpt-5.4")
-        const reset = await h.sup.dispatchTask({ taskId: "claim-7", repo: "claude-companion", prompt: "Start over" })
-        expect(reset.ok && reset.claim).toBe("absent")
-        h.finish(1)
-        await flush(); await flush()
-        expect(h.links).toHaveLength(1) // turn 1 only
+        expect(await h.sup.dispatchTask({ taskId: "claim-7", repo: "claude-companion", prompt: "Start over" })).toEqual({ ok: false, status: 409, error: "claim_required" })
+        expect(h.spawned).toHaveLength(1)
       } finally {
         rmSync(home, { recursive: true, force: true })
       }
     })
 
-    test("an invalid supplied claim is refused with its reason and never falls back to the stored one", async () => {
+    test("a wrong claim on a bound task is refused before anything runs, and never replaces the stored one", async () => {
       const home = tmpHome()
-      const answers: Array<true | string> = [true, "bad_mac"]
-      const h = harness(home, { bind: async () => answers.shift()! })
+      const h = harness(home)
       try {
         await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         await flush(); await flush()
-        const bad = await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round", claim: "hc1.forged" })
+        expect(await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round", claim: "hc1.forged" })).toEqual({ ok: false, status: 409, error: "claim_required" })
+        expect(h.bindClaims).toEqual([CLAIM])
+        expect(h.spawned).toHaveLength(1)
+        const ok = await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round", claim: CLAIM })
+        expect(ok.ok && ok.claim).toBe("verified")
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("an unbound task's invalid claim is refused with its reason and runs unbound", async () => {
+      const home = tmpHome()
+      const h = harness(home, { bind: async () => "bad_mac" })
+      try {
+        const bad = await h.sup.dispatchTask({ taskId: "claim-12", repo: "claude-companion", prompt: "Ship PR", claim: "hc1.forged" })
         expect(bad.ok && bad.claim).toBe("claim_refused:bad_mac")
-        expect(h.bindClaims).toEqual([CLAIM, "hc1.forged"])
-        h.finish(1)
+        h.finish(0)
         await flush(); await flush()
-        expect(h.linkClaims).toEqual([CLAIM]) // turn 1 only
-        h.spawned[1]!.onExit(0, null)
-        const after = await h.sup.dispatchTask({ taskId: "claim-8", repo: "claude-companion", prompt: "Fix round" })
-        expect(after.ok && after.claim).toBe("absent")
+        expect(h.links).toEqual([])
       } finally {
         rmSync(home, { recursive: true, force: true })
       }

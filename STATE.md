@@ -387,6 +387,8 @@ No WS frame or iOS change.
 
 **Fix round 2 (#311 review on d4359e6, both reviewers P1 at worker-supervisor.ts:316-320):** a claimless redispatch after a completed turn still inherited the stored claim, and anyone holding the task id (list_tasks shows it: a lead, a bearer peer, a phone inject) could link an unrelated PR as Jeremie's work. Inheritance is removed: every dispatch must present the claim; the exact claim a bound task holds keeps it bound without re-asking the row. The supervisor starts no turns on its own; its internal paths (state reload after restart, startup link replay) use the stored claim, which a dispatch never inherits. Docs: every `bin/worker dispatch` passes `--claim`.
 
+**Fix round 3 (#311 review on 6a819f7, both reviewers P1 at worker-supervisor.ts:313-324):** a claimless or wrong-claim dispatch of an already bound task still resumed its worktree, session and dispatch/<id> branch and could push onto the PR already linked as Jeremie's. Now a bound task (prLinkBound true + stored claim) refuses any dispatch whose claim isn't the stored one: 409 claim_required, before ensureWorktree, record untouched. Jeremie's phone inject (routes/api.ts deliverInject) passes `inheritClaim: true`, server-only (lib/worker-mcp.ts builds dispatch input field by field, so a tool call can't set it), and resumes with the stored claim. F2 (sandbox-header lead auth) and F4 (same-uid key reads) stay accepted residuals.
+
 **Needs Jeremie decision** (answered above)
 1. Sequencing: stack on #309 and merge back-to-back (recommended), or fold into #309. Never merge #309 alone. Deploy to both hosts together; roll back both PRs together, or neither.
 2. Copy the keys file to the Mac (so Mac-hosted worker PRs can link), or accept unknown for them.

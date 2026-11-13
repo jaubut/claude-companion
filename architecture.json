@@ -6431,7 +6431,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 579,
+          "lines": 585,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6488,7 +6488,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 587,
+          "lines": 588,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",

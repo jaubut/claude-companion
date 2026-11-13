@@ -230,6 +230,9 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
     const args = { task_id: "t-1", repo: "claude-companion", prompt: "P", claim: CLAIM }
     const local = await mcp.callTool(1, "dispatch_task", args) as { result: { structuredContent: Record<string, unknown> } }
     expect(got[0]).toMatchObject({ taskId: "t-1", repo: "claude-companion", claim: CLAIM })
+    // the stored-claim flag is server-only (routes/api.ts): a tool call can't set it
+    await mcp.callTool(3, "dispatch_task", { task_id: "t-2", repo: "claude-companion", prompt: "P", inheritClaim: true, inherit_claim: true })
+    expect(got[1]).not.toHaveProperty("inheritClaim")
     expect(local.result.structuredContent).toMatchObject({ ok: true, claim: "verified" })
     expect(JSON.stringify(local)).not.toContain(CLAIM)
     await mcp.callTool(2, "dispatch_task", { ...args, host: "mac" })

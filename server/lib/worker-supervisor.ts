@@ -28,6 +28,8 @@ export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
   /** The handoff claim from `bin/worker dispatch --claim` (lib/handoff-claim.ts). Stays inside the supervisor. */
   claim?: string
+  /** Server-only (routes/api.ts, Jeremie's authenticated phone inject): resume with the stored claim. Never from a tool call. */
+  inheritClaim?: boolean
 }
 
 /** What the dispatch made of the task's claim: bound (verified), refused with its reason, lookup failed (pending), or none (absent). */
@@ -294,6 +296,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!family) return { ok: false, status: 400, error: "invalid_family" }
 
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
+      // A bound task's worktree, session and dispatch/<id> branch feed a PR already linked as Jeremie's: only its own
+      // claim resumes it. Refused before any side effect, so the record and its binding stay as they are.
+      const supplied = input.inheritClaim ? existing?.handoffClaim ?? undefined : input.claim
+      if (existing?.prLinkBound === true && existing.handoffClaim && supplied !== existing.handoffClaim) return { ok: false, status: 409, error: "claim_required" }
       const wtKey = (existing?.worktree ?? join(deps.home, "apps", "wt", repo, taskId)).toLowerCase()
       if (inFlightDispatches.has(taskId) || inFlightWorktrees.has(wtKey) || (existing && existing.status === "running")) {
         return { ok: false, status: 409, error: "task_already_running" }
@@ -313,7 +319,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
         // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
         // again (its first PR may already have taken it); any other claim is checked itself, and a refusal never falls back.
-        const claim = input.claim || null
+        const claim = supplied || null
         const bind = !claim ? "absent" : existing?.prLinkBound === true && existing.handoffClaim === claim ? true
           : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : "no_binding"
         const prLinkBound = bind === true ? true : bind === null ? null : false
