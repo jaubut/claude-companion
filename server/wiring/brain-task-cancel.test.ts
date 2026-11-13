@@ -305,7 +305,7 @@ describe("bin/task-cancel gate", () => {
 
   test("humanApproved cancels a completed [autodev:infra-gate:*] task (done=0) without a proposal and writes pr:unpark for held PRs", async () => {
     const gateId = ID(77)
-    const heldPr = "https://github.com/jaubut/tls-dashboard-v2/pull/425"
+    const heldPr = `https://github.com/jaubut/tls-dashboard-v2/pull/425?run=${prefix}` // tls-test is shared across runs
     await seed(gateId, {
       text: "Fix PR gate host for tls-dashboard-v2 [autodev:infra-gate:tls-dashboard-v2:zettlab]",
       status: "completed",
