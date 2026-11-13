@@ -24,7 +24,7 @@ export const WORKER_MCP_TOOLS = [
         mode: { type: "string", description: "Permission mode (`auto`, `acceptEdits`, `default`, `dontAsk`, `plan`). Defaults to `auto`." },
         timeout_s: { type: "number", description: "Per-turn timeout in seconds (default 3600)." },
         host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
-        claim: { type: "string", description: "The handoff claim `bin/propose --handoff --repo` returned for this task id and repo. Without it the worker's PR is never linked to the task row (origin unknown)." },
+        claim: { type: "string", description: "The handoff claim `bin/propose --handoff --repo` returned for this task id and repo. Pass it on every dispatch of the task, fix rounds included (never inherited); without it the worker runs unbound and its PR is never linked to the task row (origin unknown)." },
       },
     },
   },

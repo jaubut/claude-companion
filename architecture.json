@@ -198,7 +198,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 724,
+          "lines": 722,
           "kind": "lib",
           "exports": [
             "AgyConversationSummary",
@@ -6427,7 +6427,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 582,
+          "lines": 579,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",

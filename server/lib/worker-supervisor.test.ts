@@ -692,7 +692,7 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("the binding survives a state reload: a fix round after a restart still links, without binding again", async () => {
+    test("the binding survives a state reload (the supervisor's own restart): a claimed fix round after it still links, without binding again", async () => {
       const home = tmpHome()
       try {
         const a = harness(home)
@@ -707,7 +707,7 @@ describe("createWorkerSupervisor", () => {
         expect(saved.find((r) => r.taskId === "bind-6")?.prLinkBound).toBe(false)
 
         const b = harness(home)
-        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Fix review findings" })
+        await b.sup.dispatchTask({ taskId: "bind-5", repo: "claude-companion", prompt: "Fix review findings", claim: CLAIM })
         expect(b.binds).toEqual([])
         b.finish(0)
         await flush(); await flush()
@@ -780,23 +780,40 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("a fix round continuing the finished turn (the lead's resume, or a phone inject through routes/api.ts) keeps the stored claim and still links", async () => {
+    test("no inheritance: a claimless redispatch after a completed turn (anyone holding the task id) runs unbound and its PR is not linked", async () => {
       const home = tmpHome()
       const h = harness(home)
       try {
         await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
         h.finish(0)
         await flush(); await flush()
-        // routes/api.ts deliverInject: no claim field at all
-        const inject = await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", title: "T", prompt: "also fix the typo", mode: "auto", family: "claude" })
-        expect(inject.ok && inject.claim).toBe("verified")
+        // a lead or bearer peer that only read the id off list_tasks, or a phone inject (routes/api.ts: no claim field)
+        const borrowed = await h.sup.dispatchTask({ taskId: "claim-3", repo: "claude-companion", title: "T", prompt: "ship something unrelated", mode: "auto", family: "claude" })
+        expect(borrowed.ok && borrowed.claim).toBe("absent")
+        h.finish(1)
+        await flush(); await flush()
+        expect(h.linkClaims).toEqual([CLAIM]) // turn 1 only
+        expect(h.binds).toHaveLength(1)
+        expect(h.boundArgs.at(-1)).toBe("terminal:false") // and no status sync for the unbound turn
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
+    })
+
+    test("a fix round that passes the valid claim again links, without re-binding a row its first PR already took", async () => {
+      const home = tmpHome()
+      const h = harness(home)
+      try {
+        await h.sup.dispatchTask({ taskId: "claim-9", repo: "claude-companion", prompt: "Ship PR", claim: CLAIM })
+        h.finish(0)
+        await flush(); await flush()
+        const fix = await h.sup.dispatchTask({ taskId: "claim-9", repo: "claude-companion", prompt: "Fix review findings", claim: CLAIM })
+        expect(fix.ok && fix.claim).toBe("verified")
         expect(h.binds).toHaveLength(1)
         h.finish(1)
         await flush(); await flush()
         expect(h.linkClaims).toEqual([CLAIM, CLAIM])
         expect(h.terminal[1]).toBe(`completed:PR ready: ${PR}`)
-        const saved = (JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8")) as Array<{ taskId: string; handoffClaim?: unknown }>)
-        expect(saved.find((r) => r.taskId === "claim-3")?.handoffClaim).toBe(CLAIM)
       } finally {
         rmSync(home, { recursive: true, force: true })
       }

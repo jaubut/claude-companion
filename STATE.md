@@ -385,6 +385,8 @@ No WS frame or iOS change.
 
 **Merge of main (cc900b7 `syncWorkerTaskToTurso`, #312 resolver), 2026-11-12:** main's new worker→Turso sync wrote `dispatch_pr_url` for any dispatch-id worker with no claim (the laundering path again) and set `dispatch_status`/`dispatch_owner` at dispatch, which made the row non-OWNABLE so the claim-checked link could never land. Kept main's status sync, but only for a claim-bound task (the supervisor now tells `syncSession`/`onTaskTerminal` `linkBound`), without the `dispatch_pr_url` writes; OWNABLE also accepts the bound worker's own `companion:worker:%` owner. Process-group helpers moved to `lib/worker-pid.ts` (supervisor 605 > 600 after the merge).
 
+**Fix round 2 (#311 review on d4359e6, both reviewers P1 at worker-supervisor.ts:316-320):** a claimless redispatch after a completed turn still inherited the stored claim, and anyone holding the task id (list_tasks shows it: a lead, a bearer peer, a phone inject) could link an unrelated PR as Jeremie's work. Inheritance is removed: every dispatch must present the claim; the exact claim a bound task holds keeps it bound without re-asking the row. The supervisor starts no turns on its own; its internal paths (state reload after restart, startup link replay) use the stored claim, which a dispatch never inherits. Docs: every `bin/worker dispatch` passes `--claim`.
+
 **Needs Jeremie decision** (answered above)
 1. Sequencing: stack on #309 and merge back-to-back (recommended), or fold into #309. Never merge #309 alone. Deploy to both hosts together; roll back both PRs together, or neither.
 2. Copy the keys file to the Mac (so Mac-hosted worker PRs can link), or accept unknown for them.

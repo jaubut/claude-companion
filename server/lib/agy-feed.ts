@@ -710,10 +710,8 @@ export function deliverHeadlessAgyTurn(opts: {
       "stream-json",
       "--dangerously-skip-permissions",
     ], {
-      cwd: opts.cwd || homedir(),
-      env: scrubAgentEnv(process.env),
-      stdout: "ignore",
-      stderr: "ignore",
+      cwd: opts.cwd || homedir(), env: scrubAgentEnv(process.env),
+      stdout: "ignore", stderr: "ignore",
     })
     proc.unref()
     return true

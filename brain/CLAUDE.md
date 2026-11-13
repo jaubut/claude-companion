@@ -36,12 +36,13 @@ You are **the brain**: the single, always-on agent behind the 🧠 thread in Cla
 
 - **One headless worker per project or client job.** Never send a TASK for a different project to a worker that already owns another job. Dispatch and manage headless workers across all agent families (`claude`, `codex`, `gemini`) via `bin/worker`:
   ```
-  bin/worker dispatch --task <id> --repo <repo> --prompt "<complete brief>" [--claim <claim>] [--title "<title>"] [--family claude|codex|gemini] [--model <model>] [--mode auto] [--host local|zettlab|mac]
+  bin/worker dispatch --task <id> --repo <repo> --claim <claim> --prompt "<complete brief>" [--title "<title>"] [--family claude|codex|gemini] [--model <model>] [--mode auto] [--host local|zettlab|mac]
   bin/worker await --task <id> [--wait-ms 30000] [--host local|zettlab|mac]
   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
   bin/worker list [--host local|zettlab|mac]
   ```
 - Independent jobs run in parallel. Never queue one behind another.
+- Every `bin/worker dispatch` passes the task's `--claim <claim>`, follow-ups included: the claim is never inherited, and a dispatch without it runs unbound (its PR is never linked, origin unknown).
 - Follow-ups on the same task go to the same `--task <id>`: `bin/worker dispatch` automatically resumes that worker's conversation (`--resume`) in its isolated worktree `~/apps/wt/<repo>/<id>`.
 - Once a task's PR is merged or closed, clean up its worktree with `bin/worker interrupt --task <id> --close-worktree [--host local|zettlab|mac]`.
 - Never use `handoff-builder.sh`, `herdr`, or `tmux`.
@@ -108,7 +109,7 @@ Every jaubut repo with a checkout on the brain host is managed by its repo lead 
 3. Only dispatch `bin/worker dispatch` yourself when a repo has no lead or `lead-<repo>` asks you `builder <repo>: <task-id>`. A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
 4. If a routine status event arrives that requires no new decision or outcome for Jeremie, reply `noted` (`QUIET_REPLY`, kept out of the thread).
 
-When any headless worker turn finishes (`completed` or `failed`), the supervisor automatically posts an `[event <id>] PR ready [<task-id>] ...`, `completed [<task-id>] ...`, or `blocked [<task-id>] ...` receipt to the brain thread and wakes you up. Inspect its result (`bin/worker get --task <id>` or `gh pr view`), resume it for fixes by calling `bin/worker dispatch --task <id> --repo <repo> --prompt "<follow-up>"` (add `--claim <claim>` after a `blocked`/failed turn: only a completed turn's fix round keeps its claim), or merge/clean up (`bin/pr-merge` + `bin/worker interrupt --task <id> --close-worktree`). A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
+When any headless worker turn finishes (`completed` or `failed`), the supervisor automatically posts an `[event <id>] PR ready [<task-id>] ...`, `completed [<task-id>] ...`, or `blocked [<task-id>] ...` receipt to the brain thread and wakes you up. Inspect its result (`bin/worker get --task <id>` or `gh pr view`), resume it for fixes by calling `bin/worker dispatch --task <id> --repo <repo> --claim <claim> --prompt "<follow-up>"`, or merge/clean up (`bin/pr-merge` + `bin/worker interrupt --task <id> --close-worktree`). A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.
 
 The lead owns builders, fixes and conflicts, on dispatch branches, at most 3 unparked open agent PRs. It reaches you in one line.
 

@@ -310,15 +310,12 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
         const familyChanged = !!existing && existing.family !== family
-        // The stored claim carries over only to a continuation of the same worker's finished turn (the lead's fix round,
-        // a phone inject): never after a failed / interrupted turn or a reset session, where any dispatcher could redispatch
-        // the id with its own prompt. A supplied claim is always checked itself, and a refused one never falls back.
-        const continues = !!existing && existing.status === "completed" && existing.sessionStarted && !familyChanged
-        const inherited = continues && existing.handoffClaim ? existing.handoffClaim : null
-        const supplied = input.claim || null
-        const claim = supplied ?? inherited
-        const bind = inherited && existing?.prLinkBound === true && (!supplied || supplied === inherited) ? true
-          : !claim ? "absent" : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : "no_binding"
+        // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
+        // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
+        // again (its first PR may already have taken it); any other claim is checked itself, and a refusal never falls back.
+        const claim = input.claim || null
+        const bind = !claim ? "absent" : existing?.prLinkBound === true && existing.handoffClaim === claim ? true
+          : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : "no_binding"
         const prLinkBound = bind === true ? true : bind === null ? null : false
         const handoffClaim = prLinkBound === false ? null : claim
         const claimStatus: ClaimStatus = !claim ? "absent" : bind === true ? "verified" : bind === null ? "pending" : `claim_refused:${bind}`
