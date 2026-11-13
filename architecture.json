@@ -198,27 +198,22 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 722,
+          "lines": 543,
           "kind": "lib",
           "exports": [
             "AgyConversationSummary",
-            "agyRootDir",
             "agySummariesDbPath",
-            "agyTranscriptPath",
             "readAgyModel",
-            "extractAgyUserPrompt",
-            "formatAgyQuestionsMarkdown",
-            "formatAgyQuestionAnswers",
-            "parseAgyTranscriptLine",
-            "eventsFromAgyTranscript",
+            "inferAgyTranscriptStatus",
             "readRecentAgyConversations",
+            "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
             "startAgyFeedMonitor",
+            "readAgyTranscriptDelta",
             "ensureHeadlessAgySession",
             "deliverHeadlessAgyTurn"
           ],
           "state": [
-            "pendingToolsBySession: Map",
             "let cachedRecentAgyConversations",
             "offsets: Map",
             "raisedAgyQuestions: Map",
@@ -236,10 +231,47 @@
             "lib/questions.ts",
             "lib/keyboard-inject.ts",
             "lib/question-driver.ts",
+            "lib/transcript-cursor.ts",
+            "lib/worker-invocation.ts",
+            "lib/agy-transcript.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/agy-transcript.ts",
+          "lines": 350,
+          "kind": "lib",
+          "exports": [
+            "AgyTranscriptStep",
+            "agyRootDir",
+            "agyTranscriptPath",
+            "agyFullTranscriptPath",
+            "resolveTruncatedAgyStep",
+            "extractAgyUserPrompt",
+            "formatAgyQuestionsMarkdown",
+            "formatAgyQuestionAnswers",
+            "normalizeAgyToolArgs",
+            "clearPendingAgyTools",
+            "parseAgyTranscriptLine",
+            "enforceMonotonicTimestamps",
+            "eventsFromAgyTranscript"
+          ],
+          "state": [
+            "pendingToolsBySession: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feed.ts",
+            "lib/tool-format.ts",
+            "lib/questions.ts",
             "lib/transcript.ts",
             "lib/transcript-cursor.ts",
-            "lib/transcript-backfill.ts",
-            "lib/worker-invocation.ts"
+            "lib/transcript-backfill.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5411,7 +5443,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/feed.ts",
             "lib/recent-sessions.ts",
             "lib/session-titles.ts",
@@ -9997,14 +10029,14 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
-            "lib/agy-feed.ts"
+            "lib/agy-transcript.ts"
           ]
         },
         "summarize": {
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
-            "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/approval-history-auto.ts",
             "lib/approval-history.ts",
             "lib/codex-feed.ts",
@@ -10019,7 +10051,7 @@
           "module": "lib/tool-format.ts",
           "callers": [
             "lib/activity.ts",
-            "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/codex-feed.ts",
             "lib/transcript-backfill.ts",
             "lib/transcript.ts"
@@ -10043,48 +10075,86 @@
             "lib/activity.ts"
           ]
         },
-        "QuestionItem": {
-          "module": "lib/questions.ts",
+        "agyRootDir": {
+          "module": "lib/agy-transcript.ts",
           "callers": [
-            "lib/agy-feed.ts",
-            "lib/orphan-question.ts",
-            "lib/question-driver.ts",
-            "lib/question-hook.ts"
+            "lib/agy-feed.ts"
           ]
         },
-        "QuestionAnswer": {
-          "module": "lib/questions.ts",
+        "agyTranscriptPath": {
+          "module": "lib/agy-transcript.ts",
           "callers": [
             "lib/agy-feed.ts",
-            "lib/approval-history.ts",
-            "lib/orphan-question.ts",
-            "lib/question-driver.ts",
-            "lib/question-hook.ts",
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "clearPendingAgyTools": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "enforceMonotonicTimestamps": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "formatAgyQuestionAnswers": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "normalizeAgyToolArgs": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "parseAgyTranscriptLine": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "resolveTruncatedAgyStep": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "AgyTranscriptStep": {
+          "module": "lib/agy-transcript.ts",
+          "callers": [
+            "lib/agy-feed.ts"
           ]
         },
         "FeedEvent": {
           "module": "lib/feed.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/codex-feed.ts",
             "lib/transcript-artifacts.ts",
             "lib/transcript-backfill.ts",
             "wiring/events.ts"
           ]
         },
-        "THINKING_MAX": {
-          "module": "lib/transcript.ts",
+        "readTailLines": {
+          "module": "lib/transcript-cursor.ts",
           "callers": [
             "lib/agy-feed.ts",
-            "lib/transcript-backfill.ts"
+            "lib/agy-transcript.ts",
+            "lib/transcript-backfill.ts",
+            "lib/transcript.ts"
           ]
         },
         "isQuestionTool": {
           "module": "lib/questions.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
             "lib/tool-format.ts",
@@ -10092,26 +10162,23 @@
             "routes/hooks.ts#POST /hooks/post-tool-use"
           ]
         },
+        "QuestionItem": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
+            "lib/orphan-question.ts",
+            "lib/question-driver.ts",
+            "lib/question-hook.ts"
+          ]
+        },
         "parseQuestionInput": {
           "module": "lib/questions.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/agy-transcript.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts"
-          ]
-        },
-        "HistorySession": {
-          "module": "lib/transcript-backfill.ts",
-          "callers": [
-            "lib/agy-feed.ts"
-          ]
-        },
-        "readTailLines": {
-          "module": "lib/transcript-cursor.ts",
-          "callers": [
-            "lib/agy-feed.ts",
-            "lib/transcript-backfill.ts",
-            "lib/transcript.ts"
           ]
         },
         "cancelQuestionsFor": {
@@ -10167,6 +10234,15 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "getFeed": {
+          "module": "lib/feed.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/transcript-backfill.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
         "clearExternalSessionActivity": {
           "module": "lib/activity.ts",
           "callers": [
@@ -10183,6 +10259,31 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/agy-feed.ts"
+          ]
+        },
+        "QuestionAnswer": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/agy-transcript.ts",
+            "lib/approval-history.ts",
+            "lib/orphan-question.ts",
+            "lib/question-driver.ts",
+            "lib/question-hook.ts",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
+        "THINKING_MAX": {
+          "module": "lib/transcript.ts",
+          "callers": [
+            "lib/agy-transcript.ts",
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "HistorySession": {
+          "module": "lib/transcript-backfill.ts",
+          "callers": [
+            "lib/agy-transcript.ts"
           ]
         },
         "ApnsEnv": {
@@ -14020,14 +14121,6 @@
             "lib/transcript-artifacts.ts"
           ]
         },
-        "getFeed": {
-          "module": "lib/feed.ts",
-          "callers": [
-            "lib/transcript-backfill.ts",
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
         "sessionRetention": {
           "module": "lib/feed.ts",
           "callers": [
@@ -14035,14 +14128,8 @@
             "wiring/events.ts"
           ]
         },
-        "agyTranscriptPath": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "lib/transcript-backfill.ts"
-          ]
-        },
         "eventsFromAgyTranscript": {
-          "module": "lib/agy-feed.ts",
+          "module": "lib/agy-transcript.ts",
           "callers": [
             "lib/transcript-backfill.ts"
           ]

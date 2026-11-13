@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { agyTranscriptPath, eventsFromAgyTranscript } from "./agy-feed"
+import { agyTranscriptPath, eventsFromAgyTranscript } from "./agy-transcript"
 import { type FeedEvent, getFeed, sessionRetention } from "./feed"
 import { SESSION_ID_RE } from "./recent-sessions"
 import { findTranscript, transcriptPath } from "./session-titles"
