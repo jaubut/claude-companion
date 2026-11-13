@@ -2,21 +2,21 @@
 // archmap — generate (or check / lint) a repo's architecture map.
 //   bun run ~/.claude/tools/archmap/cli.ts <repo> [--check] [--lint [--baseline <json>]] [--quiet]
 //   bun run ~/.claude/tools/archmap/cli.ts --fleet <out.json> [--fleet-from <roster.json>]
-// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json
-// (+ architecture.refs.json, the referenced siblings' snapshot, when refs are configured),
+// Reads <repo>/archmap.json, writes <repo>/architecture.md + architecture.json,
 // and FEATUREMAP.md + featuremap.json when a `featuremap` target is configured (nav map,
 // see adapters/featuremap.ts; feature → routes → API → files index, see features.ts).
 // --check: exit 1 if the committed map is stale (JSON differs, timestamp aside) or FEATUREMAP.md /
 //          featuremap.json is (or is a generated one whose target was removed — a regenerate deletes it).
-// --lint:  exit 1 on import-rule violations, cap growth vs the baseline map,
-//          or a vendored copy that differs from its `mirrors[]` dir (see lint.ts). Both may be combined; neither writes files.
+// --lint:  exit 1 on import-rule violations or a vendored copy that differs from its `mirrors[]` dir;
+//          file cap findings (line counts, growth vs the baseline map) only warn (see lint.ts).
+//          Both may be combined; neither writes files.
 // --fleet: aggregate every roster repo's COMMITTED map by external package into
 //          <out.json> (see fleet.ts). Needs no repo argument; scans nothing.
 // Unknown flags exit 2 — a typo must not fall through to a full regenerate.
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join, resolve } from "node:path"
-import type { ArchMap, RefSnapshots, RepoConfig, Target } from "./types"
+import type { ArchMap, RepoConfig, Target } from "./types"
 import { scanBunServer } from "./adapters/bun-server"
 import { scanHonoServer } from "./adapters/hono-server"
 import { scanReactClient } from "./adapters/react-client"
@@ -139,8 +139,7 @@ if (doLint) {
   // regenerate -> lint, which leaves architecture.json on disk already
   // describing the change being linted; using that as the baseline compares
   // the change against itself, so a file this change just pushed OVER the cap
-  // reads as "legacy" and does not block. That is the one thing the ratchet
-  // exists to catch. Falls back to the working tree when there is no git, no
+  // reads as "legacy" and its warning hides the growth. Falls back to the working tree when there is no git, no
   // commit yet, or the map is untracked.
   const basePathFlag = flagValue("--baseline")
   let baselineText: string | null = null
@@ -155,7 +154,7 @@ if (doLint) {
     }
   }
   let baseline: ArchMap | null = null
-  try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → every over-cap module blocks */ }
+  try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → over-cap modules warn without growth */ }
   // ponytail: missing selectors warn, never block; ratchet them like caps if they keep growing.
   const noSelector = featureMaps.flatMap((fm) => {
     const n = [...fm.shell, ...fm.pages].filter((f) => !f.selector).length
@@ -163,37 +162,21 @@ if (doLint) {
   })
   const issues = [...lint(map, cfg, baseline), ...mirrorDrift(cfg, repo), ...noSelector]
   const blocking = issues.filter((i) => i.blocking)
-  if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} legacy\n${formatIssues(issues)}`)
+  if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} warnings\n${formatIssues(issues)}`)
   else if (!quiet) console.log("archmap: lint clean")
   if (blocking.length) failed = true
 }
 if (check || doLint) process.exit(failed ? 1 : 0)
 
 // Referenced maps join the rendered contracts only; the JSON keeps the pointer.
-// Each resolved ref is snapshotted into architecture.refs.json; a host without
-// the sibling renders from the committed snapshot, so the output is host-independent.
-const refsPath = join(repo, "architecture.refs.json")
-let cachedRefs: RefSnapshots = {}
-try { cachedRefs = JSON.parse(readFileSync(refsPath, "utf-8")) as RefSnapshots } catch { /* none committed yet */ }
-const snapshots: RefSnapshots = {}
 const refs: RefTarget[] = []
 const unresolved: string[] = []
 for (const r of map.refs) {
-  const p = join(resolveRoot(repo, r.repo), "architecture.json")
-  let snap = cachedRefs[r.name]?.repo === r.repo ? cachedRefs[r.name] : undefined
-  if (existsSync(p)) {
-    const sub = JSON.parse(readFileSync(p, "utf-8")) as ArchMap
-    snap = {
-      repo: r.repo, generatedAt: sub.generatedAt,
-      targets: sub.targets.map((t) => ({ name: t.name, adapter: t.adapter, root: t.root, modules: t.modules.map(({ path, emits, consumes, endpoints, apiCalls }) => ({ path, emits, consumes, endpoints, apiCalls })) })),
-    }
-  }
-  if (!snap) { unresolved.push(`${r.name} (${r.repo})`); continue }
-  snapshots[r.name] = snap
-  for (const t of snap.targets) refs.push({
-    ...t, cap: 0, fanIn: {}, ref: r.name, repo: r.repo, generatedAt: snap.generatedAt,
-    modules: t.modules.map((m) => ({ lines: 0, kind: "", exports: [], state: [], imports: [], listeners: [], sheets: 0, ...m })),
-  })
+  const dir = resolveRoot(repo, r.repo)
+  const p = join(dir, "architecture.json")
+  if (!existsSync(p)) { unresolved.push(`${r.name} (${r.repo})`); continue }
+  const sub = JSON.parse(readFileSync(p, "utf-8")) as ArchMap
+  for (const t of sub.targets) refs.push({ ...t, ref: r.name, repo: r.repo, generatedAt: sub.generatedAt })
 }
 // A ref the committed map had joined but this host cannot see (the sibling
 // repo is not checked out here) must not silently drop that sibling's
@@ -213,8 +196,6 @@ if (featureJson && existsSync(featureJsonPath) && !isGeneratedFeatureIndex(readF
 }
 writeFileSync(jsonPath, JSON.stringify(map, null, 2) + "\n")
 writeFileSync(mdPath, renderMarkdown(map, refs, unresolved) + "\n")
-if (map.refs.length) writeFileSync(refsPath, JSON.stringify(snapshots, null, 2) + "\n")
-else if (existsSync(refsPath)) unlinkSync(refsPath)
 if (featureMd) writeFileSync(featurePath, featureMd)
 else if (orphanFeatureMap) unlinkSync(featurePath)
 if (featureJson) writeFileSync(featureJsonPath, featureJson)
