@@ -2152,6 +2152,29 @@
           "externals": []
         },
         {
+          "path": "lib/git-config-lock.ts",
+          "lines": 83,
+          "kind": "lib",
+          "exports": [
+            "ProcReader",
+            "linuxProc",
+            "clearStaleGitConfigLock"
+          ],
+          "state": [
+            "let libc"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/log.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/herdr-fake.test-util.ts",
           "lines": 28,
           "kind": "lib",
@@ -6355,7 +6378,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 579,
+          "lines": 571,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6378,6 +6401,7 @@
           "apiCalls": [],
           "imports": [
             "lib/builder-jobs.ts",
+            "lib/git-config-lock.ts",
             "lib/jev-model-router.ts",
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
@@ -10108,6 +10132,7 @@
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
+            "lib/git-config-lock.ts",
             "lib/herdr-workspace.ts",
             "lib/inject-verified.ts",
             "lib/key-gate.ts",
@@ -14551,6 +14576,12 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-lead.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "clearStaleGitConfigLock": {
+          "module": "lib/git-config-lock.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
           ]
         },
         "decideWorkerModel": {
