@@ -462,6 +462,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
         taskId, repo: existing?.repo || basename(target.cwd), title: existing?.title || target.title || taskId,
         prompt: text, mode: "auto", family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
         model: (target.model || existing?.model) ?? undefined,
+        inheritClaim: true, // Jeremie's own channel (Bearer): his follow-up resumes a bound task with its stored claim
       })
       return dispatched.ok
         ? Response.json({ ok: true, confirmed: true })

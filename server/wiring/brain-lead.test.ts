@@ -166,7 +166,18 @@ describe("repo lead", () => {
 
 describe("the last round's three checks", () => {
   test("the clone's .claude and .git are read-only as whole folders, so neither can be moved or filled", () => {
-    expect(leadSettings([], "/h/leads/r").sandbox.filesystem).toEqual({ denyWrite: ["/h/leads/r/.claude", "/h/leads/r/.git"] })
+    expect(leadSettings([], "/h/leads/r").sandbox.filesystem).toEqual({ denyWrite: ["/h/leads/r/.claude", "/h/leads/r/.git"], denyRead: ["/h/.claude-companion/handoff-claim.keys"] })
+  })
+  test("a lead can't read the handoff claim keys, and a live lead from before that deny gets it in place", () => {
+    expect(leadSettings([], "/h/leads/r").permissions.deny).toContain("Read(/h/.claude-companion/handoff-claim.keys)")
+    const h = mkdtempSync(join(tmpdir(), "lead-iso-keys-")), dir = leadDir("r", h), none = () => [] as string[]
+    mkdirSync(join(dir, ".claude"), { recursive: true })
+    const file = join(dir, ".claude/settings.local.json")
+    const prev = leadSettings([], dir)
+    prev.permissions.deny = prev.permissions.deny.filter((d) => !d.startsWith("Read("))
+    writeFileSync(file, JSON.stringify({ ...prev, sandbox: { ...prev.sandbox, filesystem: { denyWrite: prev.sandbox.filesystem.denyWrite } } }, null, 2))
+    expect(leadIsolated("r", h, none)).toBe(true)
+    expect(readFileSync(file, "utf8")).toBe(JSON.stringify(leadSettings([], dir), null, 2))
   })
   test("a lead only counts as isolated if its settings are exactly what the server wrote", () => {
     const h = mkdtempSync(join(tmpdir(), "lead-iso-")), dir = leadDir("r", h), none = () => [] as string[]

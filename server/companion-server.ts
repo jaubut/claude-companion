@@ -50,6 +50,7 @@ import { brainWiring, setBrainDeliver } from "./wiring/brain"
 import { startStuckEvents } from "./wiring/brain-stuck-events"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
+import { replayWorkerPrLinks } from "./wiring/worker-mcp"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -70,6 +71,7 @@ export function createCompanionServer(port: number) {
   // happy-eyeballs path is a known process crash — see lib/apns.ts.
   disableAutoSelectFamily()
   startEndedSweep(listSessions)
+  replayWorkerPrLinks()
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
   if (brainEnabled()) { brainWiring.start(); startAutoDeploy(); startStuckEvents() }

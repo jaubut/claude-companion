@@ -24,6 +24,7 @@ export const WORKER_MCP_TOOLS = [
         mode: { type: "string", description: "Permission mode (`auto`, `acceptEdits`, `default`, `dontAsk`, `plan`). Defaults to `auto`." },
         timeout_s: { type: "number", description: "Per-turn timeout in seconds (default 3600)." },
         host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
+        claim: { type: "string", description: "The handoff claim `bin/propose --handoff --repo` returned for this task id and repo. Pass it on every dispatch of the task, fix rounds included (never inherited); without it the worker runs unbound and its PR is never linked to the task row (origin unknown)." },
       },
     },
   },
@@ -200,9 +201,10 @@ export function createWorkerMcpHandler(deps: WorkerMcpDeps) {
         model: typeof args.model === "string" ? args.model : undefined,
         mode: typeof args.mode === "string" ? args.mode : undefined,
         timeoutS: typeof args.timeout_s === "number" && Number.isFinite(args.timeout_s) ? args.timeout_s : undefined,
+        claim: typeof args.claim === "string" ? args.claim : undefined,
       })
       if (!out.ok) return rpcOk(id, toolResult({ ok: false, error: out.error, status: out.status }, true))
-      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, task: out.task }))
+      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, task: out.task, claim: out.claim }))
     }
 
     if (name === "await_task") {

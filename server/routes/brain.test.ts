@@ -207,9 +207,10 @@ describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set
       ? { rows: old.query(sql).all(...args) as Row[], affected: 0 } : { rows: [], affected: old.query(sql).run(...args).changes }
     const oldQuery: QueryFn = async (sql, args) => (await oldExec(sql, args)).rows
     const wiring = { query: oldQuery, exec: oldExec, columns: () => detectColumns(oldQuery) } as unknown as DispatchWiring
-    const input = { title: "T", prompt: "P", noteId: "projects/dash", reasoning: "", sourceTurnId: openTurn().id }
+    const input = { title: "T", prompt: "P", noteId: "projects/dash", reasoning: "", sourceTurnId: openTurn().id, repo: "claude-companion" }
     const first = await addBrainHandoff(input, wiring)
     expect(first).toMatchObject({ status: 200, body: { origin: "unknown", replay: false } })
+    expect(first.body.claim).toBeUndefined()
     expect(await addBrainHandoff(input, wiring)).toMatchObject({ status: 200, body: { origin: "unknown", replay: true, taskId: first.body.taskId } })
   })
   test("anything but his open turn stays unknown", async () => {
@@ -234,6 +235,41 @@ describe("POST /hooks/brain/propose — handoff: a row for the relay, origin set
     outbox(event.id, "typed")
     const r = await handoff(event.id, { origin: "jeremie" })
     expect(r.json.origin).toBe("unknown")
+  })
+  test("with --repo on his open turn: a claim bound to that task id and repo, the same on a retry, recorded without the mac", async () => {
+    const { verifyHandoffClaim } = await import("../lib/handoff-claim")
+    const t = openTurn()
+    const r = await handoff(t.id, { repo: "Claude-Companion" })
+    expect(r.status).toBe(200)
+    const claim = String(r.json.claim)
+    expect(verifyHandoffClaim(claim, String(r.json.taskId), "claude-companion")).toMatchObject({ ok: true, turnId: t.id })
+    expect(verifyHandoffClaim(claim, String(r.json.taskId), "claude-config").ok).toBe(false)
+    sqlite.query("DELETE FROM brain_outbox WHERE turn_id = ?").run(t.id)
+    const again = await handoff(t.id, { repo: "claude-companion" })
+    expect(again.json).toMatchObject({ taskId: r.json.taskId, replay: true, claim })
+    const meta = JSON.parse(String((turso.query("SELECT meta FROM agent_activity WHERE target_id = ?").get(String(r.json.taskId)) as { meta: string }).meta))
+    expect(meta).toMatchObject({ op: "file", origin: "jeremie", repo: "claude-companion", turnId: t.id, kid: claim.split(".")[1] })
+    expect(JSON.stringify(meta)).not.toContain(claim.split(".")[3]!)
+  })
+  test("the repo is part of the id; without one the id is what it always was and no claim", async () => {
+    const { createHash } = await import("node:crypto")
+    const t = openTurn()
+    const plain = await handoff(t.id)
+    expect(plain.json.claim).toBeUndefined()
+    expect(plain.json.taskId).toBe(createHash("sha256").update(`handoff\n${t.id}\nprojects/dash\n${body(t.id).prompt}`).digest("hex").slice(0, 32))
+    const a = await handoff(t.id, { repo: "claude-companion" })
+    const b = await handoff(t.id, { repo: "claude-config" })
+    expect(new Set([plain.json.taskId, a.json.taskId, b.json.taskId]).size).toBe(3)
+  })
+  test("no claim for a turn that isn't his open one, a bad repo, or a row stored unknown; none of them is refused", async () => {
+    const closed = voiceTurn()
+    const event = chat.appendTurn("orchestrator", "merged #12", null, "brain")
+    outbox(event.id, "typed")
+    for (const [turn, repo] of [[closed.id, "claude-companion"], [event.id, "claude-companion"], [openTurn().id, "../etc"], [openTurn().id, 7]] as const) {
+      const r = await handoff(turn, { repo })
+      expect(r.status).toBe(200)
+      expect(r.json.claim).toBeUndefined()
+    }
   })
   test("only the brain session may file one", async () => {
     const r = await handoff(openTurn().id, {}, { headers: { ...AUTH, "x-companion-pid": "6060" } })

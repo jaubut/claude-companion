@@ -3,6 +3,7 @@ import { BRAIN_THREAD } from "../lib/brain"
 import { openDeliveries } from "../lib/brain-store"
 import { rowId, upsertRow } from "../lib/brain-trace"
 import { fileHandoff, getNote } from "../lib/dispatch-tasks"
+import { mintHandoffClaim } from "../lib/handoff-claim"
 import { companionLog } from "../lib/log"
 import { getTurn } from "../lib/orchestrator-chat"
 import { TursoUnreachable } from "../lib/turso"
@@ -12,9 +13,11 @@ import { writeCtx } from "./orchestrator"
 
 // bin/propose --handoff (POST /hooks/brain/propose, handoff: true): a tasks row for a builder the brain hands work to
 // by relay. The id is the TASK id and the dispatch/<id> branch; the relay's DONE links the PR, so the shepherd reads
-// this row's origin instead of treating the PR as unknown.
+// this row's origin instead of treating the PR as unknown. With a repo, a row stored `jeremie` also gets a handoff claim
+// (lib/handoff-claim.ts): the proof `bin/worker dispatch --claim` needs before a worker's PR may link to this row.
 
-export interface HandoffInput { title: string; prompt: string; noteId: string; reasoning: string; sourceTurnId: string }
+/** `repo`: a valid bare repo name, lowercased by the route; absent = no claim. */
+export interface HandoffInput { title: string; prompt: string; noteId: string; reasoning: string; sourceTurnId: string; repo?: string }
 
 /**
  * The origin is decided here, never by the caller. `jeremie` only for his own turn that the brain is answering right
@@ -31,19 +34,22 @@ export async function addBrainHandoff(p: HandoffInput, dispatch: DispatchWiring 
   try {
     const note = await getNote(dispatch.query, p.noteId)
     if (!note) return { status: 404, body: { ok: false, error: "no such note" } }
-    // Stable per (turn, resolved note, prompt): a retried call files one row, with the origin of the first. Namespaced so it never meets addBrainTodo's id.
-    const id = createHash("sha256").update(`handoff\n${p.sourceTurnId}\n${note.noteId}\n${p.prompt}`).digest("hex").slice(0, 32)
+    // Stable per (turn, resolved note, prompt[, repo]): a retried call files one row, with the origin of the first. Namespaced so it never meets addBrainTodo's id.
+    const id = createHash("sha256").update(`handoff\n${p.sourceTurnId}\n${note.noteId}\n${p.prompt}${p.repo ? `\n${p.repo}` : ""}`).digest("hex").slice(0, 32)
     const description = `${p.prompt}\n\n— Handed off from Companion #Brain${p.reasoning ? `\nWhy: ${p.reasoning}` : ""}`
     const ctx = await writeCtx(dispatch, BRAIN_THREAD)
-    const { inserted } = await fileHandoff(ctx, { id, noteId: note.noteId, title: p.title, description, origin })
+    const minted = origin === "jeremie" && p.repo && ctx.cols.origin ? mintHandoffClaim(id, p.repo, p.sourceTurnId) : null
+    const { inserted } = await fileHandoff(ctx, { id, noteId: note.noteId, title: p.title, description, origin,
+      ...(minted && p.repo ? { claim: { repo: p.repo, turnId: p.sourceTurnId, kid: minted.split(".")[1]! } } : {}) })
     // No origin column: nothing was stored, so nothing may be claimed.
     const filed = !ctx.cols.origin ? "unknown" : inserted ? origin : String((await dispatch.query("SELECT origin FROM tasks WHERE id = ?", [id]))[0]?.origin ?? "unknown")
+    const claim = filed === "jeremie" && p.repo ? minted ?? mintHandoffClaim(id, p.repo, p.sourceTurnId) : null
     const row = upsertRow({
       id: `handoff:${id}`, parentId: rowId.turn(p.sourceTurnId), turnId: p.sourceTurnId, kind: "agent", status: "done",
       title: `Handed off: ${p.title}`, detail: note.title ?? note.ref ?? note.noteId, ref: { taskId: id },
     })
     if (row) emitTrace([row])
-    return { status: 200, body: { ok: true, taskId: id, origin: filed, replay: !inserted } }
+    return { status: 200, body: { ok: true, taskId: id, origin: filed, replay: !inserted, ...(claim ? { claim } : {}) } }
   } catch (err) {
     companionLog(`[brain] handoff failed: ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return { status: 503, body: { ok: false, error: "turso_unreachable" } }

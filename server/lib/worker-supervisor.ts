@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -12,6 +12,8 @@ import {
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
+import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
+import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
 
 export {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
@@ -24,7 +26,14 @@ const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEF
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
+  /** The handoff claim from `bin/worker dispatch --claim` (lib/handoff-claim.ts). Stays inside the supervisor. */
+  claim?: string
+  /** Server-only (routes/api.ts, Jeremie's authenticated phone inject): resume with the stored claim. Never from a tool call. */
+  inheritClaim?: boolean
 }
+
+/** What the dispatch made of the task's claim: bound (verified), refused with its reason, lookup failed (pending), or none (absent). */
+export type ClaimStatus = "verified" | `claim_refused:${string}` | "pending" | "absent"
 
 export interface SupervisedTaskSnapshot {
   taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
@@ -43,41 +52,22 @@ export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
-  syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
-  onTaskTerminal?(task: SupervisedTaskSnapshot): void
+  /** `linkBound`: the task holds a verified handoff claim, so it may write its Turso row (wiring's status sync). */
+  syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
+  onTaskTerminal?(task: SupervisedTaskSnapshot, linkBound: boolean): void
+  /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
+  bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
+  /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
+  linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
 }
+
+export { workerStateFile }
 
 export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
   if (!REPO_NAME_RE.test(repo)) return null
   const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo), join(home, ".cache", "dispatch-repos", repo)].filter(Boolean)
   for (const c of candidates) if (existsSync(join(c, ".git"))) return c
   return null
-}
-
-export function defaultIsPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false
-  try { process.kill(-pid, 0); return true } catch { return false }
-}
-
-export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
-  if (!Number.isInteger(pid) || pid <= 1) return
-  try { process.kill(-pid, sig) } catch { /* gone */ }
-}
-
-export function defaultGetPidIdentity(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 1) return null
-  try {
-    if (existsSync(`/proc/${pid}/stat`)) {
-      const bootId = existsSync("/proc/sys/kernel/random/boot_id") ? readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() : "linux"
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-      const rparen = stat.lastIndexOf(")")
-      const startTime = rparen > 0 ? stat.slice(rparen + 2).trim().split(/\s+/)[19] ?? "" : ""
-      if (startTime) return `${bootId}:${pid}:${startTime}`
-    }
-    const ps = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", timeout: 1_000 })
-    const out = (ps.stdout ?? "").trim()
-    return ps.status === 0 && out ? `ps:${pid}:${out}` : null
-  } catch { return null }
 }
 
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
@@ -100,11 +90,8 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
 }
 
-interface PersistedTaskRecord extends SupervisedTaskSnapshot {
-  repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
-}
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null
   activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
@@ -130,7 +117,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
-  const stateFile = deps.stateFile ?? join(deps.home, ".claude", "state", "companion-worker-tasks.json")
+  const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
 
   // No checkout on this host: a full clone of jaubut/<repo> into ~/apps/<repo>, where the resolver finds it next time.
@@ -144,33 +131,19 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   }
 
   function syncTaskSession(t: InternalTask): void {
-    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null) } catch { /* best effort */ }
+    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
   }
 
   function savePersistedTasks(): void {
-    try {
-      mkdirSync(dirname(stateFile), { recursive: true })
-      const records: PersistedTaskRecord[] = [...tasks.values()].map((t) => ({
-        ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted,
-      }))
-      const tmp = `${stateFile}.tmp.${process.pid}.${Date.now()}`
-      writeFileSync(tmp, JSON.stringify(records))
-      renameSync(tmp, stateFile)
-    } catch { /* best-effort persistence */ }
+    saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim,
+    })))
   }
 
   function loadPersistedTasks(): void {
-    if (!existsSync(stateFile)) return
-    let parsed: unknown = null
-    try { parsed = JSON.parse(readFileSync(stateFile, "utf8")) as unknown } catch { return }
-    if (!Array.isArray(parsed)) return
     const now = deps.now()
     let dirty = false
-    for (const item of parsed) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue
-      const r = item as Partial<PersistedTaskRecord>
-      if (typeof r.taskId !== "string" || !TASK_ID_RE.test(r.taskId) || typeof r.repo !== "string" || !REPO_NAME_RE.test(r.repo)) continue
-      if (typeof r.repoDir !== "string" || !r.repoDir || typeof r.worktree !== "string" || !r.worktree || typeof r.sessionId !== "string" || !r.sessionId) continue
+    for (const r of loadTaskRecords(stateFile)) {
       const wasRunning = r.status === "running"
       const turnCount = typeof r.turnCount === "number" && r.turnCount > 0 ? Math.floor(r.turnCount) : 1
       const rawPid = typeof r.pid === "number" && Number.isInteger(r.pid) && r.pid > 1 ? r.pid : null
@@ -207,6 +180,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
         pid: survivingPid, pidIdentity: survivingIdentity, reloadedFromDisk: survivingPid !== null,
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
+        prLinkBound: typeof r.prLinkBound === "boolean" ? r.prLinkBound : null,
+        handoffClaim: typeof r.handoffClaim === "string" && r.handoffClaim ? r.handoffClaim : null,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       }
@@ -303,7 +278,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   }
 
   return {
-    async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot } | { ok: false; status: number; error: string }> {
+    async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot; claim: ClaimStatus } | { ok: false; status: number; error: string }> {
       const taskId = typeof input.taskId === "string" ? input.taskId.trim() : ""
       if (!TASK_ID_RE.test(taskId)) return { ok: false, status: 400, error: "invalid_task_id" }
       const repo = typeof input.repo === "string" ? input.repo.trim() : ""
@@ -321,6 +296,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!family) return { ok: false, status: 400, error: "invalid_family" }
 
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
+      // A bound task's worktree, session and dispatch/<id> branch feed a PR already linked as Jeremie's: only its own
+      // claim resumes it. Refused before any side effect, so the record and its binding stay as they are.
+      const supplied = input.inheritClaim ? existing?.handoffClaim ?? undefined : input.claim
+      if (existing?.prLinkBound === true && existing.handoffClaim && supplied !== existing.handoffClaim) return { ok: false, status: 409, error: "claim_required" }
       const wtKey = (existing?.worktree ?? join(deps.home, "apps", "wt", repo, taskId)).toLowerCase()
       if (inFlightDispatches.has(taskId) || inFlightWorktrees.has(wtKey) || (existing && existing.status === "running")) {
         return { ok: false, status: 409, error: "task_already_running" }
@@ -336,9 +315,18 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
+        const familyChanged = !!existing && existing.family !== family
+        // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
+        // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
+        // again (its first PR may already have taken it); any other claim is checked itself, and a refusal never falls back.
+        const claim = supplied || null
+        const bind = !claim ? "absent" : existing?.prLinkBound === true && existing.handoffClaim === claim ? true
+          : deps.bindTask ? await deps.bindTask(taskId, repo, claim).catch(() => null) : "no_binding"
+        const prLinkBound = bind === true ? true : bind === null ? null : false
+        const handoffClaim = prLinkBound === false ? null : claim
+        const claimStatus: ClaimStatus = !claim ? "absent" : bind === true ? "verified" : bind === null ? "pending" : `claim_refused:${bind}`
 
         const now = deps.now()
-        const familyChanged = !!existing && existing.family !== family
         const resume = !!existing && existing.sessionStarted && !familyChanged
         const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
@@ -364,12 +352,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           taskId, repo, repoDir, title, builder, family, model: effectiveModel, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false,
+          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
+        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim
         task.title = title; task.family = family; task.model = effectiveModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
@@ -428,25 +417,42 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
-              if (code === 0 && !sig && !task.error) {
+              const finish = () => {
+                savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
+                try { deps.onTaskTerminal?.(toSnapshot(task), task.prLinkBound === true && !!task.handoffClaim) } catch { /* best effort */ }
+              }
+              const complete = (link: string | null) => {
+                const note = link === "timeout" ? " (PR link still pending)" : link && link !== "linked" && link !== "not_linked" ? ` (not linked: ${link})` : ""
                 task.sessionStarted = true; task.status = "completed"; task.pct = 100
-                task.step = task.prUrl ? `PR ready: ${task.prUrl}` : "Turn completed"
+                task.step = task.prUrl ? `PR ready: ${task.prUrl}${note}` : "Turn completed"
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
                   deps.reportJob({ event: "done", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: 100 })
                 }
-              } else {
-                task.status = "failed"
-                const tail = task.stderrTail.join(" | ")
-                task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
-                task.step = `Failed: ${task.error.slice(0, 100)}`
-                if (!task.turnReportedTerminal) {
-                  task.turnReportedTerminal = true
-                  deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
-                }
+                finish()
               }
-              savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
-              try { deps.onTaskTerminal?.(toSnapshot(task)) } catch { /* best effort */ }
+              if (code === 0 && !sig && !task.error) {
+                // The link lands before the turn reads completed (await_task, the brain): the shepherd reads origin through it.
+                if (task.prUrl && task.prLinkBound === true && task.handoffClaim && deps.linkPr) {
+                  task.step = `Linking PR: ${task.prUrl}`
+                  savePersistedTasks()
+                  void deps.linkPr(toSnapshot(task), task.handoffClaim).catch(() => "link_failed").then((link) => {
+                    if (task.activeTurn === myTurn && task.status === "running") complete(link)
+                  })
+                  return
+                }
+                complete(null)
+                return
+              }
+              task.status = "failed"
+              const tail = task.stderrTail.join(" | ")
+              task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
+              task.step = `Failed: ${task.error.slice(0, 100)}`
+              if (!task.turnReportedTerminal) {
+                task.turnReportedTerminal = true
+                deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+              }
+              finish()
             },
           })
         } catch (err) {
@@ -477,7 +483,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.timeoutTimer.unref?.()
         }
 
-        return { ok: true, task: toSnapshot(task) }
+        return { ok: true, task: toSnapshot(task), claim: claimStatus }
       } finally {
         inFlightDispatches.delete(taskId); inFlightWorktrees.delete(wtKey)
       }

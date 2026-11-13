@@ -6,6 +6,7 @@ import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
+import { REPO_NAME_RE } from "../lib/worker-invocation"
 import { type BrainWiring, brainWiring, getBrainDeliver } from "../wiring/brain"
 import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
@@ -122,7 +123,9 @@ async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (body.agent !== undefined && body.agent !== null && !agent) return fail(400, "unknown_agent")
   const reasoning = str(body.reasoning, REASONING_MAX) ?? ""
   if (body.handoff === true) {
-    const out = await (deps.handoff ?? addBrainHandoff)({ title, prompt, noteId, reasoning, sourceTurnId })
+    // A bad or missing repo files the row without a claim, never a refusal: the handoff itself must not be blocked.
+    const repo = typeof body.repo === "string" && REPO_NAME_RE.test(body.repo.trim()) ? body.repo.trim().toLowerCase() : undefined
+    const out = await (deps.handoff ?? addBrainHandoff)({ title, prompt, noteId, reasoning, sourceTurnId, ...(repo ? { repo } : {}) })
     return Response.json(out.body, { status: out.status })
   }
   const out = await deps.wiring.propose({ title, prompt, noteId, agent, reasoning, sourceTurnId })
