@@ -117,6 +117,19 @@ export function getState(meta: SessionMeta): PathState {
       return weak
     }
   }
+  // Reverse lookup: when a caller (e.g. /api/inject recordUserPrompt) has tty or
+  // sessionId but no transcriptPath, reuse the existing path-keyed PathState
+  // rather than creating a second PathState for the same session.
+  if (!meta.transcriptPath && (meta.tty || meta.sessionId)) {
+    for (const existing of states.values()) {
+      if ((meta.tty && existing.tty === meta.tty) || (meta.sessionId && existing.sessionId === meta.sessionId)) {
+        if (meta.cwd) existing.cwd = meta.cwd
+        if (meta.sessionId) existing.sessionId = meta.sessionId
+        if (meta.tty) existing.tty = meta.tty
+        return existing
+      }
+    }
+  }
   const next: PathState = {
     cwd: meta.cwd ?? "",
     sessionId: meta.sessionId ?? "",

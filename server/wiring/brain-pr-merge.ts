@@ -62,13 +62,14 @@ interface PrMergeDeps {
 }
 const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
 const HUMAN_APPROVAL_WINDOW_MS = 30 * 60_000
-const NEGATION_RE = /\b(don't|dont|do not|never|no|wait|hold|stop|cancel|refuse|pas)\b/i
-const MERGE_VERB_RE = /\b(merge|ship|land|fusionne|fusionner)\b/i
-const SHORT_CONFIRM_RE = /^(?:yes|yep|yeah|ok|okay|go|go ahead|do it|merge it|merge as is|oui|vas-y)[.!?\s]*$/i
+const NEGATION_RE = /\b(don't|dont|do not|never|no|wait|hold|stop|refuse|pas)\b/i
+const MERGE_VERB_RE = /\b(merge|ship|land|refresh|update|unblock|fusionne|fusionner)\b/i
+const SHORT_CONFIRM_RE = /^(?:yes|yep|yeah|ok|okay|go|go ahead|go for it|do it|merge it|merge as is|you have (?:the )?permission|permission granted|approved?|proceed|unblock(?: it)?|oui|vas-y)[.!?\s]*$/i
+const TASK_CANCEL_VERB_RE = /\b(cancel|permission|unblock|clear|close|drop|kill|yes|ok|okay|go|do it|approved?|oui|vas-y|annule)\b/i
 
 /**
  * Verify from unforgeable `role === "user"` rows in `orchestrator_turns` that Jeremie explicitly
- * authorized merging PR `#<pr>` in the Brain thread within the last 30 minutes.
+ * authorized merging or refreshing PR `#<pr>` in the Brain thread within the last 30 minutes.
  */
 export function hasRecentUserMergeApproval(
   pr: number,
@@ -76,7 +77,7 @@ export function hasRecentUserMergeApproval(
   now = Date.now(),
 ): boolean {
   if (!Number.isInteger(pr) || pr <= 0) return false
-  const prBoundaryRe = new RegExp(`(?:^|[\\s#/])${pr}(?:$|[^0-9])`)
+  const prBoundaryRe = new RegExp(`(?:^|[\\s#/(])${pr}(?:$|[^0-9])`)
   const cutoff = now - HUMAN_APPROVAL_WINDOW_MS
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i]!
@@ -85,12 +86,43 @@ export function hasRecentUserMergeApproval(
     const text = t.text.trim()
     if (!text || NEGATION_RE.test(text)) continue
     if (MERGE_VERB_RE.test(text) && prBoundaryRe.test(text)) return true
-    if (MERGE_VERB_RE.test(text) || SHORT_CONFIRM_RE.test(text)) {
-      const userNamedMerge = MERGE_VERB_RE.test(text)
-      // Check if a recent preceding orchestrator turn referenced #<pr> (and asked about merging when user only said "yes"/"ok")
+    if (MERGE_VERB_RE.test(text) || SHORT_CONFIRM_RE.test(text) || /\bpermission\b/i.test(text)) {
+      const userNamedAction = MERGE_VERB_RE.test(text) || /\bpermission\b/i.test(text)
+      // Check if a recent preceding orchestrator turn referenced #<pr>
       for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
         const prev = turns[j]!
-        if (prev.role === "orchestrator" && prBoundaryRe.test(prev.text) && (userNamedMerge || MERGE_VERB_RE.test(prev.text))) {
+        if (prev.role === "orchestrator" && prBoundaryRe.test(prev.text) && (userNamedAction || MERGE_VERB_RE.test(prev.text) || /\b(refresh|permission|held|gate)\b/i.test(prev.text))) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Verify from unforgeable `role === "user"` rows in `orchestrator_turns` that Jeremie explicitly
+ * authorized cancelling task `<taskId>` (or a gate task) in the Brain thread within the last 30 minutes.
+ */
+export function hasRecentUserTaskCancelApproval(
+  taskId: string,
+  turns: Array<Pick<Turn, "role" | "text" | "createdAt">> = getThread(BRAIN_THREAD),
+  now = Date.now(),
+): boolean {
+  const id8 = taskId.slice(0, 8).trim()
+  if (id8.length < 8) return false
+  const cutoff = now - HUMAN_APPROVAL_WINDOW_MS
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i]!
+    if (t.createdAt < cutoff) break
+    if (t.role !== "user") continue
+    const text = t.text.trim()
+    if (!text || NEGATION_RE.test(text)) continue
+    if (text.includes(id8) && TASK_CANCEL_VERB_RE.test(text)) return true
+    if (SHORT_CONFIRM_RE.test(text) || TASK_CANCEL_VERB_RE.test(text)) {
+      for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
+        const prev = turns[j]!
+        if (prev.role === "orchestrator" && (prev.text.includes(id8) || /\b(infra-gate|gate task|cancel on the gate)\b/i.test(prev.text))) {
           return true
         }
       }

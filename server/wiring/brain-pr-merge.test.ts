@@ -12,7 +12,7 @@ import type { ExecFn, Row } from "../lib/turso"
 // gh faked at the process boundary, Turso a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
-const { mergeAgentPr, hasRecentUserMergeApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
+const { mergeAgentPr, hasRecentUserMergeApproval, hasRecentUserTaskCancelApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
 
 // Default to unpaused reviews, independent of the host's flag.
 const flagDir = mkdtempSync(join(tmpdir(), "cc-prmerge-unpaused-"))
@@ -363,6 +363,20 @@ describe("bin/pr-merge gate: the merge", () => {
     expect(hasRecentUserMergeApproval(8, [
       { role: "orchestrator", text: "All 157 stores are on the map now (PR #8): https://github.com/jaubut/le-brouemont-maquette/pull/8", createdAt: now - 30_000 },
       { role: "user", text: "Merge it", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
+    expect(hasRecentUserMergeApproval(425, [
+      { role: "orchestrator", text: "PR #425 is held by false-alarm gate 06e76ee4.", createdAt: now - 30_000 },
+      { role: "user", text: "You have the permission", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
+    expect(hasRecentUserTaskCancelApproval("06e76ee4021e42bea3e2bf0a38c0b407", [
+      { role: "orchestrator", text: "PR #425 is held by false-alarm infra-gate task 06e76ee4.", createdAt: now - 30_000 },
+      { role: "user", text: "You have the permission", createdAt: now - 5_000 },
+    ], now)).toBe(true)
+
+    expect(hasRecentUserTaskCancelApproval("06e76ee4021e42bea3e2bf0a38c0b407", [
+      { role: "user", text: "Cancel 06e76ee4", createdAt: now - 5_000 },
     ], now)).toBe(true)
 
     expect(hasRecentUserMergeApproval(413, [
