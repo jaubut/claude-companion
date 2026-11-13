@@ -63,6 +63,15 @@ export interface RefConfig {
   repo: string           // path (relative, absolute, or ~/…) to a repo with architecture.json
 }
 
+// architecture.refs.json — per ref name, the slice of the sibling's committed map
+// the contract tables read. A host without the sibling renders from it, so
+// architecture.md comes out the same on every host.
+export type RefSnapshots = Record<string, {
+  repo: string
+  generatedAt: string
+  targets: { name: string; adapter: string; root: string; modules: Pick<ModuleInfo, "path" | "emits" | "consumes" | "endpoints" | "apiCalls">[] }[]
+}>
+
 export interface ArchMap {
   generatedAt: string
   repo: string
