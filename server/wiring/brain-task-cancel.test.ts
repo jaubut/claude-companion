@@ -302,6 +302,32 @@ describe("bin/task-cancel gate", () => {
     expect((await cancel(ID(1))).status).toBe(200)
     expect((await row(ID(1))).origin).toBe("unknown")
   })
+
+  test("humanApproved cancels a completed [autodev:infra-gate:*] task (done=0) without a proposal and writes pr:unpark for held PRs", async () => {
+    const gateId = ID(77)
+    const heldPr = "https://github.com/jaubut/tls-dashboard-v2/pull/425"
+    await seed(gateId, {
+      text: "Fix PR gate host for tls-dashboard-v2 [autodev:infra-gate:tls-dashboard-v2:zettlab]",
+      status: "completed",
+      done: 0,
+      pr: "https://github.com/jaubut/tls-dashboard-v2/pull/429",
+      origin: "system",
+    })
+    await sql(
+      "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES ('pr-shepherd', 'pr:hold', 'pr', ?, 'held on infra gate', ?)",
+      [heldPr, JSON.stringify({ url: heldPr, reason: "waiting on infra gate", infra_task: gateId })],
+    )
+    const w = deps({ prState: async () => "CLOSED" })
+    const out = await cancelAgentTask(
+      { task: gateId.slice(0, 8), reason: "false-alarm infra gate" },
+      { ...w.d, humanApproved: (_id, text) => /\[autodev:infra-gate:/.test(text) },
+    )
+    expect(out).toEqual({ status: 200, body: { ok: true, cancelled: gateId, from: "completed" } })
+    expect(await row(gateId)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
+    const unparks = (await sql("SELECT action, target_id, meta FROM agent_activity WHERE action = 'pr:unpark' AND target_id = ?", [heldPr])).rows
+    expect(unparks).toHaveLength(1)
+    expect(JSON.parse(String(unparks[0]!.meta))).toMatchObject({ url: heldPr, infra_task: gateId })
+  })
 })
 
 // Each statement is a copy of a runner's own SQL (claude-config tools): a cancelled row must match none of them.
