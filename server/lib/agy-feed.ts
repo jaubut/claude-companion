@@ -119,7 +119,12 @@ function normalizeAgyToolArgs(raw: Record<string, unknown> | undefined): Record<
   return out
 }
 
-const pendingToolsBySession = new Map<string, string[]>()
+interface PendingAgyTool {
+  name: string
+  summary: string
+}
+
+const pendingToolsBySession = new Map<string, PendingAgyTool[]>()
 
 function parseAgyToolDurationMs(content: string): number {
   const createdMatch = content.match(/Created At:\s*([^\n\r]+)/)
@@ -138,7 +143,7 @@ export function parseAgyTranscriptLine(
   line: string,
   ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
   fallbackSessionId: string,
-  pendingTools?: string[],
+  pendingTools?: PendingAgyTool[],
 ): FeedEvent[] {
   if (!line.trim()) return []
   let step: AgyTranscriptStep
@@ -192,13 +197,13 @@ export function parseAgyTranscriptLine(
         const rawName = typeof tc?.name === "string" && tc.name.trim() ? tc.name.trim() : "tool"
         const name = rawName.replace(/^default_api:/, "")
         const args = normalizeAgyToolArgs(tc?.args)
+        const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         if (isQuestionTool(name)) {
           const qs = parseQuestionInput(args)
           if (qs) askedQuestions.push(...qs)
         } else {
-          toolQueue.push(name)
+          toolQueue.push({ name, summary })
         }
-        const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         out.push({
           id: `${idBase}:tool:${idx}`,
           ts,
@@ -246,7 +251,9 @@ export function parseAgyTranscriptLine(
     }
     const isToolOutput = step.content.startsWith("Created At:") || step.content.includes("Command output:")
     if (isToolOutput) {
-      const toolName = toolQueue.shift() ?? (step.content.includes("Command output:") ? "run_command" : "tool")
+      const shifted = toolQueue.shift()
+      const toolName = shifted?.name ?? (step.content.includes("Command output:") ? "run_command" : "tool")
+      const toolSummary = shifted?.summary ?? ""
       const durationMs = parseAgyToolDurationMs(step.content)
       if (step.content.includes("Command output:")) {
         const outIdx = step.content.indexOf("Command output:")
@@ -258,7 +265,7 @@ export function parseAgyTranscriptLine(
           ts,
           kind: "tool_end",
           tool: toolName,
-          summary: "",
+          summary: toolSummary,
           durationMs,
           outputExcerpt: res.excerpt,
           errored: errored || res.errored,
@@ -270,7 +277,7 @@ export function parseAgyTranscriptLine(
         ts,
         kind: "tool_end",
         tool: toolName,
-        summary: "",
+        summary: toolSummary,
         durationMs,
         errored: step.status === "ERROR",
         ...ident,
@@ -289,7 +296,7 @@ export function eventsFromAgyTranscript(path: string, s: HistorySession, tailByt
     ...(s.tty ? { tty: s.tty } : {}),
     sessionId: s.sessionId,
   }
-  const pendingTools: string[] = []
+  const pendingTools: PendingAgyTool[] = []
   const out: FeedEvent[] = []
   for (const line of readTailLines(path, tailBytes)) {
     out.push(...parseAgyTranscriptLine(line, ident, s.sessionId, pendingTools))
