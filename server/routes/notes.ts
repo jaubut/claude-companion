@@ -1,4 +1,4 @@
-import { DashboardKeyMissing, DashboardUnreachable, createNote, getNote, listNotes, searchDashboard, updateNote } from "../lib/dashboard-client"
+import { DashboardKeyMissing, DashboardUnreachable, createNote, fetchInboxAudio, fetchNoteImage, getNote, listNotes, searchDashboard, updateNote, uploadNoteImage } from "../lib/dashboard-client"
 
 // Notes proxy → tls-dashboard-v2 /api/note(s) + /api/search, behind the standard
 // /api bearer gate. The phone never holds the dashboard key; dashboard-client adds it.
@@ -9,12 +9,19 @@ import { DashboardKeyMissing, DashboardUnreachable, createNote, getNote, listNot
 //   GET  /api/notes/:ref               → {note:{…, body}}   404 not_found · 403 journal_protected
 //   POST /api/notes {title, folder, body, tags?, status?} → 201 {ok:true, id, ref_code}   (date = today)
 //   PUT  /api/notes/:ref {title?, body?, status?, tags?}  → {ok:true, updated_at}
+//   POST /api/notes/image {ref?, note_id?, mime, data}    → 201 {ok:true, id, url:"/api/note/image/:id"}
+//   GET  /api/notes/image/:id | /api/note/image/:id       → image bytes (private, immutable)
+//   GET  /api/notes/audio/:filename | /api/inbox/audio/:filename → audio bytes (private)
 // The list comes from the dashboard's default list view, not ?lite=1: lite has no updated_at.
 // Dashboard 4xx pass through (status + body); 5xx/network/redirect → 502
 // dashboard_unreachable; no key in the vault → 503 dashboard_key_missing.
 
 const REF = /^[A-Z]{3}-[A-Z0-9]{4}$/
 const ITEM = /^\/api\/notes\/([^/]+)$/
+const IMAGE_ROUTE = /^\/api\/notes?\/image\/([A-Za-z0-9_-]{8,64})$/
+const AUDIO_ROUTE = /^\/api\/(?:notes|inbox)\/audio\/([A-Za-z0-9._-]{3,120})$/
+const NOTE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"])
+const MAX_IMAGE_BASE64 = 12 * 1024 * 1024
 const FOLDER = /^[a-z0-9-]{1,32}$/
 const CREATE_FOLDERS = ["resources", "ideas", "projects", "tasks", "bookmarks", "meetings"]
 const STATUSES = ["draft", "active", "pending", "done", "archived"]
@@ -192,11 +199,75 @@ async function edit(req: Request, ref: string): Promise<Response> {
   } catch (e) { return dashboardError(e) }
 }
 
+async function uploadImage(req: Request): Promise<Response> {
+  const body = await readBody(req)
+  if (!body) return fail(400, "bad_json")
+  const { ref, note_id, mime, data } = body
+  const contentType = typeof mime === "string" && mime !== "" ? mime : "image/jpeg"
+  if (!NOTE_IMAGE_MIMES.has(contentType)) return fail(400, "bad_mime")
+  if (typeof data !== "string" || data.length === 0 || data.length > MAX_IMAGE_BASE64) return fail(400, "bad_data")
+  let resolvedNoteId: string | null = typeof note_id === "string" && note_id !== "" ? note_id : null
+  try {
+    if (!resolvedNoteId && typeof ref === "string" && REF.test(ref)) {
+      const n = await fetchByRef(ref)
+      if (!(n instanceof Response) && typeof n.id === "string") resolvedNoteId = n.id
+    }
+    const r = await uploadNoteImage({ note_id: resolvedNoteId, mime: contentType, data })
+    if (r.status !== 200 || r.json?.ok !== true) return passThrough(r.status === 200 ? 502 : r.status, r.json)
+    const id = typeof r.json.id === "string" ? r.json.id : ""
+    const url = typeof r.json.url === "string" ? r.json.url : `/api/note/image/${id}`
+    return json({ ok: true, id, url }, 201)
+  } catch (e) { return dashboardError(e) }
+}
+
+async function readImage(id: string): Promise<Response> {
+  try {
+    const img = await fetchNoteImage(id)
+    if (!img) return fail(404, "not_found")
+    const safe = NOTE_IMAGE_MIMES.has(img.mime)
+    return new Response(img.bytes, {
+      headers: {
+        "Content-Type": safe ? img.mime : "application/octet-stream",
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+      },
+    })
+  } catch (e) { return dashboardError(e) }
+}
+
+async function readAudio(filename: string): Promise<Response> {
+  try {
+    const audio = await fetchInboxAudio(filename)
+    if (!audio) return fail(404, "not_found")
+    return new Response(audio.bytes, {
+      headers: {
+        "Content-Type": audio.mime || "audio/aac",
+        "Cache-Control": "private, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+      },
+    })
+  } catch (e) { return dashboardError(e) }
+}
+
 export async function handleNotesRoute(req: Request, url: URL): Promise<Response | null> {
   const p = url.pathname
   if (p === "/api/notes") {
     if (req.method === "GET") return list(url)
     if (req.method === "POST") return create(req)
+    return fail(405, "method_not_allowed")
+  }
+  if (p === "/api/notes/image" || p === "/api/note/image") {
+    if (req.method === "POST") return uploadImage(req)
+    return fail(405, "method_not_allowed")
+  }
+  const imgMatch = IMAGE_ROUTE.exec(p)
+  if (imgMatch) {
+    if (req.method === "GET") return readImage(imgMatch[1]!)
+    return fail(405, "method_not_allowed")
+  }
+  const audioMatch = AUDIO_ROUTE.exec(p)
+  if (audioMatch) {
+    if (req.method === "GET") return readAudio(audioMatch[1]!)
     return fail(405, "method_not_allowed")
   }
   if (!p.startsWith("/api/notes/")) return null

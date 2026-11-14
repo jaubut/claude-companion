@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import type { ReferencedNote } from "./canvas"
+import { fetchNoteImage } from "./dashboard-client"
 import { isMediaId, mediaPath, storeImageFile } from "./media"
 import { sentFilePath } from "./sent-files"
 import type { QueryFn } from "./turso"
@@ -9,6 +10,7 @@ import { deviceTranscript, transcriptOf, VOICE_HINT } from "./voice-memo"
 // next to its Phase 1 text. A note has no attachment schema: an attachment is a link in the
 // note's text to a store this server owns —
 //   /api/media/<id>          → the media store's JPEG (≤1024px)               → image block
+//   /api/note/image/<id>     → a Turso note_images blob                       → image block
 //   /api/files/<id>/<name>   → a SendUserFile copy, image extensions only,
 //                              downscaled through the media store              → image block
 //   /api/inbox/audio/<file>  → a voice memo; its Deepgram transcript (Turso
@@ -23,10 +25,10 @@ export const NOTE_MEDIA_MAX_IMAGES = 4
 /** Total bytes of base64 image data + transcript text per note. */
 export const NOTE_MEDIA_MAX_BYTES = 4 * 1024 * 1024
 
-const LINK = /\/api\/(?:media\/([a-f0-9]{32})|files\/([a-f0-9]{32})\/[^\s)"'<>\]]+|inbox\/audio\/([^\s)"'<>\]]+))/g
+const LINK = /\/api\/(?:media\/([a-f0-9]{32})|files\/([a-f0-9]{32})\/[^\s)"'<>\]]+|inbox\/audio\/([^\s)"'<>\]]+)|notes?\/image\/([A-Za-z0-9_-]{8,64}))/g
 const IMAGE_NAME = /\.(png|jpe?g|gif|webp|heic)$/i
 
-type Attachment = { image: string } | { file: string } | { audio: string }
+type Attachment = { image: string } | { file: string } | { audio: string } | { noteImage: string }
 
 function attachments(text: string): Attachment[] {
   const seen = new Set<string>()
@@ -41,13 +43,22 @@ function attachments(text: string): Attachment[] {
       let file = ""
       try { file = decodeURIComponent(m[3]) } catch { continue }
       out.push({ audio: file })
+    } else if (m[4]) {
+      out.push({ noteImage: m[4] })
     }
   }
   return out
 }
 
 // null = dangling or unreadable (skipped); "busy" = the media encode queue is full (counted as omitted).
-async function imageData(a: { image: string } | { file: string }): Promise<string | null | "busy"> {
+async function imageData(a: { image: string } | { file: string } | { noteImage: string }): Promise<string | null | "busy"> {
+  if ("noteImage" in a) {
+    try {
+      const img = await fetchNoteImage(a.noteImage)
+      if (!img || img.bytes.length === 0) return null
+      return Buffer.from(img.bytes).toString("base64")
+    } catch { return null }
+  }
   let id = "image" in a ? a.image : ""
   if ("file" in a) {
     const f = sentFilePath(a.file)
