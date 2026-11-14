@@ -136,7 +136,7 @@ export function readAgyBrainState(home = homedir()): AgyBrainState {
   const fallback: AgyBrainState = {
     sessionId: "",
     model: DEFAULT_AGY_BRAIN_MODEL,
-    boost: true,
+    boost: false,
     cwd: home,
     title: "⚡ Brain · Boost",
     updatedAt: 0,
@@ -147,9 +147,9 @@ export function readAgyBrainState(home = homedir()): AgyBrainState {
     return {
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId.trim() : "",
       model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : DEFAULT_AGY_BRAIN_MODEL,
-      boost: typeof parsed.boost === "boolean" ? parsed.boost : true,
+      boost: typeof parsed.boost === "boolean" ? parsed.boost : false,
       cwd: typeof parsed.cwd === "string" && parsed.cwd.trim() ? parsed.cwd.trim() : home,
-      title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "⚡ Brain · Boost",
+      title: "⚡ Brain · Boost",
       updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
     }
   } catch {
@@ -756,7 +756,7 @@ export function ensureAgyBrainSession(home = homedir()) {
     sessionId: sid,
     herdrPane: AGY_BRAIN_PANE,
     taskId: AGY_BRAIN_TASK_ID,
-    title: state.title && state.title !== "Brain · Boost" ? state.title : "⚡ Brain · Boost",
+    title: "⚡ Brain · Boost",
     label: "⚡ Brain · Boost",
     firstSeenAt: existing?.firstSeenAt ?? (state.updatedAt || undefined),
     agentStatus: inferredStatus,
@@ -794,7 +794,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
     if (brainState.sessionId && c.id === brainState.sessionId) {
       if (brainSession) {
         const nextStatus = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : c.status
-        const nextTitle = c.title && c.title !== "Antigravity Session" ? c.title : (brainState.title || "⚡ Brain · Boost")
+        const nextTitle = "⚡ Brain · Boost"
         if (brainSession.agentStatus !== nextStatus || brainSession.title !== nextTitle) {
           recordSession({
             ...brainSession,
@@ -847,15 +847,62 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
     const status = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(brainState.sessionId, home, false)
     events.push(...readAgyTranscriptDelta({
       id: brainState.sessionId,
-      title: brainState.title || "Brain · Boost",
+      title: "⚡ Brain · Boost",
       cwd: brainState.cwd || home,
       status,
       updatedAtMs: Date.now(),
       stepCount: 1,
     }, home))
   }
+  if (brainState.sessionId && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
+    const childIds = discoverChildSubagentIds(brainState.sessionId, home)
+    for (const childId of childIds) {
+      const childEvents = readAgyTranscriptDelta(
+        {
+          id: childId,
+          title: "⚡ Brain · Boost",
+          cwd: brainState.cwd || home,
+          status: activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(childId, home, false),
+          updatedAtMs: Date.now(),
+          stepCount: 1,
+        },
+        home,
+        { key: AGY_BRAIN_KEY, cwd: brainState.cwd || home, sessionId: brainState.sessionId },
+      )
+      for (const ev of childEvents) {
+        if (ev.kind === "tool_start" || ev.kind === "tool_end" || ev.kind === "thinking") {
+          events.push(ev)
+        }
+      }
+    }
+  }
   events.sort((a, b) => a.ts - b.ts)
   for (const ev of events) appendFeedEvent(ev)
+}
+
+function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string[] {
+  const found: string[] = []
+  const visited = new Set<string>([rootConvoId])
+  const queue: Array<{ id: string; depth: number }> = [{ id: rootConvoId, depth: 0 }]
+  while (queue.length > 0) {
+    const item = queue.shift()!
+    if (item.depth >= 2) continue
+    const path = agyTranscriptPath(item.id, home)
+    if (!existsSync(path)) continue
+    try {
+      const raw = readTail(path, 32 * 1024)
+      const matches = raw.matchAll(/\\"conversationId\\":\s*\\"([0-9a-fA-F-]{36})\\"/g)
+      for (const m of matches) {
+        const cid = m[1]
+        if (cid && !visited.has(cid) && existsSync(agyTranscriptPath(cid, home))) {
+          visited.add(cid)
+          found.push(cid)
+          queue.push({ id: cid, depth: item.depth + 1 })
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return found
 }
 
 function isDuplicateInjectedUserPrompt(
@@ -886,13 +933,17 @@ function isDuplicateInjectedUserPrompt(
   return false
 }
 
-export function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir()): FeedEvent[] {
+export function readAgyTranscriptDelta(
+  convo: AgyConversationSummary,
+  home = homedir(),
+  identOverride?: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+): FeedEvent[] {
   const path = agyTranscriptPath(convo.id, home)
   if (!existsSync(path)) return []
 
   const session = listSessions().find((s) => s.sessionId === convo.id)
     ?? (readAgyBrainState(home).sessionId === convo.id ? getSessionByKey(AGY_BRAIN_KEY) : undefined)
-  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = {
+  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = identOverride ?? {
     key: session?.key,
     cwd: session?.cwd || convo.cwd,
     ...(session?.tty ? { tty: session.tty } : {}),
@@ -1189,15 +1240,14 @@ export function deliverHeadlessAgyTurn(opts: {
                 if (cid && cid !== activeSid) {
                   activeSid = cid
                   if (opts.isBrain) {
-                    const cleanTitle = opts.prompt.replace(/^\/boost\s+/i, "").trim().slice(0, 72) || "⚡ Brain · Boost"
-                    writeAgyBrainState({ sessionId: cid, title: cleanTitle, model: opts.model || DEFAULT_AGY_BRAIN_MODEL, cwd }, home)
+                    writeAgyBrainState({ sessionId: cid, title: "⚡ Brain · Boost", model: opts.model || DEFAULT_AGY_BRAIN_MODEL, cwd }, home)
                     recordSession({
                       agent: "gemini",
                       cwd,
                       sessionId: cid,
                       herdrPane: AGY_BRAIN_PANE,
                       taskId: AGY_BRAIN_TASK_ID,
-                      title: cleanTitle,
+                      title: "⚡ Brain · Boost",
                       label: "⚡ Brain · Boost",
                       agentStatus: "busy",
                       model: opts.model || DEFAULT_AGY_BRAIN_MODEL,
