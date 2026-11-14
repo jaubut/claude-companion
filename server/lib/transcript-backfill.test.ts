@@ -306,4 +306,67 @@ describe("transcript backfill", () => {
     // Verify inferAgyTranscriptStatus reports "idle" even though step 8680 had status:"RUNNING"
     expect(inferAgyTranscriptStatus(sid, dir, true)).toBe("idle")
   })
+
+  test("Pinned Antigravity Brain (gemini:brain) builds Orchestrator + /boost args and registers headless session", async () => {
+    const {
+      AGY_BRAIN_KEY,
+      AGY_BRAIN_PANE,
+      AGY_BRAIN_TASK_ID,
+      DEFAULT_AGY_BRAIN_MODEL,
+      agyRootDir,
+      buildHeadlessAgyArgs,
+      ensureAgyBrainSession,
+      extractAgyUserPrompt,
+      normalizeAgyCliModelFlag,
+    } = await import("./agy-feed")
+
+    mkdirSync(agyRootDir(dir), { recursive: true })
+    const brainSession = ensureAgyBrainSession(dir)
+    expect(brainSession).not.toBeNull()
+    expect(brainSession?.key).toBe(AGY_BRAIN_KEY)
+    expect(brainSession?.herdrPane).toBe(AGY_BRAIN_PANE)
+    expect(brainSession?.taskId).toBe(AGY_BRAIN_TASK_ID)
+    expect(brainSession?.model).toBe(DEFAULT_AGY_BRAIN_MODEL)
+
+    expect(normalizeAgyCliModelFlag("Orchestrator (Carbon)")).toBe("gemini-pro-orchestrator")
+    expect(normalizeAgyCliModelFlag("Orchestrator (Argon)")).toBe("gemini-pro-orchestrator-argon")
+
+    const freshArgs = buildHeadlessAgyArgs({
+      prompt: "Audit the Companion failover flow",
+      model: "Orchestrator (Carbon)",
+      boost: true,
+      hasExistingTranscript: false,
+    })
+    expect(freshArgs).toEqual([
+      "-p",
+      "/boost Audit the Companion failover flow",
+      "--model",
+      "gemini-pro-orchestrator",
+      "--output-format",
+      "stream-json",
+      "--dangerously-skip-permissions",
+    ])
+
+    const resumedArgs = buildHeadlessAgyArgs({
+      prompt: "/plan Check the routes",
+      sessionId: "a63bd666-aeca-47af-9be5-5e494a36ecda",
+      model: "gemini-pro-orchestrator",
+      boost: true,
+      hasExistingTranscript: true,
+    })
+    expect(resumedArgs).toEqual([
+      "-p",
+      "/plan Check the routes",
+      "--conversation",
+      "a63bd666-aeca-47af-9be5-5e494a36ecda",
+      "--model",
+      "gemini-pro-orchestrator",
+      "--output-format",
+      "stream-json",
+      "--dangerously-skip-permissions",
+    ])
+
+    expect(extractAgyUserPrompt("<USER_REQUEST>\n/boost Audit the Companion failover flow\n</USER_REQUEST>"))
+      .toBe("Audit the Companion failover flow")
+  })
 })

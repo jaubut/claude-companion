@@ -6,6 +6,7 @@ import { recordSession, resolveSession, setSessionModel, type Session } from "..
 import { type SessionPane, sessionPaneOf } from "../lib/session-pane"
 import { dialogWatcher } from "../wiring/dialogs"
 import { checked, jsonObject } from "../lib/json-body"
+import { AGY_BRAIN_TASK_ID, getAgyBrainModel, setAgyBrainModel } from "../lib/agy-feed"
 import { getBrainModel, setBrainModel } from "../wiring/brain"
 import { workerSupervisor } from "../wiring/worker-mcp"
 
@@ -26,6 +27,9 @@ const HEADLESS_MODELS: HeadlessModelEntry[] = [
   { id: "claude-opus-5", family: "claude", text: "Opus 5 · Previous generation Opus", aliases: ["claude-opus-5", "opus 5"] },
   { id: "gpt-5.4", family: "codex", text: "GPT-5.4 (Codex) · OpenAI flagship coding agent", aliases: ["gpt-5.4", "codex"] },
   { id: "o3", family: "codex", text: "o3 (Codex) · Deep reasoning model", aliases: ["o3"] },
+  { id: "gemini-pro-orchestrator", family: "gemini", text: "Orchestrator (Carbon) · Multi-agent /boost engine", aliases: ["gemini-pro-orchestrator", "orchestrator", "orchestrator (carbon)"] },
+  { id: "gemini-pro-orchestrator-argon", family: "gemini", text: "Orchestrator (Argon) · Fast multi-agent /boost engine", aliases: ["gemini-pro-orchestrator-argon", "orchestrator (argon)"] },
+  { id: "gemini-4-hydrogen-high", family: "gemini", text: "Gemini 4 Hydrogen (High) · Deepest reasoning", aliases: ["gemini-4-hydrogen-high", "gemini 4 hydrogen (high)", "hydrogen"] },
   { id: "Gemini 4 Argon (Medium)", family: "gemini", text: "Gemini 4 Argon (Medium) · Antigravity default", aliases: ["gemini-4-argon-medium", "gemini 4 argon (medium)", "gemini 4 argon"] },
   { id: "Gemini 4 Argon (High)", family: "gemini", text: "Gemini 4 Argon (High) · Deep reasoning", aliases: ["gemini-4-argon-high", "gemini 4 argon (high)"] },
   { id: "Gemini 4 Carbon (High)", family: "gemini", text: "Gemini 4 Carbon (High) · Frontier multimodal", aliases: ["gemini-4-carbon-high", "gemini 4 carbon (high)", "gemini 4 carbon"] },
@@ -44,12 +48,21 @@ function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
   if (session.taskId === "brain") {
     return HEADLESS_MODELS.filter((m) => m.family === "claude")
   }
+  if (session.taskId === AGY_BRAIN_TASK_ID || session.agent === "gemini") {
+    return HEADLESS_MODELS.filter((m) => m.family === "gemini")
+  }
   return HEADLESS_MODELS
 }
 
 function buildHeadlessChoices(session: Session): ModelChoice[] {
   const catalog = headlessCatalogFor(session)
-  const rawCurrent = (session.taskId === "brain" ? (session.model || getBrainModel()) : session.model || "claude-opus-5-5").trim().toLowerCase()
+  const rawCurrent = (
+    session.taskId === "brain"
+      ? (session.model || getBrainModel())
+      : session.taskId === AGY_BRAIN_TASK_ID
+        ? (session.model || getAgyBrainModel())
+        : (session.model || "claude-opus-5-5")
+  ).trim().toLowerCase()
   let matchedIndex = catalog.findIndex((m) => m.id.toLowerCase() === rawCurrent || m.aliases.includes(rawCurrent))
   if (matchedIndex < 0) matchedIndex = 0
   return catalog.map((m, idx) => ({
@@ -201,6 +214,8 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
       const picked = catalog[index]!
       if (session.taskId === "brain") {
         setBrainModel(picked.id)
+      } else if (session.taskId === AGY_BRAIN_TASK_ID) {
+        setAgyBrainModel(picked.id)
       } else if (session.taskId) {
         workerSupervisor.setTaskModel(session.taskId, picked.id)
       }
