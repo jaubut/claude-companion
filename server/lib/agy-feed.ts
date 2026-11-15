@@ -870,7 +870,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
         { key: AGY_BRAIN_KEY, cwd: brainState.cwd || home, sessionId: brainState.sessionId },
       )
       for (const ev of childEvents) {
-        if (ev.kind === "tool_start" || ev.kind === "tool_end" || ev.kind === "thinking") {
+        if (ev.kind === "tool_start" || ev.kind === "tool_end" || ev.kind === "assistant_thinking") {
           events.push(ev)
         }
       }
@@ -890,7 +890,7 @@ function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string
     const path = agyTranscriptPath(item.id, home)
     if (!existsSync(path)) continue
     try {
-      const raw = readTail(path, 32 * 1024)
+      const raw = readTailLines(path, 32 * 1024).join("\n")
       const matches = raw.matchAll(/\\"conversationId\\":\s*\\"([0-9a-fA-F-]{36})\\"/g)
       for (const m of matches) {
         const cid = m[1]
