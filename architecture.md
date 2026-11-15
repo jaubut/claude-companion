@@ -26,11 +26,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
+| `lib/submit-confirm.ts` | 538 | lib | 23 | state: watches: Set, paneLocks: Map |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
-| `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
@@ -102,6 +102,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
 | `lib/triage-repos.ts` | 227 | lib | 17 | state: MEMBER_SOURCES: Set |
 | `lib/command-offpane-cache.ts` | 226 | lib | 14 | state: let launchMemo, warnedOld: Set |
+| `lib/inject-guard.ts` | 225 | lib | 12 |  |
 | `lib/orphan-question.ts` | 225 | lib | 11 | state: raised: Map |
 | `lib/learned-allow.ts` | 224 | lib | 9 | state: let db, MULTI_VERB_BINARIES: Set, NEVER_LEARN: Set |
 | `wiring/events.ts` | 224 | lib | 0 | state: modelProbed: Set · emits: approval, resolved, question, approval_history, event, feed_pruned, activity, sessions · listens: onApprovalRequest, onApprovalExpired, onApprovalResolved, onQuestionRequest, onQuestionExpired, onQuestionResolved, onApprovalHistory, onAutoHistoryFlush, onFeed, onFeedReset, onActivity, onSessions |
@@ -133,7 +134,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
-| `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
 | `lib/scrape-registry.ts` | 175 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
@@ -803,6 +803,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clearWaitingForTarget()` | `lib/sessions.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `announceWaiting()` | `wiring/waiting.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `workerSupervisor()` | `wiring/worker-mcp.ts` | `routes/api.ts#* /api/feed`, `routes/model.ts#POST /api/model/set` |
+| `awaitPrompt()` | `lib/inject-guard.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `paneWidthFor()` | `wiring/dialogs.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `injectConfirmed()` | `lib/submit-confirm.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `deliveryFailedHint()` | `lib/submit-confirm.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
