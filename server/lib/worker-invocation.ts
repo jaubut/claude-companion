@@ -149,6 +149,15 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   return "claude"
 }
 
+/** False when `model` names another family's model (a `claude-*` id handed to codex fails 400 model_not_found). */
+export function modelFitsFamily(model: string, family: WorkerFamily): boolean {
+  const m = model.trim().toLowerCase()
+  const implied = /^(claude-|opus|sonnet|haiku|fable)/.test(m) ? "claude"
+    : /^(gpt-|o1\b|o3\b|o4\b|codex)/.test(m) ? "codex"
+    : /^gemini/.test(m) ? "gemini" : null
+  return implied === null || implied === family
+}
+
 /** Build the headless `claude -p` argv with `--` before positional prompt so `-...` prompts are never parsed as flags. */
 export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): string[] {
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", opts.mode, ...(opts.resume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId])]

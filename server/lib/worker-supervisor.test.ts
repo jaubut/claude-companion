@@ -555,6 +555,58 @@ describe("createWorkerSupervisor", () => {
     })
   })
 
+  test("codex: no default model flag, never a claude-* id, and a resume keeps the task's family + model", async () => {
+    const home = join(tmpdir(), `worker-sup-codex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => "eeee1111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 7777, kill() {} } },
+    })
+    const finish = (i: number) => {
+      spawned[i]!.onStdoutLine(JSON.stringify({ type: "thread.started", thread_id: "cx-thread" }))
+      spawned[i]!.onExit(0, null)
+    }
+    try {
+      // First dispatch, no model: codex picks its own config default.
+      const fresh = await sup.dispatchTask({ taskId: "cx-default", repo: "claude-companion", prompt: "Fix it", family: "codex" })
+      expect(fresh.ok && fresh.task.model).toBeNull()
+      expect(spawned[0]!.cmd).toBe("codex")
+      expect(spawned[0]!.args).not.toContain("-m")
+      finish(0)
+      // Follow-up with nothing named stays codex (a null model must not fall back to claude).
+      await sup.dispatchTask({ taskId: "cx-default", repo: "claude-companion", prompt: "Again" })
+      expect(spawned[1]!.cmd).toBe("codex")
+      expect(spawned[1]!.args.slice(0, 2)).toEqual(["exec", "resume"])
+      expect(spawned[1]!.args).not.toContain("-m")
+      finish(1)
+
+      // A claude id on a codex dispatch is dropped, never passed to codex.
+      await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Build", family: "codex", model: "claude-opus-5-5" })
+      expect(spawned[2]!.args.join(" ")).not.toContain("claude")
+      finish(2)
+      sup.setTaskModel("cx-astra", "gpt-6-astra")
+
+      // Turn after completion: nothing named → recorded family + model.
+      const t2 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Follow up" })
+      expect(t2.ok && [t2.task.family, t2.task.model]).toEqual(["codex", "gpt-6-astra"])
+      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", "Follow up"])
+      finish(3)
+      // The turn-8 shape: family codex + a stale claude model → still the task's codex model.
+      const t3 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Turn 8", family: "codex", model: "claude-opus-5-5" })
+      expect(t3.ok && [t3.task.family, t3.task.model]).toEqual(["codex", "gpt-6-astra"])
+      expect(spawned[4]!.args).toContain("gpt-6-astra")
+      expect(spawned[4]!.args.join(" ")).not.toContain("claude")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("invokes onTaskTerminal when a turn completes or fails so the Brain wakes immediately", async () => {
     const home = join(tmpdir(), `worker-sup-term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })

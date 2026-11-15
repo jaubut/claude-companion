@@ -11,7 +11,7 @@ import {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
   type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 
 export {
@@ -312,7 +312,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const model = input.model?.trim() || undefined
       if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
       const existing = tasks.get(taskId)
-      const family = resolveWorkerFamily({ family: input.family, agent, model: model ?? existing?.model ?? undefined })
+      // A follow-up turn keeps the task's recorded family unless the caller names a family, agent or model.
+      const family = existing && !input.family?.trim() && !agent && !model
+        ? existing.family
+        : resolveWorkerFamily({ family: input.family, agent, model: model ?? existing?.model ?? undefined })
       if (!family) return { ok: false, status: 400, error: "invalid_family" }
 
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
@@ -348,8 +351,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               existingModel: existing?.model ?? null,
             })).model
           : null
-        const explicitNonAuto = model && model.toLowerCase() !== "auto" ? model : null
-        const effectiveModel = explicitNonAuto ?? routedModel ?? existing?.model ?? null
+        // Only a model of this family reaches the CLI; none at all lets codex/gemini use their own config default.
+        const usable = (m: string | null | undefined) => m && m.toLowerCase() !== "auto" && modelFitsFamily(m, family) ? m : null
+        const effectiveModel = usable(model) ?? routedModel ?? usable(existing?.model) ?? null
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
         // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
