@@ -4,6 +4,7 @@ import { BRAIN_THREAD, LEAD_PREFIX, brainEnabled } from "../lib/brain"
 import { DISPATCH_ID } from "../lib/dispatch-tasks"
 import { realSh } from "../lib/live-repo"
 import { appendTurn } from "../lib/orchestrator-chat"
+import { startGoneSessionPrune } from "../lib/session-prune-gone"
 import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
@@ -117,6 +118,11 @@ export const workerSupervisor = createWorkerSupervisor({
     orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
   },
 })
+
+/** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
+export function startWorkerSessionPrune(): void {
+  startGoneSessionPrune((id) => workerSupervisor.getTask(id)?.status === "running")
+}
 
 export const workerMcp = createWorkerMcpHandler({
   supervisor: workerSupervisor,
