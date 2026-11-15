@@ -12,6 +12,7 @@ import { driveQuestionPicker } from "./question-driver"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
+import { withActiveDesignStatePrompt } from "./design-state"
 import { scrubAgentEnv } from "./worker-invocation"
 
 export const AGY_BRAIN_KEY = "gemini:brain"
@@ -722,6 +723,7 @@ export function syncAgyOpenQuestion(
         prompt: formatAgyQuestionAnswers(questions, answers),
         cwd,
         boost: false,
+        skipDesignContext: true,
         home,
       })
     } else {
@@ -730,6 +732,7 @@ export function syncAgyOpenQuestion(
         cwd,
         prompt: formatAgyQuestionAnswers(questions, answers),
         model: exactSession?.model,
+        skipDesignContext: true,
         home,
       })
     }
@@ -1111,6 +1114,7 @@ export function deliverHeadlessAgyBrainTurn(opts: {
   cwd?: string
   model?: string
   boost?: boolean
+  skipDesignContext?: boolean
   home?: string
 }): boolean {
   const home = opts.home ?? homedir()
@@ -1152,6 +1156,7 @@ export function deliverHeadlessAgyBrainTurn(opts: {
     boost: effectiveBoost,
     isBrain: true,
     sessionKey: AGY_BRAIN_KEY,
+    skipDesignContext: opts.skipDesignContext,
     home,
   })
 }
@@ -1164,6 +1169,7 @@ export function deliverHeadlessAgyTurn(opts: {
   boost?: boolean
   isBrain?: boolean
   sessionKey?: string
+  skipDesignContext?: boolean
   home?: string
 }): boolean {
   const home = opts.home ?? homedir()
@@ -1172,8 +1178,9 @@ export function deliverHeadlessAgyTurn(opts: {
     opts.sessionId !== AGY_BRAIN_TASK_ID &&
     existsSync(agyTranscriptPath(opts.sessionId, home)),
   )
+  const promptWithDesign = opts.skipDesignContext ? opts.prompt : withActiveDesignStatePrompt(opts.prompt)
   const args = buildHeadlessAgyArgs({
-    prompt: opts.prompt,
+    prompt: promptWithDesign,
     sessionId: opts.sessionId,
     model: opts.model,
     boost: opts.boost,

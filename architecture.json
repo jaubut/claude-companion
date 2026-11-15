@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 198,
+          "lines": 211,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -103,8 +103,10 @@
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "routes/canvas.ts",
+            "routes/design-state.ts",
             "lib/turso.ts",
             "wiring/canvas.ts",
+            "wiring/design-state.ts",
             "lib/vault-guard.ts",
             "lib/request-gate.ts",
             "ws.ts",
@@ -198,7 +200,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1293,
+          "lines": 1300,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -262,6 +264,7 @@
             "lib/transcript.ts",
             "lib/transcript-cursor.ts",
             "lib/transcript-backfill.ts",
+            "lib/design-state.ts",
             "lib/worker-invocation.ts"
           ],
           "listeners": [],
@@ -1714,6 +1717,36 @@
           "externals": []
         },
         {
+          "path": "lib/design-state.ts",
+          "lines": 382,
+          "kind": "lib",
+          "exports": [
+            "DesignStateSnapshot",
+            "DesignStatePatch",
+            "DesignStateDeps",
+            "formatDesignStatePrompt",
+            "withDesignStatePrompt",
+            "createDesignStateService",
+            "DesignStateService",
+            "registerActiveDesignPromptProvider",
+            "withActiveDesignStatePrompt"
+          ],
+          "state": [
+            "ALLOWED_SCALES: Set",
+            "let activePromptProvider"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/figcraft.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dialog-watch.ts",
           "lines": 250,
           "kind": "lib",
@@ -2100,6 +2133,38 @@
             "feedResetListeners: Set",
             "feedEvictListeners: Set"
           ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/figcraft.ts",
+          "lines": 227,
+          "kind": "lib",
+          "exports": [
+            "FigcraftFrameSummary",
+            "FigcraftPageSummary",
+            "FigcraftFileEntry",
+            "DesignBrandTokens",
+            "CliResult",
+            "CliRunner",
+            "FRAME_LIMIT",
+            "CONTROL_CHARS_RE",
+            "sanitizeDesignText",
+            "safeRealpath",
+            "resolveAllowedFigcraftPath",
+            "defaultCliRunner",
+            "parseFigcraftInfoOutput",
+            "parseThemeCssTokens",
+            "discoverFigcraftFiles",
+            "readThemeCssCached"
+          ],
+          "state": [],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -6500,7 +6565,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 581,
+          "lines": 585,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6940,7 +7005,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 207,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -7066,6 +7131,29 @@
             "lib/copy-jobs.ts",
             "lib/vault-guard.ts",
             "wiring/copy-jobs.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/design-state.ts",
+          "lines": 109,
+          "kind": "lib",
+          "exports": [
+            "DesignStateRouteDeps",
+            "createDesignStateRoute",
+            "handleDesignStateRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/design-state.ts",
+            "lib/json-body.ts",
+            "wiring/design-state.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8433,7 +8521,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 200,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "canvasStore",
@@ -8463,7 +8551,8 @@
             "lib/log.ts",
             "lib/sessions.ts",
             "lib/turso.ts",
-            "state.ts"
+            "state.ts",
+            "wiring/design-state.ts"
           ],
           "listeners": [
             "onSessions",
@@ -8489,6 +8578,42 @@
           "imports": [
             "lib/copy-jobs.ts",
             "lib/session-resolve.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/design-state.ts",
+          "lines": 101,
+          "kind": "lib",
+          "exports": [
+            "startDesignStateWatcher",
+            "stopDesignStateWatcher",
+            "getDesignStateSnapshot",
+            "designStateSnapshotFrame",
+            "refreshDesignState",
+            "updateDesignState",
+            "syncDesignStateFromCanvasPick",
+            "designStateHookContext",
+            "appendDesignStatePrompt",
+            "renderFigcraftNodePreview",
+            "exportDesignTokens"
+          ],
+          "state": [
+            "let service",
+            "let activeForHooks",
+            "let unsub"
+          ],
+          "emits": [
+            "design_state"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/design-state.ts",
             "state.ts"
           ],
           "listeners": [],
@@ -9299,7 +9424,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 147,
+          "lines": 149,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
@@ -9331,6 +9456,7 @@
             "state.ts",
             "wiring/brain.ts",
             "wiring/builder-jobs.ts",
+            "wiring/design-state.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -9340,7 +9466,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 244,
+          "lines": 247,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -9378,6 +9504,7 @@
             "wiring/copy-jobs.ts",
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
+            "wiring/design-state.ts",
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
             "wiring/pane-mirror.ts",
@@ -9422,6 +9549,7 @@
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
+            "wiring/design-state.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -9468,29 +9596,20 @@
             "companion-server.ts"
           ]
         },
-        "tursoQuery": {
-          "module": "lib/turso.ts",
-          "callers": [
-            "companion-server.ts",
-            "lib/receipt-qa-worker.ts",
-            "lib/turso-test-db.test-util.ts",
-            "routes/body.ts",
-            "routes/goals.ts",
-            "routes/my-tasks.ts",
-            "wiring/auto-compact.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts",
-            "wiring/canvas.ts",
-            "wiring/dispatch.ts",
-            "wiring/resolver-dry-run.ts",
-            "wiring/resolver.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts",
-            "wiring/trips.ts"
-          ]
-        },
         "createCanvasRoute": {
           "module": "routes/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStore": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStatus": {
+          "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
           ]
@@ -9511,19 +9630,7 @@
             "ws.ts"
           ]
         },
-        "canvasStore": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
         "canvasSend": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "canvasPickNotify": {
           "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
@@ -9535,10 +9642,37 @@
             "companion-server.ts"
           ]
         },
-        "canvasStatus": {
+        "canvasPickNotify": {
           "module": "wiring/canvas.ts",
           "callers": [
             "companion-server.ts"
+          ]
+        },
+        "syncDesignStateFromCanvasPick": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "tursoQuery": {
+          "module": "lib/turso.ts",
+          "callers": [
+            "companion-server.ts",
+            "lib/receipt-qa-worker.ts",
+            "lib/turso-test-db.test-util.ts",
+            "routes/body.ts",
+            "routes/goals.ts",
+            "routes/my-tasks.ts",
+            "wiring/auto-compact.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/canvas.ts",
+            "wiring/dispatch.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/trips.ts"
           ]
         },
         "disableAutoSelectFamily": {
@@ -9581,6 +9715,12 @@
         },
         "replayWorkerPrLinks": {
           "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "startDesignStateWatcher": {
+          "module": "wiring/design-state.ts",
           "callers": [
             "companion-server.ts"
           ]
@@ -9859,6 +9999,12 @@
         },
         "handleCopyJobsRoute": {
           "module": "routes/copy-jobs.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleDesignStateRoute": {
+          "module": "routes/design-state.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10275,6 +10421,12 @@
         },
         "syncExternalToolActivity": {
           "module": "lib/activity.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "withActiveDesignStatePrompt": {
+          "module": "lib/design-state.ts",
           "callers": [
             "lib/agy-feed.ts"
           ]
@@ -11512,6 +11664,90 @@
           "callers": [
             "lib/dashboard-client.ts",
             "lib/receipt-jev.ts"
+          ]
+        },
+        "CONTROL_CHARS_RE": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "CliRunner": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "DesignBrandTokens": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftFileEntry": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftFrameSummary": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "defaultCliRunner": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "discoverFigcraftFiles": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "parseFigcraftInfoOutput": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "parseThemeCssTokens": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "readThemeCssCached": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "resolveAllowedFigcraftPath": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "sanitizeDesignText": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftPageSummary": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "CliResult": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
           ]
         },
         "parseDialog": {
@@ -14957,6 +15193,7 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
+            "routes/design-state.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
@@ -15974,6 +16211,50 @@
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/copy-jobs.ts#GET /api/copy-jobs",
             "ws.ts"
+          ]
+        },
+        "exportDesignTokens": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "getDesignStateSnapshot": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "refreshDesignState": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "renderFigcraftNodePreview": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "updateDesignState": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "DesignStateSnapshot": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "routes/design-state.ts",
+            "wiring/design-state.ts"
+          ]
+        },
+        "DesignStatePatch": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "routes/design-state.ts",
+            "wiring/design-state.ts"
           ]
         },
         "opensChordWindow": {
@@ -17908,6 +18189,13 @@
             "wiring/canvas.ts"
           ]
         },
+        "designStateHookContext": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "sessionStatuses": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -17939,6 +18227,30 @@
           "callers": [
             "wiring/copy-jobs.ts",
             "wiring/gauge.ts"
+          ]
+        },
+        "DesignStateService": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "createDesignStateService": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "registerActiveDesignPromptProvider": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "withDesignStatePrompt": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
           ]
         },
         "SessionStatus": {
@@ -19329,6 +19641,12 @@
         },
         "canvasSnapshot": {
           "module": "wiring/canvas.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
+        "designStateSnapshotFrame": {
+          "module": "wiring/design-state.ts",
           "callers": [
             "ws.ts"
           ]

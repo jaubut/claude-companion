@@ -29,8 +29,10 @@ import { handleNotesRoute } from "./routes/notes"
 import { createTasksAgentRoute } from "./routes/tasks-agent"
 import { tasksAgent, tasksChat } from "./wiring/tasks-agent"
 import { createCanvasRoute } from "./routes/canvas"
+import { handleDesignStateRoute } from "./routes/design-state"
 import { tursoQuery } from "./lib/turso"
 import { canvasPickNotify, canvasSend, canvasStatus, canvasStore, referencesFor, setCanvasDeliver } from "./wiring/canvas"
+import { startDesignStateWatcher, syncDesignStateFromCanvasPick } from "./wiring/design-state"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
 import { hookCallerAllowed, hostAllowed, watchTailscaleName } from "./lib/request-gate"
 import { websocket } from "./ws"
@@ -64,7 +66,17 @@ const VOICE_UPLOAD_IDLE_TIMEOUT_S = 200
 const handleTasksAgentRoute = createTasksAgentRoute({ agent: tasksAgent, chat: tasksChat, notify: broadcast })
 setCanvasDeliver(deliverInject)
 setBrainDeliver(deliverInject)
-const handleCanvasRoute = createCanvasRoute({ store: canvasStore, status: canvasStatus, host: HOST_INFO.name, notify: broadcast, send: canvasSend, references: referencesFor, pickNotify: canvasPickNotify, query: tursoQuery })
+const handleCanvasRoute = createCanvasRoute({
+  store: canvasStore,
+  status: canvasStatus,
+  host: HOST_INFO.name,
+  notify: broadcast,
+  send: canvasSend,
+  references: referencesFor,
+  pickNotify: canvasPickNotify,
+  onPick: (node) => { void syncDesignStateFromCanvasPick(node) },
+  query: tursoQuery,
+})
 
 export function createCompanionServer(port: number) {
   // Before any outbound node:net / http2 connect (APNs, broker): Bun's
@@ -72,6 +84,7 @@ export function createCompanionServer(port: number) {
   disableAutoSelectFamily()
   startEndedSweep(listSessions)
   replayWorkerPrLinks()
+  startDesignStateWatcher()
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
   if (brainEnabled()) { brainWiring.start(); startAutoDeploy(); startStuckEvents() }
@@ -171,7 +184,7 @@ export function createCompanionServer(port: number) {
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
       try {
-        for (const route of [handleWorkerBlockedRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleCanvasRoute]) {
+        for (const route of [handleWorkerBlockedRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleDesignStateRoute, handleCanvasRoute]) {
           const handled = await route(req, url)
           if (handled) return handled
         }
