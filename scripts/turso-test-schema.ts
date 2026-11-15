@@ -1,17 +1,16 @@
 #!/usr/bin/env bun
-// Keeps tls-test on production's schema. Run by hand after a tls-dashboard-v2 migration, from a host with a turso
-// CLI login: `bun scripts/turso-test-schema.ts` syncs, `--check` reports and writes nothing. Production is read with
-// one fixed SELECT through `turso db shell` (the CLI has no JSON output, hence parseTable) and nothing else; rows are
-// never selected. tls-test is reached through testDbExec only, reads and writes alike. The full DDL lives in tls-test:
+// Keeps tls-sqld-test on production's schema. Run after a tls-dashboard-v2 migration:
+// `TURSO_TEST_AUTH_TOKEN=... with-agent-env bun scripts/turso-test-schema.ts` syncs, `--check` reports and writes nothing.
+// Production is read with one fixed SELECT through Hrana `/v2/pipeline` and nothing else; rows are never selected.
+// tls-sqld-test is reached through testDbExec only, reads and writes alike. The full DDL lives in tls-sqld-test:
 // this repo is public, so only the tables tests touch are committed, in server/lib/turso-test-schema.sql.
 
 import { join } from "node:path"
 import { type ExecFn, tursoExec } from "../server/lib/turso"
-import { testDbUrl } from "../server/lib/turso-test-guard.test-util"
+import { TEST_HOST, testDbUrl } from "../server/lib/turso-test-guard.test-util"
 
 export const PROD_READ = "SELECT type,name,tbl_name,sql FROM sqlite_master"
-const PROD_DB = "tls-dashboard"
-const TEST_DB = "tls-test"
+const PROD_URL = "https://tls-sqld-1016439101738.northamerica-northeast1.run.app/v2/pipeline"
 const SUBSET_FILE = join(import.meta.dir, "../server/lib/turso-test-schema.sql")
 const SUBSET_TABLES = ["agent_activity", "notes", "task_stamps", "tasks"]
 // Columns no test touches whose name alone says more than a public repo should. tls-test keeps them (extra columns pass).
@@ -73,14 +72,42 @@ export function testDbExec(url: string | undefined, token: string): (sql: string
   }
 }
 
-// Output is kept out of the error: `db tokens create` prints a token.
-async function cli(...args: string[]): Promise<string> {
-  const r = await Bun.$`turso ${args}`.quiet().nothrow()
-  if (r.exitCode !== 0) throw new Error(`turso ${args.slice(0, 2).join(" ")} failed (exit ${r.exitCode})`)
-  return r.stdout.toString().trim()
+function hranaCell(cell: unknown): string {
+  if (!cell || typeof cell !== "object") return ""
+  const rec = cell as { type?: unknown; value?: unknown }
+  if (rec.type === "null") return ""
+  return rec.value === undefined || rec.value === null ? "" : String(rec.value)
 }
 
-const readProd = async () => keepObjects(parseTable(await cli("db", "shell", PROD_DB, PROD_READ)))
+async function readProd(prodToken: string): Promise<Obj[]> {
+  if (!prodToken) throw new Error("TURSO_AUTH_TOKEN is required to read production schema")
+  const res = await fetch(PROD_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${prodToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ requests: [{ type: "execute", stmt: { sql: PROD_READ } }, { type: "close" }] }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) throw new Error(`production schema read failed (http ${res.status})`)
+  const body: unknown = await res.json()
+  const first = (body && typeof body === "object" ? (body as { results?: unknown[] }).results?.[0] : null) as {
+    type?: unknown
+    error?: { message?: unknown }
+    response?: { result?: { rows?: unknown[] } }
+  } | null
+  if (!first || first.type !== "ok") {
+    throw new Error(`production schema read error: ${String(first?.error?.message ?? "unknown")}`)
+  }
+  const rows = Array.isArray(first.response?.result?.rows) ? first.response.result.rows : []
+  return keepObjects(rows.map((row) => {
+    const cells = Array.isArray(row) ? row : []
+    return {
+      type: hranaCell(cells[0]),
+      name: hranaCell(cells[1]),
+      tbl: hranaCell(cells[2]),
+      sql: hranaCell(cells[3]) || "NULL",
+    }
+  }))
+}
 
 export async function readTest(exec: ReturnType<typeof testDbExec>): Promise<Obj[]> {
   const { rows } = await exec("SELECT type, name, tbl_name AS tbl, sql FROM sqlite_master")
@@ -88,11 +115,13 @@ export async function readTest(exec: ReturnType<typeof testDbExec>): Promise<Obj
 }
 
 async function main(check: boolean): Promise<number> {
-  const url = await cli("db", "show", TEST_DB, "--url")
-  const token = await cli("db", "tokens", "create", TEST_DB, "-e", "1d")
+  const prodToken = (process.env.TURSO_AUTH_TOKEN ?? "").trim()
+  const url = process.env.TURSO_TEST_URL || `https://${TEST_HOST}`
+  const token = (process.env.TURSO_TEST_AUTH_TOKEN ?? "").trim()
+  if (!token) throw new Error("TURSO_TEST_AUTH_TOKEN is required to reach tls-sqld-test")
+  const prod = await readProd(prodToken)
   const exec = testDbExec(url, token)
   await exec("SELECT 1")
-  const prod = await readProd()
   const plan = syncPlan(prod, await readTest(exec))
   const subset = subsetSql(prod)
   const subsetOk = norm(subset) === norm(await Bun.file(SUBSET_FILE).text().catch(() => ""))

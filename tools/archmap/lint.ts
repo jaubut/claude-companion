@@ -6,17 +6,19 @@ import { walk, rel, resolveRoot } from "./adapters/shared"
 // Boundary lint: file caps + import rules from archmap.json. Pure — the CLI
 // prints and sets the exit code.
 //
-// Caps ratchet: a module over cap FAILS only if it is new or grew past the
-// size recorded in the baseline map (the base branch's architecture.json).
-// Pre-existing debt is reported as `legacy` and never blocks — so the lint
-// can go into CI of a brownfield repo on day one and only stops files from
-// getting worse. Import rules always fail. `test` modules (sized in the map
-// for drift checks) are out of both: adding them must not flip any CI red.
+// Only import rules block. Line counts never decide the exit status: every
+// cap finding is a warning with the count, and the growth vs the baseline map
+// (the base branch's architecture.json) when the file was already over —
+// `cap` for a new crossing or growth, `cap-legacy` for pre-existing debt that
+// did not grow — so reviewers judge the split. `test` modules (sized in the
+// map for drift checks) are out of both caps and rules.
+// Split rule (baseline only, warns): a new numbered/part/misc file beside a
+// stem — the detail says whether the stem shrank or vanished since the baseline.
 
 export interface LintIssue {
   target: string
   module: string
-  rule: string       // "cap" | "cap-legacy" | the rule's `why`
+  rule: string       // "cap" | "cap-legacy" | "split" | the rule's `why`
   detail: string
   blocking: boolean
 }
@@ -35,17 +37,54 @@ function matchesAny(path: string, globs: string[]): string | null {
   return null
 }
 
+export const SPLIT_HINT = "split by responsibility into modules named for their concern; do not compact, reformat, strip comments or chunk into numbered/part/misc files"
+
+// foo-2.ts, foo_part.ts, foo-misc.ts ... → "foo". Separator required so http2/oauth2/sha256 never match.
+// rest/utils can name a real concern (client-rest.ts), so they only ever warn.
+const GRAB_BAG = /^(.+?)[-_](\d+|part\d*|misc|extra|more|rest|utils)$/i
+const AMBIGUOUS = /^(?:rest|utils)$/i
+
+function grabBagStem(path: string): { stem: string; ambiguous: boolean } | null {
+  const m = /^(.*\/)?([^/]+?)(\.[^./]+)$/.exec(path)
+  const hit = m && GRAB_BAG.exec(m[2]!)
+  return hit ? { stem: `${m![1] ?? ""}${hit[1]}${m![3]}`, ambiguous: AMBIGUOUS.test(hit[2]!) } : null
+}
+
 export function lint(map: ArchMap, cfg: RepoConfig, baseline?: ArchMap | null): LintIssue[] {
   const issues: LintIssue[] = []
   const baseLines = new Map<string, number>()
   for (const t of baseline?.targets ?? []) for (const m of t.modules) baseLines.set(`${t.name}/${m.path}`, m.lines)
+  // Grab-bag splits need a baseline to know what is new; without one, skip.
+  // Evidence of a split (the stem existed in the baseline and shrank or was
+  // removed) and a name-only match (client-rest.ts beside an untouched
+  // client.ts) both warn; the detail tells them apart.
+  if (baseline) for (const t of map.targets) {
+    const now = new Map(t.modules.map((m) => [m.path, m.lines]))
+    for (const m of t.modules) {
+      if (m.kind === "test" || baseLines.has(`${t.name}/${m.path}`)) continue
+      const hit = grabBagStem(m.path)
+      if (!hit) continue
+      const { stem, ambiguous } = hit
+      const before = baseLines.get(`${t.name}/${stem}`)
+      const after = now.get(stem)
+      if (before === undefined && after === undefined) continue
+      const shrank = before !== undefined && (after === undefined || after < before)
+      const split = shrank && !ambiguous
+      issues.push({
+        target: t.name, module: m.path, rule: "split", blocking: false,
+        detail: split ? `new grab-bag split of ${stem}: ${SPLIT_HINT}`
+          : shrank ? `possible grab-bag split of ${stem} (ambiguous suffix): ${SPLIT_HINT}`
+          : `possible grab-bag split of ${stem} (name only; ${stem} did not shrink): ${SPLIT_HINT}`,
+      })
+    }
+  }
   for (const t of map.targets) for (const m of t.modules) {
     if (m.lines <= t.cap || m.kind === "test") continue
     const prev = baseLines.get(`${t.name}/${m.path}`)
     const legacy = prev !== undefined && prev > t.cap && m.lines <= prev
     issues.push({
-      target: t.name, module: m.path, rule: legacy ? "cap-legacy" : "cap", blocking: !legacy,
-      detail: legacy ? `${m.lines} lines > cap ${t.cap} (legacy, ${prev} in baseline)` : prev !== undefined && prev > t.cap ? `${m.lines} lines > cap ${t.cap}, grew from ${prev}` : `${m.lines} lines > cap ${t.cap}`,
+      target: t.name, module: m.path, rule: legacy ? "cap-legacy" : "cap", blocking: false,
+      detail: legacy ? `${m.lines} lines > cap ${t.cap} (legacy, ${prev} in baseline)` : prev !== undefined && prev > t.cap ? `${m.lines} lines > cap ${t.cap}, grew from ${prev}; ${SPLIT_HINT}` : `${m.lines} lines > cap ${t.cap}; ${SPLIT_HINT}`,
     })
   }
   for (const rule of cfg.rules ?? []) {

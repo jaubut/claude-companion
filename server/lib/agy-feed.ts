@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
-import { appendFeedEvent, type FeedEvent } from "./feed"
+import { appendFeedEvent, getFeed, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { listSessions, recordSession } from "./sessions"
+import { getSessionByKey, listSessions, recordSession } from "./sessions"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
 import { withPickerIO } from "./keyboard-inject"
@@ -13,10 +13,25 @@ import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
 
+export const AGY_BRAIN_KEY = "gemini:brain"
+export const AGY_BRAIN_PANE = "headless:agy-brain"
+export const AGY_BRAIN_TASK_ID = "agy-brain"
+export const DEFAULT_AGY_BRAIN_MODEL = "gemini-pro-orchestrator"
+
+export interface AgyBrainState {
+  sessionId: string
+  model: string
+  boost: boolean
+  cwd: string
+  title: string
+  updatedAt: number
+}
+
 const POLL_MS = 1_500
 const THREAD_WINDOW_MS = 24 * 60 * 60 * 1_000
 const MAX_CONVERSATIONS = 10
-const INITIAL_EVENTS_PER_CONVERSATION = 60
+const INITIAL_EVENTS_PER_CONVERSATION = 120
+const FIRST_READ_TAIL_BYTES = 512 * 1024
 const TAIL_BYTES = 2 * 1024 * 1024
 
 export interface AgyConversationSummary {
@@ -36,6 +51,7 @@ interface AgyTranscriptStep {
   created_at?: string
   content?: string
   thinking?: string
+  truncated_fields?: string[]
   tool_calls?: Array<{
     name?: string
     args?: Record<string, unknown>
@@ -54,6 +70,52 @@ export function agyTranscriptPath(sessionId: string, home = homedir()): string {
   return join(agyRootDir(home), "brain", sessionId, ".system_generated", "logs", "transcript.jsonl")
 }
 
+export function agyFullTranscriptPath(sessionId: string, home = homedir()): string {
+  return join(agyRootDir(home), "brain", sessionId, ".system_generated", "logs", "transcript_full.jsonl")
+}
+
+function deriveFullTranscriptPath(transcriptPath: string | undefined, sessionId: string, home = homedir()): string {
+  if (transcriptPath) {
+    if (transcriptPath.endsWith("/transcript.jsonl")) {
+      return join(dirname(transcriptPath), "transcript_full.jsonl")
+    }
+    const sibling = transcriptPath.replace(/\.jsonl$/, "_full.jsonl")
+    if (sibling !== transcriptPath && existsSync(sibling)) return sibling
+    const dirFull = join(dirname(transcriptPath), "transcript_full.jsonl")
+    if (existsSync(dirFull)) return dirFull
+  }
+  return agyFullTranscriptPath(sessionId, home)
+}
+
+function resolveTruncatedAgyStep(
+  step: AgyTranscriptStep,
+  sessionId: string,
+  transcriptPath?: string,
+  home = homedir(),
+): AgyTranscriptStep {
+  const hasTruncatedFields = Array.isArray(step.truncated_fields) && step.truncated_fields.length > 0
+  const hasInlineTruncation = typeof step.content === "string" && step.content.includes("<truncated ")
+  if (!hasTruncatedFields && !hasInlineTruncation) return step
+  if (typeof step.step_index !== "number") return step
+
+  const fullPath = deriveFullTranscriptPath(transcriptPath, sessionId, home)
+  if (!existsSync(fullPath)) return step
+
+  const needle = `"step_index":${step.step_index},`
+  const tailLines = readTailLines(fullPath, TAIL_BYTES)
+  for (let i = tailLines.length - 1; i >= 0; i--) {
+    const line = tailLines[i]
+    if (!line || !line.includes(needle)) continue
+    try {
+      const fullStep = JSON.parse(line) as AgyTranscriptStep
+      if (fullStep.step_index === step.step_index) {
+        return fullStep
+      }
+    } catch { /* ignore */ }
+  }
+  return step
+}
+
 export function readAgyModel(home = homedir()): string {
   try {
     const raw = readFileSync(join(agyRootDir(home), "settings.json"), "utf8")
@@ -65,12 +127,104 @@ export function readAgyModel(home = homedir()): string {
   return "Gemini 4 Argon (Medium)"
 }
 
+export function agyBrainStatePath(home = homedir()): string {
+  return join(home, ".claude", "state", "agy-brain.json")
+}
+
+export function readAgyBrainState(home = homedir()): AgyBrainState {
+  const path = agyBrainStatePath(home)
+  const fallback: AgyBrainState = {
+    sessionId: "",
+    model: DEFAULT_AGY_BRAIN_MODEL,
+    boost: false,
+    cwd: home,
+    title: "⚡ Brain · Boost",
+    updatedAt: 0,
+  }
+  if (!existsSync(path)) return fallback
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<AgyBrainState>
+    return {
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId.trim() : "",
+      model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : DEFAULT_AGY_BRAIN_MODEL,
+      boost: typeof parsed.boost === "boolean" ? parsed.boost : false,
+      cwd: typeof parsed.cwd === "string" && parsed.cwd.trim() ? parsed.cwd.trim() : home,
+      title: "⚡ Brain · Boost",
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+export function writeAgyBrainState(patch: Partial<AgyBrainState>, home = homedir()): AgyBrainState {
+  const current = readAgyBrainState(home)
+  const next: AgyBrainState = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
+  }
+  const path = agyBrainStatePath(home)
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify(next, null, 2))
+  } catch { /* best-effort */ }
+  return next
+}
+
+export function getAgyBrainModel(home = homedir()): string {
+  return readAgyBrainState(home).model
+}
+
+export function setAgyBrainModel(model: string, home = homedir()): void {
+  const trimmed = model.trim()
+  if (!trimmed) return
+  writeAgyBrainState({ model: trimmed }, home)
+}
+
+export function getAgyBrainBoost(home = homedir()): boolean {
+  return readAgyBrainState(home).boost
+}
+
+export function setAgyBrainBoost(boost: boolean, home = homedir()): void {
+  writeAgyBrainState({ boost }, home)
+}
+
+export function normalizeAgyCliModelFlag(raw: string): string {
+  const trimmed = raw.trim()
+  const lower = trimmed.toLowerCase()
+  const map: Record<string, string> = {
+    "orchestrator (carbon)": "gemini-pro-orchestrator",
+    "orchestrator": "gemini-pro-orchestrator",
+    "gemini-pro-orchestrator": "gemini-pro-orchestrator",
+    "orchestrator (argon)": "gemini-pro-orchestrator-argon",
+    "gemini-pro-orchestrator-argon": "gemini-pro-orchestrator-argon",
+    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high",
+    "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
+    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium",
+    "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
+    "gemini 4 carbon (high)": "gemini-4-carbon-high",
+    "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
+    "gemini 4 carbon (low)": "gemini-4-carbon-low",
+    "gemini 4 argon (high)": "gemini-4-argon-high",
+    "gemini 4 argon (medium)": "gemini-4-argon-medium",
+    "gemini 4 argon (low)": "gemini-4-argon-low",
+    "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
+    "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
+    "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
+  }
+  return map[lower] ?? trimmed
+}
+
 export function extractAgyUserPrompt(rawContent: unknown): string | null {
   if (typeof rawContent !== "string") return null
   const m = rawContent.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i)
-  const text = (m ? m[1] ?? "" : rawContent).trim()
+  let text = (m ? m[1] ?? "" : rawContent).trim()
   if (!text || text.startsWith("<") || text.startsWith("[Request interrupted")) return null
-  return text
+  if (/^\/boost\s+\S/i.test(text)) {
+    text = text.replace(/^\/boost\s+/i, "").trim()
+  }
+  return text || null
 }
 
 function unquoteArgVal(v: unknown): unknown {
@@ -119,25 +273,57 @@ function normalizeAgyToolArgs(raw: Record<string, unknown> | undefined): Record<
   return out
 }
 
+interface PendingAgyTool {
+  name: string
+  summary: string
+}
+
+const pendingToolsBySession = new Map<string, PendingAgyTool[]>()
+
+function parseAgyToolDurationMs(content: string): number {
+  const createdMatch = content.match(/Created At:\s*([^\n\r]+)/)
+  const completedMatch = content.match(/Completed At:\s*([^\n\r]+)/)
+  if (createdMatch?.[1] && completedMatch?.[1]) {
+    const startMs = Date.parse(createdMatch[1].trim())
+    const endMs = Date.parse(completedMatch[1].trim())
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+      return Math.max(1, endMs - startMs)
+    }
+  }
+  return 120
+}
+
 export function parseAgyTranscriptLine(
   line: string,
   ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
   fallbackSessionId: string,
+  pendingTools?: PendingAgyTool[],
+  opts?: { transcriptPath?: string; home?: string },
 ): FeedEvent[] {
   if (!line.trim()) return []
-  let step: AgyTranscriptStep
+  let rawStep: AgyTranscriptStep
   try {
-    step = JSON.parse(line) as AgyTranscriptStep
+    rawStep = JSON.parse(line) as AgyTranscriptStep
   } catch {
     return []
   }
-  const stepIdx = typeof step.step_index === "number" ? step.step_index : -1
+  const stepIdx = typeof rawStep.step_index === "number" ? rawStep.step_index : -1
   if (stepIdx < 0) return []
-  const ts = Date.parse(step.created_at ?? "") || Date.now()
   const sid = ident.sessionId || fallbackSessionId
+  const step = resolveTruncatedAgyStep(rawStep, sid, opts?.transcriptPath, opts?.home)
+  const ts = Date.parse(step.created_at ?? "") || Date.now()
   const idBase = `agy:${sid}:${stepIdx}`
+  const toolQueue = pendingTools ?? (() => {
+    let q = pendingToolsBySession.get(sid)
+    if (!q) {
+      q = []
+      pendingToolsBySession.set(sid, q)
+    }
+    return q
+  })()
 
   if (step.type === "USER_INPUT") {
+    toolQueue.length = 0
     const text = extractAgyUserPrompt(step.content)
     if (!text) return []
     return [{
@@ -150,6 +336,7 @@ export function parseAgyTranscriptLine(
   }
 
   if (step.type === "PLANNER_RESPONSE") {
+    toolQueue.length = 0
     const out: FeedEvent[] = []
     if (typeof step.thinking === "string" && step.thinking.trim()) {
       out.push({
@@ -161,19 +348,22 @@ export function parseAgyTranscriptLine(
       })
     }
     const askedQuestions: QuestionItem[] = []
+    const toolCount = Array.isArray(step.tool_calls) ? step.tool_calls.length : 0
     if (Array.isArray(step.tool_calls)) {
       step.tool_calls.forEach((tc, idx) => {
         const rawName = typeof tc?.name === "string" && tc.name.trim() ? tc.name.trim() : "tool"
         const name = rawName.replace(/^default_api:/, "")
         const args = normalizeAgyToolArgs(tc?.args)
+        const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         if (isQuestionTool(name)) {
           const qs = parseQuestionInput(args)
           if (qs) askedQuestions.push(...qs)
+        } else {
+          toolQueue.push({ name, summary })
         }
-        const summary = summarize(name, args) || (typeof args.toolSummary === "string" ? args.toolSummary.trim() : "")
         out.push({
           id: `${idBase}:tool:${idx}`,
-          ts,
+          ts: ts + 1 + idx,
           kind: "tool_start",
           tool: name,
           summary,
@@ -190,7 +380,7 @@ export function parseAgyTranscriptLine(
     if (combinedText) {
       out.push({
         id: `${idBase}:text`,
-        ts,
+        ts: ts + 2 + toolCount,
         kind: "assistant_text",
         text: clampLong(combinedText, 64_000),
         ...ident,
@@ -200,25 +390,6 @@ export function parseAgyTranscriptLine(
   }
 
   if (step.type === "GENERIC" && typeof step.content === "string") {
-    if (step.content.includes("Command output:")) {
-      const outIdx = step.content.indexOf("Command output:")
-      const rawOut = step.content.slice(outIdx + "Command output:".length).trim()
-      const errored = /Command exited with code [1-9]/.test(step.content)
-      const res = extractToolResult("run_command", rawOut)
-      if (res.excerpt || errored) {
-        return [{
-          id: `${idBase}:tool_end`,
-          ts,
-          kind: "tool_end",
-          tool: "run_command",
-          summary: "",
-          outputExcerpt: res.excerpt,
-          errored: errored || res.errored,
-          ...ident,
-        }]
-      }
-      return []
-    }
     const answerLines = step.content
       .split("\n")
       .map((l) => l.trim())
@@ -232,9 +403,84 @@ export function parseAgyTranscriptLine(
         ...ident,
       }]
     }
+    const isBackgroundTask = step.content.includes("Tool is running as a background task")
+    const isToolOutput = isBackgroundTask || step.content.startsWith("Created At:") || step.content.includes("Command output:")
+    if (isToolOutput) {
+      const shifted = toolQueue.shift()
+      const toolName = shifted?.name ?? ((isBackgroundTask || step.content.includes("Command output:")) ? "run_command" : "tool")
+      const toolSummary = shifted?.summary ?? ""
+      const durationMs = parseAgyToolDurationMs(step.content)
+      if (isBackgroundTask || step.status === "RUNNING") {
+        return [{
+          id: `${idBase}:tool_end`,
+          ts,
+          kind: "tool_end",
+          tool: toolName,
+          summary: toolSummary,
+          durationMs,
+          outputExcerpt: "Running in background",
+          errored: false,
+          ...ident,
+        }]
+      }
+      if (step.content.includes("Command output:")) {
+        const outIdx = step.content.indexOf("Command output:")
+        const rawOut = step.content.slice(outIdx + "Command output:".length).trim()
+        const errored = /Command exited with code [1-9]/.test(step.content)
+        const res = extractToolResult("run_command", rawOut)
+        return [{
+          id: `${idBase}:tool_end`,
+          ts,
+          kind: "tool_end",
+          tool: toolName,
+          summary: toolSummary,
+          durationMs,
+          outputExcerpt: res.excerpt,
+          errored: errored || res.errored,
+          ...ident,
+        }]
+      }
+      return [{
+        id: `${idBase}:tool_end`,
+        ts,
+        kind: "tool_end",
+        tool: toolName,
+        summary: toolSummary,
+        durationMs,
+        errored: step.status === "ERROR",
+        ...ident,
+      }]
+    }
   }
 
   return []
+}
+
+function enforceMonotonicTimestamps(events: FeedEvent[]): FeedEvent[] {
+  let lastTs = -Infinity
+  for (const ev of events) {
+    if (ev.ts <= lastTs) {
+      ev.ts = lastTs + 1
+    }
+    lastTs = ev.ts
+  }
+  return events
+}
+
+function selectInitialAgyEvents(events: FeedEvent[], maxEvents = INITIAL_EVENTS_PER_CONVERSATION): FeedEvent[] {
+  if (events.length <= maxEvents) return events
+  const conversationalIndices = new Set<number>()
+  for (let i = events.length - 1; i >= 0 && conversationalIndices.size < 40; i--) {
+    const kind = events[i]?.kind
+    if (kind === "user_prompt" || kind === "assistant_text") {
+      conversationalIndices.add(i)
+    }
+  }
+  const keepIndices = new Set<number>(conversationalIndices)
+  for (let i = events.length - 1; i >= 0 && keepIndices.size < maxEvents; i--) {
+    keepIndices.add(i)
+  }
+  return events.filter((_, idx) => keepIndices.has(idx))
 }
 
 export function eventsFromAgyTranscript(path: string, s: HistorySession, tailBytes = TAIL_BYTES): FeedEvent[] {
@@ -245,11 +491,12 @@ export function eventsFromAgyTranscript(path: string, s: HistorySession, tailByt
     ...(s.tty ? { tty: s.tty } : {}),
     sessionId: s.sessionId,
   }
+  const pendingTools: PendingAgyTool[] = []
   const out: FeedEvent[] = []
   for (const line of readTailLines(path, tailBytes)) {
-    out.push(...parseAgyTranscriptLine(line, ident, s.sessionId))
+    out.push(...parseAgyTranscriptLine(line, ident, s.sessionId, pendingTools, { transcriptPath: path }))
   }
-  return out
+  return enforceMonotonicTimestamps(out)
 }
 
 function firstWorkspacePath(workspaceUrisJson: string): string {
@@ -286,12 +533,76 @@ function isEphemeralSubagentTranscript(sessionId: string, home: string): boolean
   return false
 }
 
+export function inferAgyTranscriptStatus(sessionId: string, home = homedir(), dbBusy = false): "busy" | "idle" {
+  const path = agyTranscriptPath(sessionId, home)
+  if (!existsSync(path)) return dbBusy ? "busy" : "idle"
+  try {
+    const tail = readTailLines(path, 32 * 1024)
+    const steps: AgyTranscriptStep[] = []
+    for (let i = Math.max(0, tail.length - 16); i < tail.length; i++) {
+      const l = tail[i]?.trim()
+      if (!l) continue
+      try {
+        const s = JSON.parse(l) as AgyTranscriptStep
+        if (typeof s.step_index === "number") steps.push(s)
+      } catch { /* ignore */ }
+    }
+    if (steps.length === 0) return dbBusy ? "busy" : "idle"
+    const lastStep = resolveTruncatedAgyStep(steps[steps.length - 1]!, sessionId, path, home)
+    const lastTs = Date.parse(lastStep.created_at ?? "") || 0
+    const isRecent = lastTs === 0 || Date.now() - lastTs <= 90_000
+
+    // If the last step is a completed PLANNER_RESPONSE:
+    // - with no non-question tool_calls, the turn is finished/idle (even if earlier backgrounded tools in the turn had status:"RUNNING")
+    // - with non-question tool_calls, those tools are currently executing if recent
+    if (lastStep.type === "PLANNER_RESPONSE" && lastStep.status === "DONE") {
+      const nonQuestionTools = (lastStep.tool_calls ?? []).filter((tc) => {
+        const name = (typeof tc?.name === "string" ? tc.name : "").replace(/^default_api:/, "")
+        return name.length > 0 && !isQuestionTool(name)
+      })
+      if (nonQuestionTools.length === 0) {
+        return "idle"
+      }
+      return isRecent ? "busy" : "idle"
+    }
+
+    if (!isRecent) {
+      return "idle"
+    }
+
+    if (lastStep.status === "RUNNING") {
+      const isBackgroundTask = lastStep.type === "GENERIC"
+        && typeof lastStep.content === "string"
+        && lastStep.content.includes("Tool is running as a background task")
+      if (!isBackgroundTask) {
+        return "busy"
+      }
+    }
+
+    if (lastStep.type === "USER_INPUT" || lastStep.type === "GENERIC") {
+      return "busy"
+    }
+
+    return dbBusy ? "busy" : "idle"
+  } catch {
+    return dbBusy ? "busy" : "idle"
+  }
+}
+
+function openAgySummariesDb(dbPath: string): Database {
+  try {
+    return new Database(dbPath)
+  } catch {
+    return new Database(dbPath, { readonly: true })
+  }
+}
+
 export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_WINDOW_MS): AgyConversationSummary[] {
   const dbPath = agySummariesDbPath(home)
   if (!existsSync(dbPath)) return []
   const cutoff = Date.now() - windowMs
   try {
-    const db = new Database(dbPath, { readonly: true })
+    const db = openAgySummariesDb(dbPath)
     try {
       db.exec("PRAGMA busy_timeout = 2500;")
       const rows = db.query(`
@@ -310,12 +621,13 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
         if (updatedAtMs < cutoff) continue
         const trimmedTitle = (r.title || "").trim()
         if (!trimmedTitle && isEphemeralSubagentTranscript(r.id, home)) continue
-        const busy = Boolean(r.notFullyIdle) || r.status === "CASCADE_RUN_STATUS_RUNNING"
+        const dbBusy = Boolean(r.notFullyIdle) || r.status === "CASCADE_RUN_STATUS_RUNNING"
+        const status = inferAgyTranscriptStatus(r.id, home, dbBusy)
         out.push({
           id: r.id,
           title: trimmedTitle || "Antigravity Session",
           cwd: firstWorkspacePath(r.workspaceUris),
-          status: busy ? "busy" : "idle",
+          status,
           updatedAtMs,
           stepCount: Number(r.stepCount) || 0,
         })
@@ -337,10 +649,17 @@ const offsets = new Map<string, number>()
 const raisedAgyQuestions = new Map<string, string>()
 let timer: ReturnType<typeof setInterval> | null = null
 
+export function resetAgyFeedStateForTests(): void {
+  offsets.clear()
+  pendingToolsBySession.clear()
+  raisedAgyQuestions.clear()
+}
+
 export function syncAgyOpenQuestion(
   lines: string[],
   convo: AgyConversationSummary,
   ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+  home = homedir(),
 ): void {
   let lastStep: AgyTranscriptStep | null = null
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -349,7 +668,7 @@ export function syncAgyOpenQuestion(
     try {
       const parsed = JSON.parse(l) as AgyTranscriptStep
       if (typeof parsed.step_index === "number") {
-        lastStep = parsed
+        lastStep = resolveTruncatedAgyStep(parsed, convo.id, agyTranscriptPath(convo.id, home), home)
         break
       }
     } catch { /* ignore */ }
@@ -386,21 +705,69 @@ export function syncAgyOpenQuestion(
   ).then(async (answers) => {
     if (raisedAgyQuestions.get(convo.id) === qId) raisedAgyQuestions.delete(convo.id)
     if (answers.length === 0) return
-    const ttySession = listSessions().find((s) => s.sessionId === convo.id && (s.tty || s.tmuxPane))
-      ?? listSessions().find((s) => s.agent === "gemini" && (s.tty || s.tmuxPane))
+    const exactSession = listSessions().find((s) => s.sessionId === convo.id)
+    const isExplicitHeadless = exactSession?.herdrPane?.startsWith("headless:") === true
+    const ttySession = isExplicitHeadless
+      ? undefined
+      : (listSessions().find((s) => s.sessionId === convo.id && (s.tty || s.tmuxPane))
+        ?? listSessions().find((s) => s.agent === "gemini" && (s.tty || s.tmuxPane)))
     if (ttySession) {
       await withPickerIO(
         { tty: ttySession.tty, tmuxPane: ttySession.tmuxPane, tmuxSocket: ttySession.tmuxSocket, termProgram: ttySession.termProgram, iTermSessionId: ttySession.iTermSessionId },
         (io) => driveQuestionPicker(io, questions, answers),
       )
+    } else if (exactSession?.taskId === AGY_BRAIN_TASK_ID || exactSession?.herdrPane === AGY_BRAIN_PANE) {
+      deliverHeadlessAgyBrainTurn({
+        prompt: formatAgyQuestionAnswers(questions, answers),
+        cwd,
+        boost: false,
+        home,
+      })
     } else {
-      deliverHeadlessAgyTurn({ sessionId: convo.id, cwd, prompt: formatAgyQuestionAnswers(questions, answers) })
+      deliverHeadlessAgyTurn({
+        sessionId: convo.id,
+        cwd,
+        prompt: formatAgyQuestionAnswers(questions, answers),
+        model: exactSession?.model,
+        home,
+      })
     }
   })
 }
 
+const activeAgyProcs = new Set<string>()
+
+export function isAgyBrainRunning(): boolean {
+  return activeAgyProcs.has(AGY_BRAIN_KEY)
+}
+
+export function ensureAgyBrainSession(home = homedir()) {
+  if (!existsSync(agyRootDir(home))) return null
+  const state = readAgyBrainState(home)
+  const existing = getSessionByKey(AGY_BRAIN_KEY)
+  const sid = state.sessionId || existing?.sessionId || AGY_BRAIN_TASK_ID
+  const running = activeAgyProcs.has(AGY_BRAIN_KEY)
+  const inferredStatus = running
+    ? "busy"
+    : (sid !== AGY_BRAIN_TASK_ID ? inferAgyTranscriptStatus(sid, home, false) : "idle")
+  return recordSession({
+    agent: "gemini",
+    cwd: state.cwd || home,
+    sessionId: sid,
+    herdrPane: AGY_BRAIN_PANE,
+    taskId: AGY_BRAIN_TASK_ID,
+    title: "⚡ Brain · Boost",
+    label: "⚡ Brain · Boost",
+    firstSeenAt: existing?.firstSeenAt ?? (state.updatedAt || undefined),
+    agentStatus: inferredStatus,
+    model: state.model || DEFAULT_AGY_BRAIN_MODEL,
+    pid: String(process.pid),
+  }, { provisional: true, sessionIdConfirmed: true })
+}
+
 export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
   if (!timer) {
+    ensureAgyBrainSession(home)
     void pollAgyOnce(home)
     timer = setInterval(() => { void pollAgyOnce(home) }, POLL_MS)
     if (typeof (timer as unknown as { unref?: () => void }).unref === "function") {
@@ -417,12 +784,30 @@ export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
 }
 
 async function pollAgyOnce(home = homedir()): Promise<void> {
+  const brainSession = ensureAgyBrainSession(home)
+  const brainState = readAgyBrainState(home)
   const convos = readRecentAgyConversations(home)
-  if (convos.length === 0) return
 
   const agyModel = readAgyModel(home)
   const currentSessions = listSessions()
   for (const c of convos.slice(0, 5)) {
+    if (brainState.sessionId && c.id === brainState.sessionId) {
+      if (brainSession) {
+        const nextStatus = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : c.status
+        const nextTitle = "⚡ Brain · Boost"
+        if (brainSession.agentStatus !== nextStatus || brainSession.title !== nextTitle) {
+          recordSession({
+            ...brainSession,
+            sessionId: c.id,
+            title: nextTitle,
+            label: "⚡ Brain · Boost",
+            agentStatus: nextStatus,
+            model: brainState.model || DEFAULT_AGY_BRAIN_MODEL,
+          }, { provisional: true, sessionIdConfirmed: true })
+        }
+      }
+      continue
+    }
     const ttyOwner = currentSessions.find((s) => s.sessionId === c.id && !!s.tty)
     if (ttyOwner) {
       if (ttyOwner.agentStatus !== c.status || (c.title && ttyOwner.title !== c.title)) {
@@ -453,42 +838,133 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
   }
 
   const events: FeedEvent[] = []
+  const polledIds = new Set<string>()
   for (const c of convos) {
+    polledIds.add(c.id)
     events.push(...readAgyTranscriptDelta(c, home))
+  }
+  if (brainState.sessionId && !polledIds.has(brainState.sessionId) && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
+    const status = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(brainState.sessionId, home, false)
+    events.push(...readAgyTranscriptDelta({
+      id: brainState.sessionId,
+      title: "⚡ Brain · Boost",
+      cwd: brainState.cwd || home,
+      status,
+      updatedAtMs: Date.now(),
+      stepCount: 1,
+    }, home))
+  }
+  if (brainState.sessionId && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
+    const childIds = discoverChildSubagentIds(brainState.sessionId, home)
+    for (const childId of childIds) {
+      const childEvents = readAgyTranscriptDelta(
+        {
+          id: childId,
+          title: "⚡ Brain · Boost",
+          cwd: brainState.cwd || home,
+          status: activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(childId, home, false),
+          updatedAtMs: Date.now(),
+          stepCount: 1,
+        },
+        home,
+        { key: AGY_BRAIN_KEY, cwd: brainState.cwd || home, sessionId: brainState.sessionId },
+      )
+      for (const ev of childEvents) {
+        if (ev.kind === "tool_start" || ev.kind === "tool_end" || ev.kind === "assistant_thinking") {
+          events.push(ev)
+        }
+      }
+    }
   }
   events.sort((a, b) => a.ts - b.ts)
   for (const ev of events) appendFeedEvent(ev)
 }
 
-function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir()): FeedEvent[] {
+export function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string[] {
+  const found: string[] = []
+  const visited = new Set<string>([rootConvoId])
+  const queue: Array<{ id: string; depth: number }> = [{ id: rootConvoId, depth: 0 }]
+  while (queue.length > 0) {
+    const item = queue.shift()!
+    if (item.depth >= 2) continue
+    const path = agyTranscriptPath(item.id, home)
+    if (!existsSync(path)) continue
+    try {
+      const raw = readTailLines(path, 32 * 1024).join("\n")
+      const matches = raw.matchAll(/\\"conversationId\\":\s*\\"([0-9a-fA-F-]{36})\\"/g)
+      for (const m of matches) {
+        const cid = m[1]
+        if (cid && !visited.has(cid) && existsSync(agyTranscriptPath(cid, home))) {
+          visited.add(cid)
+          found.push(cid)
+          queue.push({ id: cid, depth: item.depth + 1 })
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return found
+}
+
+function isDuplicateInjectedUserPrompt(
+  ev: FeedEvent,
+  convoId: string,
+  ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+): boolean {
+  if (ev.kind !== "user_prompt") return false
+  const text = (ev.text ?? "").trim().replace(/^\/boost\s+/i, "").trim()
+  if (!text) return false
+  const feed = getFeed()
+  for (let i = feed.length - 1; i >= 0; i--) {
+    const existing = feed[i]!
+    if (existing.kind !== "user_prompt") continue
+    if (existing.id.startsWith("agy:") || existing.id.startsWith("tx:")) continue
+    const sameSession =
+      existing.sessionId === convoId ||
+      (Boolean(ident.key) && existing.key === ident.key) ||
+      (Boolean(ident.tty) && existing.tty === ident.tty)
+    if (!sameSession) continue
+    const existingClean = (existing.text ?? "").trim().replace(/^\/boost\s+/i, "").trim()
+    if (existingClean !== text) continue
+    if (Math.abs(existing.ts - ev.ts) > 120_000) continue
+    if (!existing.sessionId || existing.sessionId === AGY_BRAIN_TASK_ID) existing.sessionId = convoId
+    if (ident.key && !existing.key) existing.key = ident.key
+    return true
+  }
+  return false
+}
+
+export function readAgyTranscriptDelta(
+  convo: AgyConversationSummary,
+  home = homedir(),
+  identOverride?: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+): FeedEvent[] {
   const path = agyTranscriptPath(convo.id, home)
   if (!existsSync(path)) return []
 
   const session = listSessions().find((s) => s.sessionId === convo.id)
-  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = {
+    ?? (readAgyBrainState(home).sessionId === convo.id ? getSessionByKey(AGY_BRAIN_KEY) : undefined)
+  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = identOverride ?? {
     key: session?.key,
     cwd: session?.cwd || convo.cwd,
     ...(session?.tty ? { tty: session.tty } : {}),
     sessionId: convo.id,
   }
 
-  let raw: string
+  let size = 0
   try {
-    raw = readFileSync(path, "utf8")
+    size = statSync(path).size
   } catch {
     return []
   }
 
-  let start = offsets.get(path) ?? 0
-  if (raw.length < start) start = 0
-
-  let end = raw.length
-  if (!raw.endsWith("\n")) {
-    const lastNewline = raw.lastIndexOf("\n")
-    if (lastNewline < start) return []
-    end = lastNewline + 1
+  const firstRead = !offsets.has(path)
+  let start = offsets.get(path) ?? Math.max(0, size - FIRST_READ_TAIL_BYTES)
+  if (size < start) {
+    start = Math.max(0, size - FIRST_READ_TAIL_BYTES)
   }
-  if (end <= start) {
+
+  if (size <= start) {
+    offsets.set(path, size)
     if (convo.status === "idle" && ident.key) {
       clearExternalSessionActivity({
         cwd: ident.cwd ?? "",
@@ -501,34 +977,38 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
     return []
   }
 
-  const firstRead = start === 0
-  const chunk = raw.slice(start, end)
-  offsets.set(path, end)
-
-  const body = chunk.endsWith("\n") ? chunk.slice(0, -1) : chunk
-  if (!body) return []
-
-  const lines = firstRead ? body.split("\n").slice(-120) : body.split("\n")
-  const out: FeedEvent[] = []
-  for (const line of lines) {
-    out.push(...parseAgyTranscriptLine(line, ident, convo.id))
+  const readLen = size - start
+  const buf = Buffer.allocUnsafe(readLen)
+  let bytesRead = 0
+  try {
+    const fd = openSync(path, "r")
+    try {
+      bytesRead = readSync(fd, buf, 0, readLen, start)
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return []
   }
-  syncAgyOpenQuestion(lines, convo, ident)
-  if (!firstRead && ident.key) {
-    const lastTool = [...out].reverse().find((e) => e.kind === "tool_start")
-    const hasFinalReply = out.some((e) => e.kind === "assistant_text") && !lastTool
-    if (lastTool && convo.status === "busy") {
-      syncExternalToolActivity({
-        verb: verbFor(lastTool.tool ?? "tool"),
-        tool: lastTool.tool ?? "tool",
-        summary: lastTool.summary ?? "",
-        cwd: ident.cwd ?? "",
-        sessionId: ident.sessionId,
-        tty: ident.tty,
-        transcriptPath: path,
-        sessionKey: ident.key,
-      })
-    } else if (convo.status === "idle" || hasFinalReply) {
+  if (bytesRead <= 0) return []
+
+  const slice = buf.subarray(0, bytesRead)
+  const lastNl = slice.lastIndexOf(0x0a)
+  if (lastNl < 0) return []
+
+  const effectiveEnd = start + lastNl + 1
+  offsets.set(path, effectiveEnd)
+
+  let bodySlice = slice.subarray(0, lastNl)
+  if (firstRead && start > 0) {
+    const firstNl = bodySlice.indexOf(0x0a)
+    if (firstNl < 0) return []
+    bodySlice = bodySlice.subarray(firstNl + 1)
+  }
+
+  const body = bodySlice.toString("utf8")
+  if (!body.trim()) {
+    if (convo.status === "idle" && ident.key) {
       clearExternalSessionActivity({
         cwd: ident.cwd ?? "",
         sessionId: ident.sessionId,
@@ -537,11 +1017,55 @@ function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir())
         sessionKey: ident.key,
       })
     }
+    return []
   }
-  return firstRead ? out.slice(-INITIAL_EVENTS_PER_CONVERSATION) : out
+
+  const allLines = body.split("\n")
+  const lines = firstRead ? allLines.slice(-250) : allLines
+  const out: FeedEvent[] = []
+  for (const line of lines) {
+    const stepEvents = parseAgyTranscriptLine(line, ident, convo.id, undefined, { transcriptPath: path, home })
+    for (const ev of stepEvents) {
+      if (!firstRead && isDuplicateInjectedUserPrompt(ev, convo.id, ident)) {
+        continue
+      }
+      out.push(ev)
+    }
+  }
+  enforceMonotonicTimestamps(out)
+  syncAgyOpenQuestion(lines, convo, ident, home)
+  if (ident.key) {
+    const lastStatusEvent = [...out].reverse().find(
+      (e) => e.kind === "tool_start" || e.kind === "tool_end" || e.kind === "assistant_text",
+    )
+    if (convo.status === "idle" || lastStatusEvent?.kind === "assistant_text") {
+      clearExternalSessionActivity({
+        cwd: ident.cwd ?? "",
+        sessionId: ident.sessionId,
+        tty: ident.tty,
+        transcriptPath: path,
+        sessionKey: ident.key,
+      })
+    } else if (!firstRead && convo.status === "busy" && lastStatusEvent?.kind === "tool_start") {
+      syncExternalToolActivity({
+        verb: verbFor(lastStatusEvent.tool ?? "tool"),
+        tool: lastStatusEvent.tool ?? "tool",
+        summary: lastStatusEvent.summary ?? "",
+        cwd: ident.cwd ?? "",
+        sessionId: ident.sessionId,
+        tty: ident.tty,
+        transcriptPath: path,
+        sessionKey: ident.key,
+      })
+    }
+  }
+  return firstRead ? selectInitialAgyEvents(out, INITIAL_EVENTS_PER_CONVERSATION) : out
 }
 
 export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, home = homedir()) {
+  if (lookup === AGY_BRAIN_KEY || lookup === AGY_BRAIN_TASK_ID || lookup === AGY_BRAIN_PANE) {
+    return ensureAgyBrainSession(home)
+  }
   if (!lookup.startsWith("gemini:sid:")) return null
   const sid = lookup.slice("gemini:sid:".length).trim()
   if (!sid || !existsSync(agyTranscriptPath(sid, home))) return null
@@ -559,29 +1083,206 @@ export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, h
   }, { provisional: true, sessionIdConfirmed: true })
 }
 
+export function buildHeadlessAgyArgs(opts: {
+  prompt: string
+  sessionId?: string
+  model?: string
+  boost?: boolean
+  hasExistingTranscript?: boolean
+}): string[] {
+  const trimmed = opts.prompt.trim()
+  const effectivePrompt = opts.boost && !trimmed.startsWith("/")
+    ? `/boost ${trimmed}`
+    : trimmed
+  const args = ["-p", effectivePrompt]
+  if (opts.sessionId && opts.sessionId !== AGY_BRAIN_TASK_ID && (opts.hasExistingTranscript ?? true)) {
+    args.push("--conversation", opts.sessionId)
+  }
+  if (opts.model && opts.model.trim()) {
+    args.push("--model", normalizeAgyCliModelFlag(opts.model))
+  }
+  args.push("--output-format", "stream-json", "--dangerously-skip-permissions")
+  return args
+}
+
+export function deliverHeadlessAgyBrainTurn(opts: {
+  prompt: string
+  cwd?: string
+  model?: string
+  boost?: boolean
+  home?: string
+}): boolean {
+  const home = opts.home ?? homedir()
+  const state = readAgyBrainState(home)
+  const trimmed = opts.prompt.trim()
+  if (!trimmed) return false
+
+  if (/^\/(clear|new|reset)\b/i.test(trimmed)) {
+    writeAgyBrainState({ sessionId: "", title: "⚡ Brain · Boost" }, home)
+    ensureAgyBrainSession(home)
+    appendFeedEvent({
+      id: `agy-brain:reset:${Date.now()}`,
+      ts: Date.now(),
+      kind: "assistant_text",
+      text: "Started a fresh Gemini Orchestrator + `/boost` session.",
+      key: AGY_BRAIN_KEY,
+      cwd: state.cwd || home,
+      sessionId: AGY_BRAIN_TASK_ID,
+    })
+    return true
+  }
+
+  if (/^\/boost\s+(on|off)\s*$/i.test(trimmed)) {
+    const enable = /^\/boost\s+on\s*$/i.test(trimmed)
+    setAgyBrainBoost(enable, home)
+    ensureAgyBrainSession(home)
+    return true
+  }
+
+  const effectiveModel = opts.model || state.model || DEFAULT_AGY_BRAIN_MODEL
+  const effectiveBoost = opts.boost ?? state.boost
+  const effectiveCwd = opts.cwd || state.cwd || home
+
+  return deliverHeadlessAgyTurn({
+    sessionId: state.sessionId,
+    cwd: effectiveCwd,
+    prompt: trimmed,
+    model: effectiveModel,
+    boost: effectiveBoost,
+    isBrain: true,
+    sessionKey: AGY_BRAIN_KEY,
+    home,
+  })
+}
+
 export function deliverHeadlessAgyTurn(opts: {
   sessionId: string
   cwd: string
   prompt: string
+  model?: string
+  boost?: boolean
+  isBrain?: boolean
+  sessionKey?: string
+  home?: string
 }): boolean {
+  const home = opts.home ?? homedir()
+  const hasExistingTranscript = Boolean(
+    opts.sessionId &&
+    opts.sessionId !== AGY_BRAIN_TASK_ID &&
+    existsSync(agyTranscriptPath(opts.sessionId, home)),
+  )
+  const args = buildHeadlessAgyArgs({
+    prompt: opts.prompt,
+    sessionId: opts.sessionId,
+    model: opts.model,
+    boost: opts.boost,
+    hasExistingTranscript,
+  })
+  const sessionKey = opts.sessionKey || (opts.isBrain ? AGY_BRAIN_KEY : `gemini:sid:${opts.sessionId}`)
+  const cwd = opts.cwd || home
+
   try {
-    const proc = Bun.spawn([
-      "agy",
-      "-p",
-      opts.prompt,
-      "--conversation",
-      opts.sessionId,
-      "--output-format",
-      "stream-json",
-      "--dangerously-skip-permissions",
-    ], {
-      cwd: opts.cwd || homedir(),
-      stdout: "ignore",
+    const proc = Bun.spawn(["agy", ...args], {
+      cwd,
+      stdout: "pipe",
       stderr: "ignore",
     })
+    activeAgyProcs.add(sessionKey)
+    let activeSid = hasExistingTranscript ? opts.sessionId : (opts.sessionId || AGY_BRAIN_TASK_ID)
+
+    if (opts.isBrain) {
+      const state = readAgyBrainState(home)
+      recordSession({
+        agent: "gemini",
+        cwd,
+        sessionId: activeSid,
+        herdrPane: AGY_BRAIN_PANE,
+        taskId: AGY_BRAIN_TASK_ID,
+        title: state.title || "Brain · Boost",
+        label: "Brain · Boost",
+        agentStatus: "busy",
+        model: opts.model || state.model || DEFAULT_AGY_BRAIN_MODEL,
+        pid: String(process.pid),
+      }, { provisional: true, sessionIdConfirmed: true })
+    }
+
+    syncExternalToolActivity({
+      verb: opts.boost ? "Orchestrating" : "Thinking",
+      tool: opts.boost ? "boost" : "gemini",
+      summary: opts.boost ? "Gemini Orchestrator · /boost" : (opts.model || "Antigravity"),
+      cwd,
+      sessionId: activeSid,
+      sessionKey,
+    })
+
+    if (proc.stdout && typeof proc.stdout !== "number") {
+      const reader = proc.stdout.getReader()
+      const decoder = new TextDecoder()
+      void (async () => {
+        let buf = ""
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const lines = buf.split("\n")
+            buf = lines.pop() ?? ""
+            for (const line of lines) {
+              const trimmedLine = line.trim()
+              if (!trimmedLine.startsWith("{")) continue
+              try {
+                const ev = JSON.parse(trimmedLine) as {
+                  event?: string
+                  conversation_id?: string
+                  step_update?: { conversation_id?: string; step_type?: string }
+                }
+                const cid = ev.conversation_id || ev.step_update?.conversation_id
+                if (cid && cid !== activeSid) {
+                  activeSid = cid
+                  if (opts.isBrain) {
+                    writeAgyBrainState({ sessionId: cid, title: "⚡ Brain · Boost", model: opts.model || DEFAULT_AGY_BRAIN_MODEL, cwd }, home)
+                    recordSession({
+                      agent: "gemini",
+                      cwd,
+                      sessionId: cid,
+                      herdrPane: AGY_BRAIN_PANE,
+                      taskId: AGY_BRAIN_TASK_ID,
+                      title: "⚡ Brain · Boost",
+                      label: "⚡ Brain · Boost",
+                      agentStatus: "busy",
+                      model: opts.model || DEFAULT_AGY_BRAIN_MODEL,
+                      pid: String(process.pid),
+                    }, { provisional: true, sessionIdConfirmed: true })
+                  }
+                }
+                if (ev.event === "step_update" || ev.event === "result") {
+                  void pollAgyOnce(home)
+                }
+              } catch { /* ignore malformed line */ }
+            }
+          }
+        } catch { /* stream closed */ } finally {
+          activeAgyProcs.delete(sessionKey)
+          void pollAgyOnce(home)
+          clearExternalSessionActivity({
+            cwd,
+            sessionId: activeSid,
+            transcriptPath: agyTranscriptPath(activeSid, home),
+            sessionKey,
+          })
+          if (opts.isBrain) {
+            ensureAgyBrainSession(home)
+          }
+        }
+      })()
+    } else {
+      activeAgyProcs.delete(sessionKey)
+    }
+
     proc.unref()
     return true
   } catch {
+    activeAgyProcs.delete(sessionKey)
     return false
   }
 }

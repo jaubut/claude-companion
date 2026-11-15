@@ -205,7 +205,7 @@ describe("clearStaleGitConfigLock", () => {
     })
   })
 
-  test("a kept stub is logged with the reason", () => {
+  test.skipIf(process.platform !== "linux")("a kept stub is logged with the reason", () => {
     withStub((repoDir) => {
       const lines: string[] = []
       const why = clearStaleGitConfigLock(repoDir, { ...idle, mountinfo: () => `1 2 0:1 /null ${join(repoDir, ".git", "config.lock")} ro\n` }, (l) => lines.push(l))

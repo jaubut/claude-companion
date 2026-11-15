@@ -570,5 +570,16 @@ export function clearExternalSessionActivity(args: {
   const s = stateFor(args)
   s.toolStarts.clear()
   clearActivity(s, args.sessionKey)
+  for (const other of activeStates()) {
+    if (other === s || !other.activity) continue
+    if (
+      (args.sessionKey && other.activity.key === args.sessionKey)
+      || (args.sessionId && other.sessionId === args.sessionId)
+      || (args.tty && other.tty === args.tty)
+    ) {
+      other.toolStarts.clear()
+      clearActivity(other, args.sessionKey)
+    }
+  }
   stopPollIfIdle()
 }

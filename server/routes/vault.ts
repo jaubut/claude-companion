@@ -1,6 +1,6 @@
 import { checkBearerHeaderOnly, unauthorized } from "../lib/auth"
 import { companionLog } from "../lib/log"
-import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, revealSecret, setSecretHosts, upsertSecret, validName, vaultWritable } from "../lib/secret-store"
+import { type AuditOrigin, REVEAL_FORBIDDEN, type RevealResult, type VaultResult, deleteSecret, listSecrets, mirrorEnvFiles, revealSecret, setSecretHosts, storePath, upsertSecret, validHosts, validName, validValue, vaultWritable } from "../lib/secret-store"
 import { type Limiter, clientOrigin, peerOf, readLimiter, requestLimiter, revealLimiter, writeLimiter } from "../lib/vault-guard"
 import { createRequest, declineRequest, fulfilRequest, getRequest, listRequests, type Outcome } from "../lib/secret-requests"
 import { HOP_HEADER, type UpstreamConfig, type UpstreamReply, forwardVault, vaultUpstream } from "../lib/vault-upstream"
@@ -92,7 +92,16 @@ async function forward(req: Request, up: UpstreamConfig, isCollection: boolean, 
   if (!isCollection && !validName(name)) return json({ ok: false, error: "bad_name", message: "NOM en MAJUSCULES_ET_CHIFFRES (2–64)" }, 400)
   const body = req.method === "DELETE" ? undefined : await readJson(req)
   if (req.method !== "DELETE" && !body) return json({ ok: false, error: "bad_json" }, 400)
-  return passthrough(await forwardVault(up, req.method, isCollection ? "/api/vault" : `/api/vault/${name}`, device, body ?? undefined))
+  const r = await forwardVault(up, req.method, isCollection ? "/api/vault" : `/api/vault/${name}`, device, body ?? undefined)
+  if (r.status >= 200 && r.status < 300 && !process.env.TLS_SECRETS_FILE) {
+    if (isCollection && req.method === "POST" && body && validName(body.name) && validValue(body.value)) {
+      const hosts = validHosts(body.hosts) ? body.hosts : []
+      mirrorEnvFiles(storePath(), "updated", body.name, hosts, body.value)
+    } else if (!isCollection && req.method === "DELETE" && validName(name)) {
+      mirrorEnvFiles(storePath(), "deleted", name, [])
+    }
+  }
+  return passthrough(r)
 }
 
 // Gates 1–2 + hop guard already passed. Value only ever in the returned body.

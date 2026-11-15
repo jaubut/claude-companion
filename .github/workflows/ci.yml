@@ -76,4 +76,4 @@ jobs:
 
       - name: Point at the usual suspect
         if: failure()
-        run: echo '::notice title=Generic "query failed"?::turso.ts hides SQL errors by design. tls-test or server/lib/turso-test-schema.sql may be behind the code; run bun scripts/turso-test-schema.ts from a host with a turso login.'
+        run: echo '::notice title=Generic "query failed"?::turso.ts hides SQL errors by design. tls-sqld-test or server/lib/turso-test-schema.sql may be behind the code; run bun scripts/turso-test-schema.ts.'

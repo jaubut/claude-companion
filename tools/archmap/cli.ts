@@ -8,8 +8,9 @@
 // see adapters/featuremap.ts; feature → routes → API → files index, see features.ts).
 // --check: exit 1 if the committed map is stale (JSON differs, timestamp aside) or FEATUREMAP.md /
 //          featuremap.json is (or is a generated one whose target was removed — a regenerate deletes it).
-// --lint:  exit 1 on import-rule violations, cap growth vs the baseline map,
-//          or a vendored copy that differs from its `mirrors[]` dir (see lint.ts). Both may be combined; neither writes files.
+// --lint:  exit 1 on import-rule violations or a vendored copy that differs from its `mirrors[]` dir;
+//          file cap findings (line counts, growth vs the baseline map) only warn (see lint.ts).
+//          Both may be combined; neither writes files.
 // --fleet: aggregate every roster repo's COMMITTED map by external package into
 //          <out.json> (see fleet.ts). Needs no repo argument; scans nothing.
 // Unknown flags exit 2 — a typo must not fall through to a full regenerate.
@@ -139,8 +140,7 @@ if (doLint) {
   // regenerate -> lint, which leaves architecture.json on disk already
   // describing the change being linted; using that as the baseline compares
   // the change against itself, so a file this change just pushed OVER the cap
-  // reads as "legacy" and does not block. That is the one thing the ratchet
-  // exists to catch. Falls back to the working tree when there is no git, no
+  // reads as "legacy" and its warning hides the growth. Falls back to the working tree when there is no git, no
   // commit yet, or the map is untracked.
   const basePathFlag = flagValue("--baseline")
   let baselineText: string | null = null
@@ -155,7 +155,7 @@ if (doLint) {
     }
   }
   let baseline: ArchMap | null = null
-  try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → every over-cap module blocks */ }
+  try { baseline = baselineText ? (JSON.parse(baselineText) as ArchMap) : null } catch { /* no baseline → over-cap modules warn without growth */ }
   // ponytail: missing selectors warn, never block; ratchet them like caps if they keep growing.
   const noSelector = featureMaps.flatMap((fm) => {
     const n = [...fm.shell, ...fm.pages].filter((f) => !f.selector).length
@@ -163,7 +163,7 @@ if (doLint) {
   })
   const issues = [...lint(map, cfg, baseline), ...mirrorDrift(cfg, repo), ...noSelector]
   const blocking = issues.filter((i) => i.blocking)
-  if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} legacy\n${formatIssues(issues)}`)
+  if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} warnings\n${formatIssues(issues)}`)
   else if (!quiet) console.log("archmap: lint clean")
   if (blocking.length) failed = true
 }
