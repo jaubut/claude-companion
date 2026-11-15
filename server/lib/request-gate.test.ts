@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { hostname, networkInterfaces } from "node:os"
 import { getAuthToken } from "./auth"
 import { recordPeer } from "./vault-guard"
-import { hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf } from "./request-gate"
+import { funnelRequestAllowed, hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf } from "./request-gate"
 
 // Every /hooks/* route the server answers (routes/hooks.ts, brain.ts, gauge.ts, copy-jobs.ts).
 const HOOK_PATHS = [
@@ -99,5 +99,14 @@ test("browser-originated hook calls are refused even from loopback or with the B
     expect(hookCallerAllowed(hookReq(path, "100.64.0.9", { ...bearer, origin: "https://evil.example" }))).toBe(false)
     expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "none" }))).toBe(true)
     expect(hookCallerAllowed(hookReq(path, "127.0.0.1", { "sec-fetch-site": "same-origin" }))).toBe(true)
+  }
+})
+
+test("funnelRequestAllowed admits public Funnel traffic ONLY on /webhooks/github", () => {
+  const funnel = { "tailscale-funnel-request": "?1" }
+  expect(funnelRequestAllowed(new Request("http://127.0.0.1:4245/webhooks/github", { method: "POST", headers: funnel }), "/webhooks/github")).toBe(true)
+  for (const path of ["/", "/health", "/ws", "/api/sessions", "/api/mcp/workers", "/hooks/stop", "/webhooks/other"]) {
+    expect([path, funnelRequestAllowed(new Request(`http://127.0.0.1:4245${path}`, { headers: funnel }), path)]).toEqual([path, false])
+    expect([path, funnelRequestAllowed(new Request(`http://127.0.0.1:4245${path}`), path)]).toEqual([path, true])
   }
 })

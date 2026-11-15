@@ -2,6 +2,7 @@ import { checkBearer, checkBearerHeaderOnly, unauthorized } from "./lib/auth"
 import { BadJsonBody } from "./lib/json-body"
 import { type WsData, HOST_INFO, broadcast, clientBuild, clientInfo } from "./state"
 import "./wiring/events"
+import { GITHUB_WEBHOOK_PATH, handleGithubWebhookRoute } from "./routes/github-webhook"
 import { handleHookRoute } from "./routes/hooks"
 import { deliverInject, handleApiRoute } from "./routes/api"
 import { handleOrchestratorRoute } from "./routes/orchestrator"
@@ -34,7 +35,7 @@ import { tursoQuery } from "./lib/turso"
 import { canvasPickNotify, canvasSend, canvasStatus, canvasStore, referencesFor, setCanvasDeliver } from "./wiring/canvas"
 import { startDesignStateWatcher, syncDesignStateFromCanvasPick } from "./wiring/design-state"
 import { keyCommandGate, originLabel, recordPeer } from "./lib/vault-guard"
-import { hookCallerAllowed, hostAllowed, watchTailscaleName } from "./lib/request-gate"
+import { funnelRequestAllowed, hookCallerAllowed, hostAllowed, watchTailscaleName } from "./lib/request-gate"
 import { websocket } from "./ws"
 import { disableAutoSelectFamily } from "./lib/apns"
 import { waitForFirstDiscovery } from "./lib/discover"
@@ -99,6 +100,10 @@ export function createCompanionServer(port: number) {
       // TCP peer for the vault's network gate and the resolve/WS audit log
       // (routes only get req + url). Weak map: dies with the Request.
       recordPeer(req, server.requestIP(req)?.address)
+      // Public Tailscale Funnel requests may only hit the signature-verified webhook route.
+      if (!funnelRequestAllowed(req, url.pathname)) {
+        return Response.json({ ok: false, error: "forbidden_funnel" }, { status: 403 })
+      }
 
       // ── Auth gate ──
       // Hooks endpoints are called by local Claude Code shell scripts on the
@@ -128,6 +133,8 @@ export function createCompanionServer(port: number) {
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
       // bin/media downloads and decodes a video: up to ~120 s (lib/link-media.ts).
       if (url.pathname === "/hooks/brain/media") server.timeout(req, 150)
+      // First-time git clone during GitHub webhook dispatch can exceed 10 s.
+      if (url.pathname === GITHUB_WEBHOOK_PATH) server.timeout(req, 60)
 
       // ── Public liveness probe ──
       // Used by the hook scripts to skip the 300s wait when the server is
@@ -184,7 +191,7 @@ export function createCompanionServer(port: number) {
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
       try {
-        for (const route of [handleWorkerBlockedRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleDesignStateRoute, handleCanvasRoute]) {
+        for (const route of [handleWorkerBlockedRoute, handleGithubWebhookRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleDesignStateRoute, handleCanvasRoute]) {
           const handled = await route(req, url)
           if (handled) return handled
         }

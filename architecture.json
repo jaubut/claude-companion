@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 211,
+          "lines": 218,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -76,6 +76,7 @@
             "lib/auth.ts",
             "lib/json-body.ts",
             "state.ts",
+            "routes/github-webhook.ts",
             "routes/hooks.ts",
             "routes/api.ts",
             "routes/orchestrator.ts",
@@ -2268,6 +2269,38 @@
           "externals": []
         },
         {
+          "path": "lib/github-webhook.ts",
+          "lines": 261,
+          "kind": "lib",
+          "exports": [
+            "TargetHost",
+            "GithubIssueDispatch",
+            "GithubWebhookAction",
+            "githubWebhookSecretPath",
+            "getGithubWebhookSecret",
+            "verifyGithubSignature",
+            "buildGithubIssueTaskId",
+            "allowedWebhookOwners",
+            "parseGithubWebhookEvent",
+            "buildGithubIssuePrompt"
+          ],
+          "state": [
+            "TRIGGER_ACTIONS: Set",
+            "SKIP_LABELS: Set",
+            "REDISPATCH_LABELS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/handoff-claim.ts",
           "lines": 57,
           "kind": "lib",
@@ -4276,14 +4309,15 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 86,
+          "lines": 96,
           "kind": "lib",
           "exports": [
             "hostAllowed",
             "tailscaleNameOf",
             "refreshTailscaleName",
             "watchTailscaleName",
-            "hookCallerAllowed"
+            "hookCallerAllowed",
+            "funnelRequestAllowed"
           ],
           "state": [
             "NAMES: Set",
@@ -7250,6 +7284,31 @@
           "externals": []
         },
         {
+          "path": "routes/github-webhook.ts",
+          "lines": 66,
+          "kind": "lib",
+          "exports": [
+            "GithubWebhookRouteDeps",
+            "GITHUB_WEBHOOK_PATH",
+            "createGithubWebhookRoute",
+            "handleGithubWebhookRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/github-webhook.ts",
+            "state.ts",
+            "wiring/github-webhook.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/goals.ts",
           "lines": 214,
           "kind": "route-host",
@@ -8822,6 +8881,35 @@
           "externals": []
         },
         {
+          "path": "wiring/github-webhook.ts",
+          "lines": 220,
+          "kind": "lib",
+          "exports": [
+            "McpToolOutcome",
+            "GithubWebhookDispatcherDeps",
+            "GithubWebhookResult",
+            "createGithubWebhookDispatcher",
+            "GithubWebhookDispatcher",
+            "githubWebhookDispatcher"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/github-webhook.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/worker-supervisor.ts",
+            "state.ts",
+            "wiring/worker-mcp.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/media.ts",
           "lines": 37,
           "kind": "lib",
@@ -9619,9 +9707,11 @@
           "callers": [
             "companion-server.ts",
             "routes/api.ts#* /api/status",
+            "routes/github-webhook.ts",
             "wiring/body-agent.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
@@ -9795,6 +9885,12 @@
             "companion-server.ts"
           ]
         },
+        "funnelRequestAllowed": {
+          "module": "lib/request-gate.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "hookCallerAllowed": {
           "module": "lib/request-gate.ts",
           "callers": [
@@ -9810,6 +9906,7 @@
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
+            "routes/github-webhook.ts",
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/worker-mcp.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers"
@@ -9820,6 +9917,7 @@
           "callers": [
             "companion-server.ts#* /ws",
             "routes/brain.ts",
+            "routes/github-webhook.ts",
             "routes/records.ts",
             "routes/vault.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers"
@@ -9829,6 +9927,12 @@
           "module": "routes/capture.ts",
           "callers": [
             "companion-server.ts#* /ws"
+          ]
+        },
+        "GITHUB_WEBHOOK_PATH": {
+          "module": "routes/github-webhook.ts",
+          "callers": [
+            "companion-server.ts#* /hooks/brain/media"
           ]
         },
         "waitForFirstDiscovery": {
@@ -10023,6 +10127,12 @@
         },
         "handleGaugeRoute": {
           "module": "routes/gauge.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleGithubWebhookRoute": {
+          "module": "routes/github-webhook.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10552,6 +10662,7 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/front-door.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/pane-mirror.ts",
             "wiring/repo-view.ts",
@@ -12197,6 +12308,39 @@
             "lib/front-door.ts"
           ]
         },
+        "WorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "TASK_ID_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts"
+          ]
+        },
+        "SAFE_IDENTIFIER_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "REPO_NAME_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts",
+            "routes/brain.ts"
+          ]
+        },
         "herdrGateKey": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -12562,6 +12706,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
+            "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
@@ -14928,28 +15073,12 @@
             "lib/worker-pr-link.ts"
           ]
         },
-        "TASK_ID_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-pr-link.ts",
-            "lib/worker-supervisor.ts",
-            "lib/worker-task-store.ts"
-          ]
-        },
-        "REPO_NAME_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-pr-link.ts",
-            "lib/worker-supervisor.ts",
-            "lib/worker-task-store.ts",
-            "routes/brain.ts"
-          ]
-        },
         "SupervisedTaskSnapshot": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
             "lib/worker-progress-trace.ts",
             "lib/worker-task-store.ts",
+            "wiring/github-webhook.ts",
             "wiring/worker-mcp.ts"
           ]
         },
@@ -15000,12 +15129,6 @@
             "wiring/events.ts"
           ]
         },
-        "SAFE_IDENTIFIER_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "ALLOWED_MODES": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15013,12 +15136,6 @@
           ]
         },
         "ALLOWED_FAMILIES": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "WorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -15518,7 +15635,8 @@
           "module": "wiring/worker-mcp.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "routes/model.ts#POST /api/model/set"
+            "routes/model.ts#POST /api/model/set",
+            "wiring/github-webhook.ts"
           ]
         },
         "deliverHeadlessAgyTurn": {
@@ -16288,6 +16406,30 @@
           "module": "lib/gauge.ts",
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
+        "GithubWebhookDispatcher": {
+          "module": "wiring/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "githubWebhookDispatcher": {
+          "module": "wiring/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "getGithubWebhookSecret": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "verifyGithubSignature": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
           ]
         },
         "removeSessionByKey": {
@@ -17337,7 +17479,8 @@
         "workerMcp": {
           "module": "wiring/worker-mcp.ts",
           "callers": [
-            "routes/worker-mcp.ts"
+            "routes/worker-mcp.ts",
+            "wiring/github-webhook.ts"
           ]
         },
         "CompactTarget": {
@@ -17417,6 +17560,7 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
+            "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/triage.ts",
@@ -18632,6 +18776,36 @@
           "module": "lib/gauge.ts",
           "callers": [
             "wiring/gauge.ts"
+          ]
+        },
+        "GithubIssueDispatch": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "GithubWebhookAction": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "buildGithubIssuePrompt": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "parseGithubWebhookEvent": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "DispatchTaskInput": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
           ]
         },
         "sweepMedia": {
