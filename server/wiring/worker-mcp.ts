@@ -7,9 +7,10 @@ import { appendTurn } from "../lib/orchestrator-chat"
 import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
+import { createWorkerProgressTrace, receiptText } from "../lib/worker-progress-trace"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
-import { getBrainDeliver } from "./brain"
+import { emitTrace, getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
@@ -59,6 +60,9 @@ export async function syncWorkerTaskToTurso(
   }
 }
 
+// The live progress card in the brain thread: brain_trace frames only, never a turn, so the brain isn't woken.
+const progressTrace = createWorkerProgressTrace({ host: HOST_INFO.name, now: Date.now, trace: emitTrace })
+
 // Live Inverted MCP worker supervisor & handler wired to Companion's BuilderJobStore and Session registry.
 export const workerSupervisor = createWorkerSupervisor({
   host: HOST_INFO.name,
@@ -88,14 +92,12 @@ export const workerSupervisor = createWorkerSupervisor({
     }
     void syncWorkerTaskToTurso(task)
   },
+  onTaskProgress: (task) => { if (brainEnabled()) progressTrace.update(task) },
   onTaskTerminal: (task) => {
     void syncWorkerTaskToTurso(task)
     if (!brainEnabled()) return
-    const text = task.status === "completed"
-      ? task.prUrl
-        ? `PR ready [${task.taskId}] ${task.repo} — ${task.prUrl}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-        : `completed [${task.taskId}] ${task.repo} — ${task.title}${task.result ? `\nResult: ${task.result.slice(0, 600)}` : ""}`
-      : `blocked [${task.taskId}] ${task.repo} — ${task.title}\nError: ${(task.error || "worker failed").slice(0, 400)}`
+    progressTrace.finish(task)
+    const text = receiptText(task)
     const leadTask = `${LEAD_PREFIX}${task.repo}`
     const leadSession = listSessions().find((s) => s.taskId === leadTask)
     const deliver = getBrainDeliver()
