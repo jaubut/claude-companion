@@ -2,19 +2,21 @@
 # brain-v2: file a dispatch proposal from the brain (POST /hooks/brain/propose).
 #
 #   bin/propose --turn <sourceTurnId> --note <projects/... note id> --title "<title>" \
-#               --prompt "<what the builder must do>" --why "<one line>" [--agent builder]
+#               --prompt "<what the builder must do>" --why "<one line>" [--agent builder] [--handoff --repo <repo>]
 #
 # It dispatches at once (filed `queued`, no Approve card); Jeremie sees a trace
 # line. A failed filing stays a proposal card he can tap.
 #
 # --handoff files the row and queues nothing: {"taskId":…,"origin":…} for a
 # builder session you hand the work to by relay (TASK <taskId>). The server sets
-# the origin from --turn.
+# the origin from --turn. With --repo <bare repo name> and origin jeremie it also
+# answers "claim": relay it with the task id; `bin/worker dispatch --claim` needs
+# it, or the worker's PR never links to the row (origin unknown).
 # Auth is the caller's identity: loopback only, X-Companion-Task-Id: brain and
 # the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail
 
-TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT="" HANDOFF=""
+TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT="" HANDOFF="" REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --turn) TURN="$2"; shift 2 ;;
@@ -24,6 +26,7 @@ while [ $# -gt 0 ]; do
     --why) WHY="$2"; shift 2 ;;
     --agent) AGENT="$2"; shift 2 ;;
     --handoff) HANDOFF=1; shift ;;
+    --repo) REPO="$2"; shift 2 ;;
     *) echo "propose: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -46,12 +49,13 @@ claude_pid() {
   echo "${PPID}"
 }
 
-BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" HANDOFF="$HANDOFF" python3 -c '
+BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" HANDOFF="$HANDOFF" REPO="$REPO" python3 -c '
 import json, os
 b = {"sourceTurnId": os.environ["TURN"], "noteId": os.environ["NOTE"], "prompt": os.environ["PROMPT"],
      "title": os.environ["TITLE"], "reasoning": os.environ["WHY"]}
 if os.environ["AGENT"]: b["agent"] = os.environ["AGENT"]
 if os.environ["HANDOFF"]: b["handoff"] = True
+if os.environ["REPO"]: b["repo"] = os.environ["REPO"]
 print(json.dumps(b))')
 
 curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/propose" \

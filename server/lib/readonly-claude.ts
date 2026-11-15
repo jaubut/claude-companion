@@ -31,14 +31,14 @@ export interface ReadonlySpec {
   disallowed: readonly string[]
 }
 
-export const SECRET_PATHS: readonly string[] = ["~/.config/tls-agent/**", "~/.claude-companion/auth.token", "~/.claude-companion/.env", "**/.env",
+export const SECRET_PATHS: readonly string[] = ["~/.config/tls-agent/**", "~/.claude-companion/auth.token", "~/.claude-companion/handoff-claim.keys", "~/.claude-companion/.env", "**/.env",
   "**/.env.*", "~/.ssh/**", "~/.claude/.credentials.json", "~/.aws/**", "~/.config/gh/**", "~/.netrc", "**/*.pem", "**/*.p8", "**/*.p12", "/proc/**"]
 
 /** Denied in every read-only run: writes, secret reads (Read or Bash), flags that turn a read into a write. */
 export const BASE_DISALLOWED: readonly string[] = [
   "Edit", "Write", "NotebookEdit",
   ...SECRET_PATHS.map((p) => `Read(${p})`),
-  "Bash(*tls-agent*)", "Bash(*.env*)", "Bash(*auth.token*)", "Bash(*credentials*)", "Bash(*.ssh/*)", "Bash(*environ*)", "Bash(*secrets*)",
+  "Bash(*tls-agent*)", "Bash(*.env*)", "Bash(*auth.token*)", "Bash(*handoff-claim*)", "Bash(*credentials*)", "Bash(*.ssh/*)", "Bash(*environ*)", "Bash(*secrets*)",
   "Bash(curl * -X*)", "Bash(curl * --request*)", "Bash(curl * -d*)", "Bash(curl * --data*)", "Bash(curl * -F*)", "Bash(curl * --form*)",
   "Bash(curl * -T*)", "Bash(curl * --upload*)", "Bash(curl * -o*)", "Bash(curl * -O*)", "Bash(curl * --output*)",
   "Bash(git *--output*)",

@@ -12,6 +12,7 @@ import { driveQuestionPicker } from "./question-driver"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
+import { scrubAgentEnv } from "./worker-invocation"
 
 export const AGY_BRAIN_KEY = "gemini:brain"
 export const AGY_BRAIN_PANE = "headless:agy-brain"
@@ -1184,6 +1185,9 @@ export function deliverHeadlessAgyTurn(opts: {
   try {
     const proc = Bun.spawn(["agy", ...args], {
       cwd,
+      // A headless agy worker turn gets the scrubbed env (no Turso/db/Companion tokens); the Brain · Boost
+      // orchestrator keeps the server env like the claude brain (wiring/brain-headless.ts).
+      ...(opts.isBrain ? {} : { env: scrubAgentEnv(process.env) }),
       stdout: "pipe",
       stderr: "ignore",
     })
