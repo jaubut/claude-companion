@@ -369,4 +369,20 @@ describe("transcript backfill", () => {
     expect(extractAgyUserPrompt("<USER_REQUEST>\n/boost Audit the Companion failover flow\n</USER_REQUEST>"))
       .toBe("Audit the Companion failover flow")
   })
+
+  test("Brain · Boost child subagents are discovered from escaped conversationIds in the root transcript tail", async () => {
+    const { agyTranscriptPath, discoverChildSubagentIds } = await import("./agy-feed")
+    const [root, child, grandchild, missing] = [
+      "11111111-1111-1111-1111-111111111111",
+      "22222222-2222-2222-2222-222222222222",
+      "33333333-3333-3333-3333-333333333333",
+      "44444444-4444-4444-4444-444444444444",
+    ]
+    const step = (cid: string) => JSON.stringify({ output: JSON.stringify({ conversationId: cid }) })
+    for (const [id, body] of [[root, `${step(child)}\n${step(missing)}\n`], [child, `${step(grandchild)}\n`], [grandchild, ""]] as const) {
+      mkdirSync(join(agyTranscriptPath(id, dir), ".."), { recursive: true })
+      writeFileSync(agyTranscriptPath(id, dir), body)
+    }
+    expect(discoverChildSubagentIds(root, dir)).toEqual([child, grandchild])
+  })
 })

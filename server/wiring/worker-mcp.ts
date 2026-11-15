@@ -11,9 +11,10 @@ import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
+import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
-import { getBrainDeliver } from "./brain"
+import { emitTrace, getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
@@ -67,6 +68,9 @@ export async function syncWorkerTaskToTurso(
   }
 }
 
+// The live progress card in the brain thread: brain_trace frames only, never a turn, so the brain isn't woken.
+const progressTrace = createWorkerProgressTrace({ host: HOST_INFO.name, now: Date.now, trace: emitTrace })
+
 // Live Inverted MCP worker supervisor & handler wired to Companion's BuilderJobStore and Session registry.
 export const workerSupervisor = createWorkerSupervisor({
   host: HOST_INFO.name,
@@ -100,8 +104,10 @@ export const workerSupervisor = createWorkerSupervisor({
   bindTask: (taskId, repo, claim) => bindWorkerTask(tursoExec, taskId, repo, claim),
   linkPr: (task, claim) => linkWorkerPr({ gh: realGh, exec: tursoExec }, { taskId: task.taskId, repo: task.repo, prUrl: task.prUrl ?? "", claim }, { deadlineMs: LINK_DEADLINE_MS })
     .then((outcome) => { companionLog(`[worker] ${task.taskId.slice(0, 8)} pr link ${task.prUrl}: ${outcome}`); return outcome }),
+  onTaskProgress: (task) => { if (brainEnabled()) progressTrace.update(task) },
   onTaskTerminal: (task, linkBound) => {
     void syncWorkerTaskToTurso(task, linkBound)
+    if (brainEnabled()) progressTrace.finish(task)
     notifyBrain(task)
   },
 })

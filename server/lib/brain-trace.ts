@@ -86,6 +86,8 @@ export const rowId = {
   lead: (name: string, turnId: string): string => `lead:${name}:${turnId}`,
   step: (toolUseId: string): string => `step:${toolUseId}`,
   worker: (proposalId: string): string => `worker:${proposalId}`,
+  /** A headless worker turn's live progress card (lib/worker-progress-trace.ts); jobId = taskId, or `<taskId>:t<n>` from turn 2. */
+  headless: (jobId: string): string => `headless:${jobId}`,
 }
 
 const TERMINAL = new Set<TraceStatus>(["done", "error"])

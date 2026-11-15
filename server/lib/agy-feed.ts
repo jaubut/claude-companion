@@ -881,7 +881,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
   for (const ev of events) appendFeedEvent(ev)
 }
 
-function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string[] {
+export function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string[] {
   const found: string[] = []
   const visited = new Set<string>([rootConvoId])
   const queue: Array<{ id: string; depth: number }> = [{ id: rootConvoId, depth: 0 }]

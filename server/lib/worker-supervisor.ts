@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
+import { clearStaleGitConfigLock } from "./git-config-lock"
 import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
@@ -54,6 +55,8 @@ export interface WorkerSupervisorDeps {
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   /** `linkBound`: the task holds a verified handoff claim, so it may write its Turso row (wiring's status sync). */
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
+  /** Any state change, plus every new step or summary while running (the brain thread's live card). */
+  onTaskProgress?(task: SupervisedTaskSnapshot): void
   onTaskTerminal?(task: SupervisedTaskSnapshot, linkBound: boolean): void
   /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
   bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
@@ -132,6 +135,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   function syncTaskSession(t: InternalTask): void {
     try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
+    try { deps.onTaskProgress?.(toSnapshot(t)) } catch { /* best effort */ }
   }
 
   function savePersistedTasks(): void {
@@ -231,19 +235,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
   }
 
-  /** Remove 0-byte read-only (0444) `.git/config.lock` mount stubs left behind by bwrap `--ro-bind /dev/null` on the host repo. */
-  function clearEmptyReadOnlyGitConfigLock(repoDir: string): void {
-    try {
-      const lock = join(repoDir, ".git", "config.lock")
-      const st = statSync(lock)
-      if (st.isFile() && st.size === 0 && (st.mode & 0o222) === 0) {
-        rmSync(lock, { force: true })
-      }
-    } catch { /* ignore */ }
-  }
+  for (const dir of new Set([...tasks.values()].map((t) => t.repoDir))) clearStaleGitConfigLock(dir)
 
   async function ensureWorktree(repoDir: string, repo: string, taskId: string, ownedByTask: boolean): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
-    clearEmptyReadOnlyGitConfigLock(repoDir)
+    clearStaleGitConfigLock(repoDir)
     const wtRoot = join(deps.home, "apps", "wt", repo)
     const worktree = join(wtRoot, taskId)
     const branch = `dispatch/${taskId}`
@@ -383,7 +378,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
-              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl
+              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl; const prevResult = task.result
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
@@ -396,6 +391,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
               if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
+              else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
@@ -403,7 +399,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (clean) { task.stderrTail.push(clean); if (task.stderrTail.length > 10) task.stderrTail.shift() }
             },
             onExit(code, sig) {
-              clearEmptyReadOnlyGitConfigLock(task.repoDir)
+              clearStaleGitConfigLock(task.repoDir)
               if (settled) return
               settled = true; resolveExit()
               if (task.activeTurn !== myTurn) return
@@ -535,7 +531,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let worktreeRemoved = false
         let note: string | undefined
         if (opts.closeWorktree && existsSync(t.worktree)) {
-          clearEmptyReadOnlyGitConfigLock(t.repoDir)
+          clearStaleGitConfigLock(t.repoDir)
           const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
           if (!statusRes.ok || statusRes.out.trim() !== "") {
             note = "worktree kept: uncommitted changes present"
