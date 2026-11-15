@@ -9,17 +9,24 @@ import { tursoExec } from "./turso"
 // The wall in front of production: the allowlist, the fetch wrap, and the bunfig preload that installs both.
 // No case here opens a socket to Turso: the fake URLs stop at the guard, the spy stands in for the network.
 
-const PROD = "tls-dashboard-jaubut.aws-us-east-1.turso.io"
+const LEGACY_PROD = "tls-dashboard-jaubut.aws-us-east-1.turso.io"
+const SQD_PROD = "tls-sqld-1016439101738.northamerica-northeast1.run.app"
 
-describe("testDbUrl: only the tls-test host passes", () => {
+describe("testDbUrl: only the tls-test host or loopback sqld passes", () => {
   for (const ok of [`libsql://${TEST_HOST}`, `https://${TEST_HOST}`, `https://${TEST_HOST}/`]) {
     test(`takes ${ok}`, () => expect(testDbUrl(ok)).toBe(`https://${TEST_HOST}`))
   }
+  for (const ok of ["http://127.0.0.1:18080", "http://127.0.0.1:18080/"]) {
+    test(`takes loopback ${ok}`, () => expect(testDbUrl(ok)).toBe("http://127.0.0.1:18080"))
+  }
   for (const bad of [
-    `libsql://${PROD}`, `https://${PROD}`, "https://other-jaubut.aws-us-east-1.turso.io",
+    `libsql://${LEGACY_PROD}`, `https://${LEGACY_PROD}`, `https://${SQD_PROD}`, `libsql://${SQD_PROD}`,
+    "https://other-jaubut.aws-us-east-1.turso.io", "https://cherrypik-sqld-1016439101738.northamerica-northeast1.run.app",
     `https://${TEST_HOST}.evil.example`, `https://evil.example/${TEST_HOST}`, `https://${TEST_HOST}@evil.example`,
     `https://user:pw@${TEST_HOST}`, `http://${TEST_HOST}`, `https://${TEST_HOST}:8080`, `https://${TEST_HOST}/v2/pipeline`,
-    `libsql://${TEST_HOST}?authToken=abc`, "http://127.0.0.1:8080", "file:local.db", "not a url", "", undefined,
+    `libsql://${TEST_HOST}?authToken=abc`, "http://127.0.0.1", "https://127.0.0.1:18080", "http://localhost:18080",
+    "http://127.0.0.1:18080/v2/pipeline", "http://127.0.0.1:18080?authToken=abc", "http://127.0.0.1:0", "http://127.0.0.1:65536",
+    "file:local.db", "not a url", "", undefined,
   ]) {
     test(`refuses ${bad}`, () => expect(() => testDbUrl(bad)).toThrow("refused"))
   }
@@ -27,10 +34,10 @@ describe("testDbUrl: only the tls-test host passes", () => {
   test("a refusal never repeats what it was given: a libsql URL can carry its token", () => {
     const secret = "ey-not-a-real-token"
     let msg = ""
-    try { testDbUrl(`libsql://${PROD}?authToken=${secret}`) } catch (e) { msg = (e as Error).message }
+    try { testDbUrl(`libsql://${LEGACY_PROD}?authToken=${secret}`) } catch (e) { msg = (e as Error).message }
     expect(msg).toContain("refused")
     expect(msg).not.toContain(secret)
-    expect(msg).not.toContain(PROD)
+    expect(msg).not.toContain(LEGACY_PROD)
   })
 })
 
@@ -52,22 +59,25 @@ describe("guardFetch", () => {
     }
   })
 
-  test("a Turso host other than tls-test never reaches the network, in any input form", async () => {
+  test("a Turso or Cloud Run host other than tls-test never reaches the network, in any input form", async () => {
     const f = guardFetch(spy)
-    for (const input of [`https://${PROD}/v2/pipeline`, `https://${PROD}./v2/pipeline`, new URL(`https://${PROD}/v2/pipeline`), new Request(`https://${PROD}/v2/pipeline`)]) {
-      await expect(f(input)).rejects.toThrow("refused")
+    for (const host of [LEGACY_PROD, SQD_PROD]) {
+      for (const input of [`https://${host}/v2/pipeline`, `https://${host}./v2/pipeline`, new URL(`https://${host}/v2/pipeline`), new Request(`https://${host}/v2/pipeline`)]) {
+        await expect(f(input)).rejects.toThrow("refused")
+      }
     }
     expect(seen).toHaveLength(0)
   })
 
   test("the preload wrapped fetch, and turso.ts has no transport around it", async () => {
-    await expect(fetch(`https://${PROD}/v2/pipeline`)).rejects.toThrow("refused")
+    await expect(fetch(`https://${LEGACY_PROD}/v2/pipeline`)).rejects.toThrow("refused")
+    await expect(fetch(`https://${SQD_PROD}/v2/pipeline`)).rejects.toThrow("refused")
     const src = await Bun.file(join(import.meta.dir, "turso.ts")).text()
     expect(src).toContain("await fetch(")
     expect(src).not.toMatch(/Bun\.fetch|node:https?|node:net|node:tls|Bun\.connect|new WebSocket/)
   })
 
-  test("tls-test and non-Turso hosts pass", async () => {
+  test("tls-test and loopback hosts pass", async () => {
     const f = guardFetch(spy)
     await f(`https://${TEST_HOST}/v2/pipeline`)
     await f("http://127.0.0.1:9/x")
@@ -127,10 +137,12 @@ describe("the bunfig preload", () => {
   }
 
   test("production's URL: refused before any test file loads", async () => {
-    const r = await run({ TURSO_TEST_URL: `libsql://${PROD}`, TURSO_TEST_AUTH_TOKEN: "dummy" })
-    expect(r.code).not.toBe(0)
-    expect(r.all).toContain("refused")
-    expect(r.all).not.toContain("FIXTURE-LOADED")
+    for (const url of [`libsql://${LEGACY_PROD}`, `https://${SQD_PROD}`]) {
+      const r = await run({ TURSO_TEST_URL: url, TURSO_TEST_AUTH_TOKEN: "dummy" })
+      expect(r.code).not.toBe(0)
+      expect(r.all).toContain("refused")
+      expect(r.all).not.toContain("FIXTURE-LOADED")
+    }
   }, 20_000)
 
   test("TURSO_TEST_REQUIRED with the vars missing: refused the same way", async () => {
@@ -141,7 +153,7 @@ describe("the bunfig preload", () => {
   }, 20_000)
 
   test("nothing set, not required: the suite runs, with production's env replaced", async () => {
-    const r = await run({ TURSO_AUTH_TOKEN: "looks-like-production", TURSO_DATABASE_URL: `libsql://${PROD}` })
+    const r = await run({ TURSO_AUTH_TOKEN: "looks-like-production", TURSO_DATABASE_URL: `libsql://${LEGACY_PROD}` })
     expect(r.code).toBe(0)
     expect(r.all).toContain("FIXTURE-LOADED")
     expect(r.all).toContain("REAL-FETCH test-token undefined")

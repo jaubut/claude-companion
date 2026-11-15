@@ -6081,7 +6081,7 @@
         },
         {
           "path": "lib/turso-test-guard.test-util.ts",
-          "lines": 26,
+          "lines": 30,
           "kind": "lib",
           "exports": [
             "TEST_HOST",
