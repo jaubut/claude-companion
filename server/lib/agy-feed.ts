@@ -1,10 +1,10 @@
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, getFeed, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { listSessions, recordSession } from "./sessions"
+import { getSessionByKey, listSessions, recordSession } from "./sessions"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
 import { withPickerIO } from "./keyboard-inject"
@@ -13,6 +13,20 @@ import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
 import { scrubAgentEnv } from "./worker-invocation"
+
+export const AGY_BRAIN_KEY = "gemini:brain"
+export const AGY_BRAIN_PANE = "headless:agy-brain"
+export const AGY_BRAIN_TASK_ID = "agy-brain"
+export const DEFAULT_AGY_BRAIN_MODEL = "gemini-pro-orchestrator"
+
+export interface AgyBrainState {
+  sessionId: string
+  model: string
+  boost: boolean
+  cwd: string
+  title: string
+  updatedAt: number
+}
 
 const POLL_MS = 1_500
 const THREAD_WINDOW_MS = 24 * 60 * 60 * 1_000
@@ -114,12 +128,104 @@ export function readAgyModel(home = homedir()): string {
   return "Gemini 4 Argon (Medium)"
 }
 
+export function agyBrainStatePath(home = homedir()): string {
+  return join(home, ".claude", "state", "agy-brain.json")
+}
+
+export function readAgyBrainState(home = homedir()): AgyBrainState {
+  const path = agyBrainStatePath(home)
+  const fallback: AgyBrainState = {
+    sessionId: "",
+    model: DEFAULT_AGY_BRAIN_MODEL,
+    boost: false,
+    cwd: home,
+    title: "⚡ Brain · Boost",
+    updatedAt: 0,
+  }
+  if (!existsSync(path)) return fallback
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<AgyBrainState>
+    return {
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId.trim() : "",
+      model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : DEFAULT_AGY_BRAIN_MODEL,
+      boost: typeof parsed.boost === "boolean" ? parsed.boost : false,
+      cwd: typeof parsed.cwd === "string" && parsed.cwd.trim() ? parsed.cwd.trim() : home,
+      title: "⚡ Brain · Boost",
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+export function writeAgyBrainState(patch: Partial<AgyBrainState>, home = homedir()): AgyBrainState {
+  const current = readAgyBrainState(home)
+  const next: AgyBrainState = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
+  }
+  const path = agyBrainStatePath(home)
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify(next, null, 2))
+  } catch { /* best-effort */ }
+  return next
+}
+
+export function getAgyBrainModel(home = homedir()): string {
+  return readAgyBrainState(home).model
+}
+
+export function setAgyBrainModel(model: string, home = homedir()): void {
+  const trimmed = model.trim()
+  if (!trimmed) return
+  writeAgyBrainState({ model: trimmed }, home)
+}
+
+export function getAgyBrainBoost(home = homedir()): boolean {
+  return readAgyBrainState(home).boost
+}
+
+export function setAgyBrainBoost(boost: boolean, home = homedir()): void {
+  writeAgyBrainState({ boost }, home)
+}
+
+export function normalizeAgyCliModelFlag(raw: string): string {
+  const trimmed = raw.trim()
+  const lower = trimmed.toLowerCase()
+  const map: Record<string, string> = {
+    "orchestrator (carbon)": "gemini-pro-orchestrator",
+    "orchestrator": "gemini-pro-orchestrator",
+    "gemini-pro-orchestrator": "gemini-pro-orchestrator",
+    "orchestrator (argon)": "gemini-pro-orchestrator-argon",
+    "gemini-pro-orchestrator-argon": "gemini-pro-orchestrator-argon",
+    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high",
+    "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
+    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium",
+    "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
+    "gemini 4 carbon (high)": "gemini-4-carbon-high",
+    "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
+    "gemini 4 carbon (low)": "gemini-4-carbon-low",
+    "gemini 4 argon (high)": "gemini-4-argon-high",
+    "gemini 4 argon (medium)": "gemini-4-argon-medium",
+    "gemini 4 argon (low)": "gemini-4-argon-low",
+    "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
+    "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
+    "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
+  }
+  return map[lower] ?? trimmed
+}
+
 export function extractAgyUserPrompt(rawContent: unknown): string | null {
   if (typeof rawContent !== "string") return null
   const m = rawContent.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i)
-  const text = (m ? m[1] ?? "" : rawContent).trim()
+  let text = (m ? m[1] ?? "" : rawContent).trim()
   if (!text || text.startsWith("<") || text.startsWith("[Request interrupted")) return null
-  return text
+  if (/^\/boost\s+\S/i.test(text)) {
+    text = text.replace(/^\/boost\s+/i, "").trim()
+  }
+  return text || null
 }
 
 function unquoteArgVal(v: unknown): unknown {
@@ -600,21 +706,69 @@ export function syncAgyOpenQuestion(
   ).then(async (answers) => {
     if (raisedAgyQuestions.get(convo.id) === qId) raisedAgyQuestions.delete(convo.id)
     if (answers.length === 0) return
-    const ttySession = listSessions().find((s) => s.sessionId === convo.id && (s.tty || s.tmuxPane))
-      ?? listSessions().find((s) => s.agent === "gemini" && (s.tty || s.tmuxPane))
+    const exactSession = listSessions().find((s) => s.sessionId === convo.id)
+    const isExplicitHeadless = exactSession?.herdrPane?.startsWith("headless:") === true
+    const ttySession = isExplicitHeadless
+      ? undefined
+      : (listSessions().find((s) => s.sessionId === convo.id && (s.tty || s.tmuxPane))
+        ?? listSessions().find((s) => s.agent === "gemini" && (s.tty || s.tmuxPane)))
     if (ttySession) {
       await withPickerIO(
         { tty: ttySession.tty, tmuxPane: ttySession.tmuxPane, tmuxSocket: ttySession.tmuxSocket, termProgram: ttySession.termProgram, iTermSessionId: ttySession.iTermSessionId },
         (io) => driveQuestionPicker(io, questions, answers),
       )
+    } else if (exactSession?.taskId === AGY_BRAIN_TASK_ID || exactSession?.herdrPane === AGY_BRAIN_PANE) {
+      deliverHeadlessAgyBrainTurn({
+        prompt: formatAgyQuestionAnswers(questions, answers),
+        cwd,
+        boost: false,
+        home,
+      })
     } else {
-      deliverHeadlessAgyTurn({ sessionId: convo.id, cwd, prompt: formatAgyQuestionAnswers(questions, answers) })
+      deliverHeadlessAgyTurn({
+        sessionId: convo.id,
+        cwd,
+        prompt: formatAgyQuestionAnswers(questions, answers),
+        model: exactSession?.model,
+        home,
+      })
     }
   })
 }
 
+const activeAgyProcs = new Set<string>()
+
+export function isAgyBrainRunning(): boolean {
+  return activeAgyProcs.has(AGY_BRAIN_KEY)
+}
+
+export function ensureAgyBrainSession(home = homedir()) {
+  if (!existsSync(agyRootDir(home))) return null
+  const state = readAgyBrainState(home)
+  const existing = getSessionByKey(AGY_BRAIN_KEY)
+  const sid = state.sessionId || existing?.sessionId || AGY_BRAIN_TASK_ID
+  const running = activeAgyProcs.has(AGY_BRAIN_KEY)
+  const inferredStatus = running
+    ? "busy"
+    : (sid !== AGY_BRAIN_TASK_ID ? inferAgyTranscriptStatus(sid, home, false) : "idle")
+  return recordSession({
+    agent: "gemini",
+    cwd: state.cwd || home,
+    sessionId: sid,
+    herdrPane: AGY_BRAIN_PANE,
+    taskId: AGY_BRAIN_TASK_ID,
+    title: "⚡ Brain · Boost",
+    label: "⚡ Brain · Boost",
+    firstSeenAt: existing?.firstSeenAt ?? (state.updatedAt || undefined),
+    agentStatus: inferredStatus,
+    model: state.model || DEFAULT_AGY_BRAIN_MODEL,
+    pid: String(process.pid),
+  }, { provisional: true, sessionIdConfirmed: true })
+}
+
 export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
   if (!timer) {
+    ensureAgyBrainSession(home)
     void pollAgyOnce(home)
     timer = setInterval(() => { void pollAgyOnce(home) }, POLL_MS)
     if (typeof (timer as unknown as { unref?: () => void }).unref === "function") {
@@ -631,12 +785,30 @@ export function startAgyFeedMonitor(home = homedir()): { stop: () => void } {
 }
 
 async function pollAgyOnce(home = homedir()): Promise<void> {
+  const brainSession = ensureAgyBrainSession(home)
+  const brainState = readAgyBrainState(home)
   const convos = readRecentAgyConversations(home)
-  if (convos.length === 0) return
 
   const agyModel = readAgyModel(home)
   const currentSessions = listSessions()
   for (const c of convos.slice(0, 5)) {
+    if (brainState.sessionId && c.id === brainState.sessionId) {
+      if (brainSession) {
+        const nextStatus = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : c.status
+        const nextTitle = "⚡ Brain · Boost"
+        if (brainSession.agentStatus !== nextStatus || brainSession.title !== nextTitle) {
+          recordSession({
+            ...brainSession,
+            sessionId: c.id,
+            title: nextTitle,
+            label: "⚡ Brain · Boost",
+            agentStatus: nextStatus,
+            model: brainState.model || DEFAULT_AGY_BRAIN_MODEL,
+          }, { provisional: true, sessionIdConfirmed: true })
+        }
+      }
+      continue
+    }
     const ttyOwner = currentSessions.find((s) => s.sessionId === c.id && !!s.tty)
     if (ttyOwner) {
       if (ttyOwner.agentStatus !== c.status || (c.title && ttyOwner.title !== c.title)) {
@@ -667,11 +839,71 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
   }
 
   const events: FeedEvent[] = []
+  const polledIds = new Set<string>()
   for (const c of convos) {
+    polledIds.add(c.id)
     events.push(...readAgyTranscriptDelta(c, home))
+  }
+  if (brainState.sessionId && !polledIds.has(brainState.sessionId) && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
+    const status = activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(brainState.sessionId, home, false)
+    events.push(...readAgyTranscriptDelta({
+      id: brainState.sessionId,
+      title: "⚡ Brain · Boost",
+      cwd: brainState.cwd || home,
+      status,
+      updatedAtMs: Date.now(),
+      stepCount: 1,
+    }, home))
+  }
+  if (brainState.sessionId && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
+    const childIds = discoverChildSubagentIds(brainState.sessionId, home)
+    for (const childId of childIds) {
+      const childEvents = readAgyTranscriptDelta(
+        {
+          id: childId,
+          title: "⚡ Brain · Boost",
+          cwd: brainState.cwd || home,
+          status: activeAgyProcs.has(AGY_BRAIN_KEY) ? "busy" : inferAgyTranscriptStatus(childId, home, false),
+          updatedAtMs: Date.now(),
+          stepCount: 1,
+        },
+        home,
+        { key: AGY_BRAIN_KEY, cwd: brainState.cwd || home, sessionId: brainState.sessionId },
+      )
+      for (const ev of childEvents) {
+        if (ev.kind === "tool_start" || ev.kind === "tool_end" || ev.kind === "thinking") {
+          events.push(ev)
+        }
+      }
+    }
   }
   events.sort((a, b) => a.ts - b.ts)
   for (const ev of events) appendFeedEvent(ev)
+}
+
+function discoverChildSubagentIds(rootConvoId: string, home = homedir()): string[] {
+  const found: string[] = []
+  const visited = new Set<string>([rootConvoId])
+  const queue: Array<{ id: string; depth: number }> = [{ id: rootConvoId, depth: 0 }]
+  while (queue.length > 0) {
+    const item = queue.shift()!
+    if (item.depth >= 2) continue
+    const path = agyTranscriptPath(item.id, home)
+    if (!existsSync(path)) continue
+    try {
+      const raw = readTail(path, 32 * 1024)
+      const matches = raw.matchAll(/\\"conversationId\\":\s*\\"([0-9a-fA-F-]{36})\\"/g)
+      for (const m of matches) {
+        const cid = m[1]
+        if (cid && !visited.has(cid) && existsSync(agyTranscriptPath(cid, home))) {
+          visited.add(cid)
+          found.push(cid)
+          queue.push({ id: cid, depth: item.depth + 1 })
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return found
 }
 
 function isDuplicateInjectedUserPrompt(
@@ -680,30 +912,39 @@ function isDuplicateInjectedUserPrompt(
   ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
 ): boolean {
   if (ev.kind !== "user_prompt") return false
-  const text = (ev.text ?? "").trim()
+  const text = (ev.text ?? "").trim().replace(/^\/boost\s+/i, "").trim()
   if (!text) return false
   const feed = getFeed()
   for (let i = feed.length - 1; i >= 0; i--) {
     const existing = feed[i]!
     if (existing.kind !== "user_prompt") continue
     if (existing.id.startsWith("agy:") || existing.id.startsWith("tx:")) continue
-    const sameSession = existing.sessionId === convoId || (Boolean(ident.tty) && existing.tty === ident.tty)
+    const sameSession =
+      existing.sessionId === convoId ||
+      (Boolean(ident.key) && existing.key === ident.key) ||
+      (Boolean(ident.tty) && existing.tty === ident.tty)
     if (!sameSession) continue
-    if ((existing.text ?? "").trim() !== text) continue
+    const existingClean = (existing.text ?? "").trim().replace(/^\/boost\s+/i, "").trim()
+    if (existingClean !== text) continue
     if (Math.abs(existing.ts - ev.ts) > 120_000) continue
-    if (!existing.sessionId) existing.sessionId = convoId
+    if (!existing.sessionId || existing.sessionId === AGY_BRAIN_TASK_ID) existing.sessionId = convoId
     if (ident.key && !existing.key) existing.key = ident.key
     return true
   }
   return false
 }
 
-export function readAgyTranscriptDelta(convo: AgyConversationSummary, home = homedir()): FeedEvent[] {
+export function readAgyTranscriptDelta(
+  convo: AgyConversationSummary,
+  home = homedir(),
+  identOverride?: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId">,
+): FeedEvent[] {
   const path = agyTranscriptPath(convo.id, home)
   if (!existsSync(path)) return []
 
   const session = listSessions().find((s) => s.sessionId === convo.id)
-  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = {
+    ?? (readAgyBrainState(home).sessionId === convo.id ? getSessionByKey(AGY_BRAIN_KEY) : undefined)
+  const ident: Pick<FeedEvent, "key" | "cwd" | "tty" | "sessionId"> = identOverride ?? {
     key: session?.key,
     cwd: session?.cwd || convo.cwd,
     ...(session?.tty ? { tty: session.tty } : {}),
@@ -823,6 +1064,9 @@ export function readAgyTranscriptDelta(convo: AgyConversationSummary, home = hom
 }
 
 export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, home = homedir()) {
+  if (lookup === AGY_BRAIN_KEY || lookup === AGY_BRAIN_TASK_ID || lookup === AGY_BRAIN_PANE) {
+    return ensureAgyBrainSession(home)
+  }
   if (!lookup.startsWith("gemini:sid:")) return null
   const sid = lookup.slice("gemini:sid:".length).trim()
   if (!sid || !existsSync(agyTranscriptPath(sid, home))) return null
@@ -840,28 +1084,209 @@ export function ensureHeadlessAgySession(lookup: string, fallbackCwd?: string, h
   }, { provisional: true, sessionIdConfirmed: true })
 }
 
+export function buildHeadlessAgyArgs(opts: {
+  prompt: string
+  sessionId?: string
+  model?: string
+  boost?: boolean
+  hasExistingTranscript?: boolean
+}): string[] {
+  const trimmed = opts.prompt.trim()
+  const effectivePrompt = opts.boost && !trimmed.startsWith("/")
+    ? `/boost ${trimmed}`
+    : trimmed
+  const args = ["-p", effectivePrompt]
+  if (opts.sessionId && opts.sessionId !== AGY_BRAIN_TASK_ID && (opts.hasExistingTranscript ?? true)) {
+    args.push("--conversation", opts.sessionId)
+  }
+  if (opts.model && opts.model.trim()) {
+    args.push("--model", normalizeAgyCliModelFlag(opts.model))
+  }
+  args.push("--output-format", "stream-json", "--dangerously-skip-permissions")
+  return args
+}
+
+export function deliverHeadlessAgyBrainTurn(opts: {
+  prompt: string
+  cwd?: string
+  model?: string
+  boost?: boolean
+  home?: string
+}): boolean {
+  const home = opts.home ?? homedir()
+  const state = readAgyBrainState(home)
+  const trimmed = opts.prompt.trim()
+  if (!trimmed) return false
+
+  if (/^\/(clear|new|reset)\b/i.test(trimmed)) {
+    writeAgyBrainState({ sessionId: "", title: "⚡ Brain · Boost" }, home)
+    ensureAgyBrainSession(home)
+    appendFeedEvent({
+      id: `agy-brain:reset:${Date.now()}`,
+      ts: Date.now(),
+      kind: "assistant_text",
+      text: "Started a fresh Gemini Orchestrator + `/boost` session.",
+      key: AGY_BRAIN_KEY,
+      cwd: state.cwd || home,
+      sessionId: AGY_BRAIN_TASK_ID,
+    })
+    return true
+  }
+
+  if (/^\/boost\s+(on|off)\s*$/i.test(trimmed)) {
+    const enable = /^\/boost\s+on\s*$/i.test(trimmed)
+    setAgyBrainBoost(enable, home)
+    ensureAgyBrainSession(home)
+    return true
+  }
+
+  const effectiveModel = opts.model || state.model || DEFAULT_AGY_BRAIN_MODEL
+  const effectiveBoost = opts.boost ?? state.boost
+  const effectiveCwd = opts.cwd || state.cwd || home
+
+  return deliverHeadlessAgyTurn({
+    sessionId: state.sessionId,
+    cwd: effectiveCwd,
+    prompt: trimmed,
+    model: effectiveModel,
+    boost: effectiveBoost,
+    isBrain: true,
+    sessionKey: AGY_BRAIN_KEY,
+    home,
+  })
+}
+
 export function deliverHeadlessAgyTurn(opts: {
   sessionId: string
   cwd: string
   prompt: string
+  model?: string
+  boost?: boolean
+  isBrain?: boolean
+  sessionKey?: string
+  home?: string
 }): boolean {
+  const home = opts.home ?? homedir()
+  const hasExistingTranscript = Boolean(
+    opts.sessionId &&
+    opts.sessionId !== AGY_BRAIN_TASK_ID &&
+    existsSync(agyTranscriptPath(opts.sessionId, home)),
+  )
+  const args = buildHeadlessAgyArgs({
+    prompt: opts.prompt,
+    sessionId: opts.sessionId,
+    model: opts.model,
+    boost: opts.boost,
+    hasExistingTranscript,
+  })
+  const sessionKey = opts.sessionKey || (opts.isBrain ? AGY_BRAIN_KEY : `gemini:sid:${opts.sessionId}`)
+  const cwd = opts.cwd || home
+
   try {
-    const proc = Bun.spawn([
-      "agy",
-      "-p",
-      opts.prompt,
-      "--conversation",
-      opts.sessionId,
-      "--output-format",
-      "stream-json",
-      "--dangerously-skip-permissions",
-    ], {
-      cwd: opts.cwd || homedir(), env: scrubAgentEnv(process.env),
-      stdout: "ignore", stderr: "ignore",
+    const proc = Bun.spawn(["agy", ...args], {
+      cwd,
+      // A headless agy worker turn gets the scrubbed env (no Turso/db/Companion tokens); the Brain · Boost
+      // orchestrator keeps the server env like the claude brain (wiring/brain-headless.ts).
+      ...(opts.isBrain ? {} : { env: scrubAgentEnv(process.env) }),
+      stdout: "pipe",
+      stderr: "ignore",
     })
+    activeAgyProcs.add(sessionKey)
+    let activeSid = hasExistingTranscript ? opts.sessionId : (opts.sessionId || AGY_BRAIN_TASK_ID)
+
+    if (opts.isBrain) {
+      const state = readAgyBrainState(home)
+      recordSession({
+        agent: "gemini",
+        cwd,
+        sessionId: activeSid,
+        herdrPane: AGY_BRAIN_PANE,
+        taskId: AGY_BRAIN_TASK_ID,
+        title: state.title || "Brain · Boost",
+        label: "Brain · Boost",
+        agentStatus: "busy",
+        model: opts.model || state.model || DEFAULT_AGY_BRAIN_MODEL,
+        pid: String(process.pid),
+      }, { provisional: true, sessionIdConfirmed: true })
+    }
+
+    syncExternalToolActivity({
+      verb: opts.boost ? "Orchestrating" : "Thinking",
+      tool: opts.boost ? "boost" : "gemini",
+      summary: opts.boost ? "Gemini Orchestrator · /boost" : (opts.model || "Antigravity"),
+      cwd,
+      sessionId: activeSid,
+      sessionKey,
+    })
+
+    if (proc.stdout && typeof proc.stdout !== "number") {
+      const reader = proc.stdout.getReader()
+      const decoder = new TextDecoder()
+      void (async () => {
+        let buf = ""
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const lines = buf.split("\n")
+            buf = lines.pop() ?? ""
+            for (const line of lines) {
+              const trimmedLine = line.trim()
+              if (!trimmedLine.startsWith("{")) continue
+              try {
+                const ev = JSON.parse(trimmedLine) as {
+                  event?: string
+                  conversation_id?: string
+                  step_update?: { conversation_id?: string; step_type?: string }
+                }
+                const cid = ev.conversation_id || ev.step_update?.conversation_id
+                if (cid && cid !== activeSid) {
+                  activeSid = cid
+                  if (opts.isBrain) {
+                    writeAgyBrainState({ sessionId: cid, title: "⚡ Brain · Boost", model: opts.model || DEFAULT_AGY_BRAIN_MODEL, cwd }, home)
+                    recordSession({
+                      agent: "gemini",
+                      cwd,
+                      sessionId: cid,
+                      herdrPane: AGY_BRAIN_PANE,
+                      taskId: AGY_BRAIN_TASK_ID,
+                      title: "⚡ Brain · Boost",
+                      label: "⚡ Brain · Boost",
+                      agentStatus: "busy",
+                      model: opts.model || DEFAULT_AGY_BRAIN_MODEL,
+                      pid: String(process.pid),
+                    }, { provisional: true, sessionIdConfirmed: true })
+                  }
+                }
+                if (ev.event === "step_update" || ev.event === "result") {
+                  void pollAgyOnce(home)
+                }
+              } catch { /* ignore malformed line */ }
+            }
+          }
+        } catch { /* stream closed */ } finally {
+          activeAgyProcs.delete(sessionKey)
+          void pollAgyOnce(home)
+          clearExternalSessionActivity({
+            cwd,
+            sessionId: activeSid,
+            transcriptPath: agyTranscriptPath(activeSid, home),
+            sessionKey,
+          })
+          if (opts.isBrain) {
+            ensureAgyBrainSession(home)
+          }
+        }
+      })()
+    } else {
+      activeAgyProcs.delete(sessionKey)
+    }
+
     proc.unref()
     return true
   } catch {
+    activeAgyProcs.delete(sessionKey)
     return false
   }
 }

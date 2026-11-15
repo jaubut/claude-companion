@@ -26,7 +26,7 @@ export class TursoUnreachable extends Error {
   }
 }
 
-const DEFAULT_URL = "https://tls-dashboard-jaubut.aws-us-east-1.turso.io"
+const DEFAULT_URL = "https://tls-sqld-1016439101738.northamerica-northeast1.run.app"
 const TIMEOUT_MS = 8000
 
 let agentToken: string | undefined

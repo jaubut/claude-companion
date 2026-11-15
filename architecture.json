@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-13",
+  "generatedAt": "2026-11-15",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -198,15 +198,28 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 868,
+          "lines": 1293,
           "kind": "lib",
           "exports": [
+            "AGY_BRAIN_KEY",
+            "AGY_BRAIN_PANE",
+            "AGY_BRAIN_TASK_ID",
+            "DEFAULT_AGY_BRAIN_MODEL",
+            "AgyBrainState",
             "AgyConversationSummary",
             "agyRootDir",
             "agySummariesDbPath",
             "agyTranscriptPath",
             "agyFullTranscriptPath",
             "readAgyModel",
+            "agyBrainStatePath",
+            "readAgyBrainState",
+            "writeAgyBrainState",
+            "getAgyBrainModel",
+            "setAgyBrainModel",
+            "getAgyBrainBoost",
+            "setAgyBrainBoost",
+            "normalizeAgyCliModelFlag",
             "extractAgyUserPrompt",
             "formatAgyQuestionsMarkdown",
             "formatAgyQuestionAnswers",
@@ -216,9 +229,13 @@
             "readRecentAgyConversations",
             "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
+            "isAgyBrainRunning",
+            "ensureAgyBrainSession",
             "startAgyFeedMonitor",
             "readAgyTranscriptDelta",
             "ensureHeadlessAgySession",
+            "buildHeadlessAgyArgs",
+            "deliverHeadlessAgyBrainTurn",
             "deliverHeadlessAgyTurn"
           ],
           "state": [
@@ -226,7 +243,8 @@
             "let cachedRecentAgyConversations",
             "offsets: Map",
             "raisedAgyQuestions: Map",
-            "let timer"
+            "let timer",
+            "activeAgyProcs: Set"
           ],
           "emits": [],
           "consumes": [],
@@ -1627,7 +1645,7 @@
         },
         {
           "path": "lib/dashboard-client.ts",
-          "lines": 192,
+          "lines": 202,
           "kind": "lib",
           "exports": [
             "DASHBOARD_KEY_NAME",
@@ -1661,6 +1679,8 @@
             "listNotesLite",
             "listNotes",
             "updateNote",
+            "uploadNoteImage",
+            "fetchNoteImage",
             "searchDashboard"
           ],
           "state": [],
@@ -1743,7 +1763,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 578,
+          "lines": 588,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -3115,7 +3135,7 @@
         },
         {
           "path": "lib/note-media.ts",
-          "lines": 109,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "ContentBlock",
@@ -3130,6 +3150,7 @@
           "apiCalls": [],
           "imports": [
             "lib/canvas.ts",
+            "lib/dashboard-client.ts",
             "lib/media.ts",
             "lib/sent-files.ts",
             "lib/turso.ts",
@@ -4473,7 +4494,7 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 385,
+          "lines": 416,
           "kind": "lib",
           "exports": [
             "SyncFn",
@@ -4491,6 +4512,7 @@
             "validHosts",
             "listNames",
             "editLine",
+            "mirrorEnvFiles",
             "listSecrets",
             "upsertSecret",
             "setSecretHosts",
@@ -4546,7 +4568,7 @@
         },
         {
           "path": "lib/session-identity.ts",
-          "lines": 58,
+          "lines": 59,
           "kind": "lib",
           "exports": [
             "deriveKey",
@@ -6488,7 +6510,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 588,
+          "lines": 592,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -7253,7 +7275,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 295,
+          "lines": 310,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -7290,6 +7312,7 @@
             "lib/session-pane.ts",
             "wiring/dialogs.ts",
             "lib/json-body.ts",
+            "lib/agy-feed.ts",
             "wiring/brain.ts",
             "wiring/worker-mcp.ts"
           ],
@@ -7333,12 +7356,14 @@
         },
         {
           "path": "routes/notes.ts",
-          "lines": 212,
+          "lines": 283,
           "kind": "lib",
           "exports": [
             "handleNotesRoute"
           ],
-          "state": [],
+          "state": [
+            "NOTE_IMAGE_MIMES: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -7578,7 +7603,7 @@
         },
         {
           "path": "routes/vault.ts",
-          "lines": 221,
+          "lines": 230,
           "kind": "lib",
           "exports": [
             "handleVaultRoute"
@@ -10151,6 +10176,19 @@
             "lib/question-hook.ts"
           ]
         },
+        "getSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/session-resolve.ts",
+            "routes/api.ts#GET /api/sessions/history",
+            "routes/api.ts#* /api/feed",
+            "wiring/auto-compact.ts",
+            "wiring/brain.ts",
+            "wiring/events.ts",
+            "wiring/waiting.ts"
+          ]
+        },
         "recordSession": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -11439,6 +11477,51 @@
             "lib/dialog-watch.ts"
           ]
         },
+        "AgyConversationSummary": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "AGY_BRAIN_PANE": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts",
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "AGY_BRAIN_TASK_ID": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts",
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "ensureAgyBrainSession": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "readAgyBrainState": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "readAgyModel": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
+        "readRecentAgyConversations": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "isScrapeTarget": {
           "module": "lib/scrape-registry.ts",
           "callers": [
@@ -11491,26 +11574,8 @@
             "lib/discover.ts"
           ]
         },
-        "AgyConversationSummary": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "lib/discover.ts"
-          ]
-        },
         "mapTtysToPanes": {
           "module": "lib/tmux-pane.ts",
-          "callers": [
-            "lib/discover.ts"
-          ]
-        },
-        "readRecentAgyConversations": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "lib/discover.ts"
-          ]
-        },
-        "readAgyModel": {
-          "module": "lib/agy-feed.ts",
           "callers": [
             "lib/discover.ts"
           ]
@@ -12306,6 +12371,13 @@
           "callers": [
             "lib/mytask-triage.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "fetchNoteImage": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "lib/note-media.ts",
+            "routes/notes.ts"
           ]
         },
         "sentFilePath": {
@@ -13446,7 +13518,8 @@
         "storePath": {
           "module": "lib/secret-store.ts",
           "callers": [
-            "lib/secret-redact.ts"
+            "lib/secret-redact.ts",
+            "routes/vault.ts"
           ]
         },
         "listSecrets": {
@@ -13477,7 +13550,8 @@
         "validHosts": {
           "module": "lib/secret-store.ts",
           "callers": [
-            "lib/secret-requests.ts"
+            "lib/secret-requests.ts",
+            "routes/vault.ts"
           ]
         },
         "AuditOrigin": {
@@ -13536,18 +13610,6 @@
           "callers": [
             "lib/session-pane.ts",
             "routes/api.ts#POST /api/sessions/resume"
-          ]
-        },
-        "getSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "lib/session-resolve.ts",
-            "routes/api.ts#GET /api/sessions/history",
-            "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
-            "wiring/brain.ts",
-            "wiring/events.ts",
-            "wiring/waiting.ts"
           ]
         },
         "WaitingKind": {
@@ -14483,7 +14545,8 @@
         "fetchInboxAudio": {
           "module": "lib/dashboard-client.ts",
           "callers": [
-            "lib/voice-memo.ts"
+            "lib/voice-memo.ts",
+            "routes/notes.ts"
           ]
         },
         "createNote": {
@@ -15100,6 +15163,12 @@
         },
         "headlessBrainRunner": {
           "module": "wiring/brain.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "deliverHeadlessAgyBrainTurn": {
+          "module": "lib/agy-feed.ts",
           "callers": [
             "routes/api.ts#* /api/feed"
           ]
@@ -16120,6 +16189,12 @@
             "routes/model.ts#POST /api/model/set"
           ]
         },
+        "getAgyBrainModel": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/model.ts"
+          ]
+        },
         "SessionPane": {
           "module": "lib/session-pane.ts",
           "callers": [
@@ -16156,6 +16231,12 @@
         },
         "setBrainModel": {
           "module": "wiring/brain.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "setAgyBrainModel": {
+          "module": "lib/agy-feed.ts",
           "callers": [
             "routes/model.ts#POST /api/model/set"
           ]
@@ -16217,6 +16298,12 @@
           ]
         },
         "updateNote": {
+          "module": "lib/dashboard-client.ts",
+          "callers": [
+            "routes/notes.ts"
+          ]
+        },
+        "uploadNoteImage": {
           "module": "lib/dashboard-client.ts",
           "callers": [
             "routes/notes.ts"
@@ -16743,6 +16830,18 @@
           ]
         },
         "setSecretHosts": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "validValue": {
+          "module": "lib/secret-store.ts",
+          "callers": [
+            "routes/vault.ts"
+          ]
+        },
+        "mirrorEnvFiles": {
           "module": "lib/secret-store.ts",
           "callers": [
             "routes/vault.ts"

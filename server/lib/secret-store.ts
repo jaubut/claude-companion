@@ -211,7 +211,34 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-// Write, sync, roll back on sync failure, audit on success.
+// Write, sync, roll back on sync failure, audit on success, and mirror to .env / env.
+export function mirrorEnvFiles(storeFile: string, action: VaultAction, name: string, hosts: string[], secret?: string): void {
+  const dir = dirname(storeFile)
+  const dotenvPath = join(dir, ".env")
+  const legacyEnvPath = join(dir, "env")
+  const change = action === "deleted"
+    ? { remove: true }
+    : secret !== undefined
+      ? { value: secret, hosts }
+      : { hosts }
+
+  try {
+    const seed = existsSync(dotenvPath)
+      ? readFileSync(dotenvPath, "utf8")
+      : (existsSync(legacyEnvPath) ? readFileSync(legacyEnvPath, "utf8") : "")
+    const nextDotenv = editLine(seed, name, change)
+    if (nextDotenv !== null) atomicWrite(dotenvPath, nextDotenv)
+  } catch { /* best-effort mirror */ }
+
+  try {
+    if (existsSync(legacyEnvPath)) {
+      const prevEnv = readFileSync(legacyEnvPath, "utf8")
+      const nextEnv = editLine(prevEnv, name, change)
+      if (nextEnv !== null) atomicWrite(legacyEnvPath, nextEnv)
+    }
+  } catch { /* best-effort mirror */ }
+}
+
 async function commit(before: string | null, after: string, action: VaultAction, name: string, hosts: string[], origin: AuditOrigin, secret?: string): Promise<VaultResult> {
   const path = storePath()
   atomicWrite(path, after)
@@ -224,6 +251,7 @@ async function commit(before: string | null, after: string, action: VaultAction,
     const detail = secret ? synced.detail.split(secret).join("•••") : synced.detail
     return { ok: false, status: 500, name, error: "sync_failed", message: `${name} NON enregistré — masquage échoué (${detail}). Rien n'a changé.` }
   }
+  mirrorEnvFiles(path, action, name, hosts, secret)
   audit(action, name, hosts, origin)
   return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts) }
 }
@@ -343,6 +371,9 @@ export async function saveSecret(input: { name: string; value: string; hosts: st
   const up = vaultUpstream()
   if (!up) return upsertSecret(input, origin)
   const r = await forwardVault(up, "POST", "/api/vault", origin.device_claimed ?? "chat", { ...input })
+  if (r.status >= 200 && r.status < 300 && !process.env.TLS_SECRETS_FILE && validName(input.name) && validValue(input.value) && validHosts(input.hosts)) {
+    mirrorEnvFiles(storePath(), "updated", input.name, input.hosts, input.value)
+  }
   const body = r.json ?? { ok: false, error: r.status === 401 ? "upstream_unauthorized" : "upstream_error", message: `Coffre distant: HTTP ${r.status} — rien n'a changé.` }
   const retry = Number(r.retryAfter)
   return { ...(body as Partial<VaultResult>), ok: r.status >= 200 && r.status < 300 && body.ok === true, status: r.status, message: String(body.message ?? ""), ...(Number.isFinite(retry) && r.retryAfter ? { retry_after: retry } : {}) }

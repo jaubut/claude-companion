@@ -38,6 +38,9 @@ function fakeDashboard(h: Hit): Response {
   if (h.method === "POST" && u.pathname === "/api/search") return Response.json({ results: [{ kind: "note", id: "resources/2026-10-01-old", title: "Old resource" }, { kind: "note", id: "journal/2026-10-24-diary", title: "Dear diary" }, { kind: "client", id: "acme", title: "Acme" }] })
   if (h.method === "POST" && u.pathname === "/api/note") return Response.json({ ok: true, id: "ideas/2026-10-24-new", ref_code: "IDE-NEW9", filename: "2026-10-24-new.md" })
   if (h.method === "PUT" && u.pathname === "/api/note") return Response.json({ ok: true, updated_at: "2026-10-24 12:34:56" })
+  if (h.method === "POST" && u.pathname === "/api/note/image") return Response.json({ ok: true, id: "img-uuid-1234", url: "/api/note/image/img-uuid-1234" })
+  if (h.method === "GET" && u.pathname === "/api/note/image/img-uuid-1234") return new Response(new Uint8Array([0xff, 0xd8, 0xff]), { headers: { "Content-Type": "image/jpeg" } })
+  if (h.method === "GET" && u.pathname === "/api/inbox/audio/voice-42.aac") return new Response(new Uint8Array([0xff, 0xf1]), { headers: { "Content-Type": "audio/aac" } })
   return new Response("nope", { status: 404 })
 }
 
@@ -239,5 +242,26 @@ describe("upstream errors", () => {
     const r = await call("GET", "/api/notes/RES-OLD1")
     expect(r.status).toBe(401)
     expect(await r.json()).toEqual({ error: "unauthorized" })
+  })
+})
+
+describe("note media (POST /api/notes/image, GET /api/note/image/:id, GET /api/inbox/audio/:filename)", () => {
+  test("POST /api/notes/image uploads image with resolved note_id and returns url", async () => {
+    const r = await call("POST", "/api/notes/image", { ref: "RES-OLD1", mime: "image/jpeg", data: "aGVsbG8=" })
+    expect(r.status).toBe(201)
+    expect(await r.json()).toEqual({ ok: true, id: "img-uuid-1234", url: "/api/note/image/img-uuid-1234" })
+    expect(hits.map(h => `${h.method} ${h.path}`)).toEqual(["GET /api/note?ref=RES-OLD1", "POST /api/note/image"])
+    expect(JSON.parse(hits[1]!.body)).toEqual({ note_id: "resources/2026-10-01-old", mime: "image/jpeg", data: "aGVsbG8=" })
+  })
+  test("GET /api/note/image/:id streams image bytes", async () => {
+    const r = await call("GET", "/api/note/image/img-uuid-1234")
+    expect(r.status).toBe(200)
+    expect(r.headers.get("content-type")).toBe("image/jpeg")
+    expect(new Uint8Array(await r.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xd8, 0xff]))
+  })
+  test("GET /api/inbox/audio/:filename streams audio bytes", async () => {
+    const r = await call("GET", "/api/inbox/audio/voice-42.aac")
+    expect(r.status).toBe(200)
+    expect(new Uint8Array(await r.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xf1]))
   })
 })

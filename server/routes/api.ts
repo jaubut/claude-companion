@@ -1,7 +1,7 @@
 import { hostname } from "node:os"
 import { basename } from "node:path"
 import { getPending, resolveApproval } from "../lib/pty-manager"
-import { deliverHeadlessAgyTurn, ensureHeadlessAgySession } from "../lib/agy-feed"
+import { AGY_BRAIN_PANE, deliverHeadlessAgyBrainTurn, deliverHeadlessAgyTurn, ensureHeadlessAgySession } from "../lib/agy-feed"
 import { headlessBrainRunner } from "../wiring/brain"
 import { workerSupervisor } from "../wiring/worker-mcp"
 import { companionLog } from "../lib/log"
@@ -455,6 +455,10 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
       const r = await headlessBrainRunner.deliver(text)
       return r.ok ? Response.json({ ok: true, confirmed: true }) : r
     }
+    if (target.herdrPane === AGY_BRAIN_PANE) {
+      const ok = deliverHeadlessAgyBrainTurn({ prompt: text, cwd: target.cwd, model: target.model })
+      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
+    }
     if (target.herdrPane.startsWith("headless:worker:")) {
       const taskId = target.taskId || target.herdrPane.slice("headless:worker:".length)
       const existing = workerSupervisor.getTask(taskId)
@@ -469,7 +473,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
         : Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
     }
     if (target.herdrPane.startsWith("headless:agy:")) {
-      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text })
+      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text, model: target.model })
       return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
     }
   }

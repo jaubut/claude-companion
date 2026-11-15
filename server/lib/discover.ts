@@ -17,7 +17,15 @@ import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
 import { validHerdrPane } from "./herdr"
-import { type AgyConversationSummary, readAgyModel, readRecentAgyConversations } from "./agy-feed"
+import {
+  type AgyConversationSummary,
+  AGY_BRAIN_PANE,
+  AGY_BRAIN_TASK_ID,
+  ensureAgyBrainSession,
+  readAgyBrainState,
+  readAgyModel,
+  readRecentAgyConversations,
+} from "./agy-feed"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
 const CODEX_STATE_DB = join(homedir(), ".codex", "state_5.sqlite")
@@ -554,11 +562,13 @@ async function discoverOnce(): Promise<{ registered: number }> {
       // If a live gemini/agy tty session already claimed this id, skip headless duplicate
     } catch { /* no lock file */ }
   }
+  ensureAgyBrainSession()
+  const brainSid = readAgyBrainState().sessionId
   for (const c of recentAgy.slice(0, 5)) {
-    if (liveAgyIds.has(c.id)) continue
-    // Only register headlessly if no tty-backed session already owns this sessionId
+    if (liveAgyIds.has(c.id) || (brainSid && c.id === brainSid)) continue
+    // Only register headlessly if no tty-backed or pinned brain session already owns this sessionId
     const { listSessions } = await import("./sessions")
-    if (listSessions().some((s) => s.sessionId === c.id && !!s.tty)) continue
+    if (listSessions().some((s) => s.sessionId === c.id && (!!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE))) continue
     recordSession({
       agent: "gemini",
       cwd: c.cwd,

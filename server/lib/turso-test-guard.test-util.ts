@@ -15,11 +15,11 @@ export function testDbUrl(raw: string | undefined): string {
   return `https://${TEST_HOST}`
 }
 
-/** fetch, minus every Turso host but tls-test. A stub replacing it reaches no network, so nothing goes around it. */
+/** fetch, minus every Turso / tls-sqld production host but tls-test. A stub replacing it reaches no network, so nothing goes around it. */
 export function guardFetch(inner: typeof fetch): typeof fetch {
   return (async (input: Request | string | URL, init?: RequestInit) => {
     const host = new URL(input instanceof Request ? input.url : String(input)).hostname.replace(/\.$/, "")
-    if (host.endsWith(".turso.io") && host !== TEST_HOST) throw new Error(REFUSED)
+    if ((host.endsWith(".turso.io") || host.startsWith("tls-sqld-")) && host !== TEST_HOST) throw new Error(REFUSED)
     return inner(input, init)
   }) as typeof fetch
 }
