@@ -67,34 +67,13 @@ jobs:
         run: bun install --frozen-lockfile
 
       # Step-level env: install scripts never see the secrets. TURSO_TEST_REQUIRED turns missing vars into a refusal.
-      # Uses dedicated GCP tls-test-sqld when secrets point to it; otherwise boots an ephemeral local Hrana v2 server.
       - name: Tests on tls-test
         env:
           TURSO_TEST_URL: ${{ secrets.TURSO_TEST_URL }}
           TURSO_TEST_AUTH_TOKEN: ${{ secrets.TURSO_TEST_AUTH_TOKEN }}
           TURSO_TEST_REQUIRED: "1"
-        run: |
-          if printf '%s' "${TURSO_TEST_URL:-}" | grep -qE '^(https|libsql)://tls-test-sqld-' && [ -n "${TURSO_TEST_AUTH_TOKEN:-}" ]; then
-            echo "Running integration tests against GCP tls-test-sqld"
-          else
-            echo "Booting ephemeral local scripts/tls-test-sqld.ts (no GCP tls-test-sqld secret configured)"
-            export TURSO_TEST_AUTH_TOKEN="$(openssl rand -hex 24)"
-            export TURSO_TEST_URL="http://127.0.0.1:18080"
-            bun run scripts/tls-test-sqld.ts --port 18080 &
-            SQLD_PID=$!
-            trap 'kill "$SQLD_PID" 2>/dev/null || true' EXIT
-            ready=""
-            for _ in $(seq 1 50); do
-              if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
-                ready=1
-                break
-              fi
-              sleep 0.1
-            done
-            [ -n "$ready" ] || { echo "Local tls-test-sqld failed to start" >&2; exit 1; }
-          fi
-          bun test --isolate --timeout 20000 server/wiring/brain-task-cancel.test.ts
+        run: bun test --isolate --timeout 20000 server/wiring/brain-task-cancel.test.ts
 
       - name: Point at the usual suspect
         if: failure()
-        run: echo '::notice title=Generic "query failed"?::turso.ts hides SQL errors by design. tls-test or server/lib/turso-test-schema.sql may be behind the code; run bun scripts/turso-test-schema.ts from a host with a turso login.'
+        run: echo '::notice title=Generic "query failed"?::turso.ts hides SQL errors by design. tls-sqld-test or server/lib/turso-test-schema.sql may be behind the code; run bun scripts/turso-test-schema.ts.'

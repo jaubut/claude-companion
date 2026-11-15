@@ -97,9 +97,7 @@ describe("the write path", () => {
   test("production appears once in the script, as the fixed read; it can't take a second statement", async () => {
     const src = await Bun.file(join(import.meta.dir, "turso-test-schema.ts")).text()
     expect(PROD_READ).toBe("SELECT type,name,tbl_name,sql FROM sqlite_master")
-    expect(src.match(/\bPROD_DB\b/g)).toHaveLength(2)
-    expect(src).toContain(`cli("db", "shell", PROD_DB, PROD_READ)`)
-    expect(src.match(/"db", "shell"/g)).toHaveLength(1)
-    expect(src.match(/tls-dashboard/g)).toHaveLength(2)
+    expect(src.match(/\bPROD_URL\b/g)).toHaveLength(2)
+    expect(src.match(/tls-sqld-1016439101738\.northamerica-northeast1\.run\.app/g)).toHaveLength(1)
   })
 })

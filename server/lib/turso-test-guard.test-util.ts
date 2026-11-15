@@ -2,7 +2,7 @@
 // like production's URL in turso.ts; the allowlist means a wrong URL refuses whatever it is. Refusals
 // never repeat their input, because a libsql URL can carry `?authToken=`.
 
-export const TEST_HOST = "tls-test-sqld-1016439101738.northamerica-northeast1.run.app"
+export const TEST_HOST = "tls-sqld-test-1016439101738.northamerica-northeast1.run.app"
 const REFUSED = `refused: the only Turso database tests may use is ${TEST_HOST}`
 
 /** The tls-test URL in the form turso.ts wants, or a throw. Scripts writing to tls-test go through this too. */
