@@ -34,6 +34,7 @@ TraceRow {
                         // | "appr:<approvalId>" | "q:<questionId>" | "voice:<turnId>" | "lead:<name>:<turnId>" (P2)
                         // | "step:<toolUseId>" (one brain tool call, under its turn)
                         // | "worker:<proposalId>" (the reaper closed that task's herdr workspace, under its agent row)
+                        // | "headless:<jobId>" (a bin/worker turn's live progress card, kind agent, top level)
   parentId: string|null // turn → repo → agent → pr; approvals/questions under the asking worker's agent row, else "needs-you"
   turnId: string|null
   kind: "turn"|"repo"|"agent"|"pr"|"approval"|"question"|"voice"|"lead"|"step"|"worker"
@@ -49,6 +50,7 @@ TraceRow {
 - `agent:<proposalId>` uses the Companion proposal id (8 chars); `ref.taskId` is the Turso task id once filed.
 - `"needs-you"` is a virtual parent (no row): render its children under a "Needs you" group.
 - Unknown `kind` / `status` values must be tolerated (`trace.unknown-kind.json`).
+- `headless:<jobId>` (jobId = task id, `<taskId>:t<n>` from turn 2): one row per headless worker turn, `kind:"agent"`, `ref:{taskId, host}`. Title `<family> · <model> — <title>`; while `running`, detail = `<step> · <elapsed>` + newline + the latest summary, rewritten in place at most every 10 s and only when step or summary changed. It ends `done` / `error` with the PR ready / completed / blocked receipt text as detail (an interrupt ends it `error`). These rows are trace frames only and never wake the brain; the receipt turn still does.
 - `worker` (`trace.worker.json`): one plain "Closed worker" row, status `done`, written when the brain-workers reaper closes a brain task's herdr workspace. Shipped builds map it to `.other`.
 
 ### `orchestrator` turn `card`

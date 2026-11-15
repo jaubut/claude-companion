@@ -44,6 +44,8 @@ export interface WorkerSupervisorDeps {
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null): void
+  /** Any state change, plus every new step or summary while running (the brain thread's live card). */
+  onTaskProgress?(task: SupervisedTaskSnapshot): void
   onTaskTerminal?(task: SupervisedTaskSnapshot): void
 }
 
@@ -145,6 +147,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   function syncTaskSession(t: InternalTask): void {
     try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null) } catch { /* best effort */ }
+    try { deps.onTaskProgress?.(toSnapshot(t)) } catch { /* best effort */ }
   }
 
   function savePersistedTasks(): void {
@@ -394,7 +397,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
-              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl
+              const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl; const prevResult = task.result
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
@@ -407,6 +410,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
               if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
+              else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return
