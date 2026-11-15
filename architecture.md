@@ -16,10 +16,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `routes/api.ts` | 591 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `routes/api.ts` | 593 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/worker-supervisor.ts` | 575 | lib | 12 |  |
+| `lib/worker-supervisor.ts` | 579 | lib | 12 |  |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `routes/hooks.ts` | 567 | route-host | 1 | emits: user_prompt · routes: 9 |
@@ -123,13 +123,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
+| `lib/worker-invocation.ts` | 203 | lib | 16 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/dashboard-client.ts` | 202 | lib | 34 |  |
 | `wiring/canvas.ts` | 200 | lib | 8 | state: let store, let deliver, let lastStatus · emits: canvas · listens: onSessions, onActivity |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `companion-server.ts` | 196 | route-host | 1 | routes: 10 |
 | `routes/trips.ts` | 196 | lib | 5 |  |
-| `lib/worker-invocation.ts` | 194 | lib | 15 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |

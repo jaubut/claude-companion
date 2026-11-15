@@ -6347,7 +6347,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 194,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6361,6 +6361,7 @@
             "parseStreamJsonLine",
             "buildWorkerEnv",
             "resolveWorkerFamily",
+            "modelFitsFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
             "buildHeadlessGeminiArgs",
@@ -6428,7 +6429,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 575,
+          "lines": 579,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6463,7 +6464,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 591,
+          "lines": 593,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -14694,6 +14695,12 @@
           ]
         },
         "resolveWorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "modelFitsFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
