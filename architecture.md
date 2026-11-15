@@ -264,10 +264,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |
 | `routes/gauge.ts` | 31 | route-host | 1 | routes: 2 |
+| `lib/turso-test-guard.test-util.ts` | 30 | lib | 3 |  |
 | `lib/herdr-fake.test-util.ts` | 28 | lib | 1 |  |
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `routes/builder-jobs.ts` | 28 | route-host | 1 | routes: 2 |
-| `lib/turso-test-guard.test-util.ts` | 26 | lib | 3 |  |
 | `lib/worker-hook-gate.ts` | 25 | lib | 2 | state: let envReader |
 | `lib/session-removal-log.ts` | 24 | lib | 2 | state: let removedSinceDrain |
 | `wiring/worker-blocked.ts` | 24 | lib | 1 | listens: setInterval |
