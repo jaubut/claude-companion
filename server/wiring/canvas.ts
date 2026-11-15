@@ -8,6 +8,7 @@ import { companionLog } from "../lib/log"
 import { listSessions, onSessions } from "../lib/sessions"
 import { tursoQuery } from "../lib/turso"
 import { HOST_INFO, broadcast } from "../state"
+import { designStateHookContext } from "./design-state"
 
 // Live canvas (PRJ-FL49 P5): the store on companion.db (its own lazy connection)
 // and the tri-state status, pushed as `canvas` frames. Ops:
@@ -156,7 +157,9 @@ export function referencesFor(who: { key?: string; sessionId?: string; brain?: b
 // budget; any error is "" so it can never cost the prompt its fromPhone note.
 export function canvasHookContext(who: { key?: string; sessionId?: string; brain?: boolean }): string {
   try {
-    return referenceContext(referencesFor(who))
+    const refs = referenceContext(referencesFor(who))
+    const design = designStateHookContext()
+    return [refs, design].filter(Boolean).join("\n\n")
   } catch (err) {
     console.error("[canvas] hook context failed:", err)
     return ""

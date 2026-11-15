@@ -44,6 +44,8 @@ export interface CanvasRouteDeps {
   references: (who: { key?: string; brain?: boolean }) => CanvasNode[]
   /** Type a preview pick into the agent that posted it; null = no live session, stored only (wiring/canvas.ts). */
   pickNotify: (node: CanvasNode, canDeliver?: () => boolean) => Promise<SendResult | null>
+  /** Notify design-state service when a direction/frame card is picked. */
+  onPick?: (node: CanvasNode) => void
   query: QueryFn
   now?: () => number
 }
@@ -99,6 +101,7 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       const p = deps.store.pickNode(pickId, now())
       if (!p.ok) return bad(p.error, p.error === "not_found" ? 404 : 400)
       for (const node of p.changed) frame("node", { node })
+      deps.onPick?.(p.node)
       // A double tap (or a second client) finds the claim held and types nothing.
       if (!p.claimed) return Response.json({ ok: true, node: p.node, delivered: p.sent, duplicate: true })
       // The pick is stored before typing: a refused inject still leaves it for GET /api/canvas.

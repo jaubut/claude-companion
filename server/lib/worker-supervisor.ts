@@ -62,6 +62,8 @@ export interface WorkerSupervisorDeps {
   bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
   /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
   linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
+  /** Live active design state summary appended automatically to headless worker prompts. */
+  designContext?(): string
 }
 
 export { workerStateFile }
@@ -363,7 +365,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
-        const invocation = buildHeadlessWorkerInvocation({ family, prompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
+        const dCtx = deps.designContext?.().trim() ?? ""
+        const effectivePrompt = dCtx && !prompt.startsWith("/") ? `${prompt}\n\n${dCtx}`.slice(0, PROMPT_MAX) : prompt
+        const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let resolveExit!: () => void
         const exitPromise = new Promise<void>((resolve) => { resolveExit = resolve })
