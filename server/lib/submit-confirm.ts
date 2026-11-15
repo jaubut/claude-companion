@@ -30,6 +30,19 @@ export const SUBMIT_WINDOW_MS = 3_000
 // phone's 12 s inject timeout (the Enter-retry path skips it: it already waited
 // a second window).
 export const LATE_HOOK_GRACE_MS = 6_000
+// A lost Enter is pressed again up to SUBMIT_RETRIES times, each followed by a
+// RETRY_WINDOW_MS wait for the hook. A box that empties after one of ours gets
+// the rest of LATE_HOOK_GRACE_MS, so the worst case stays window + grace.
+export const SUBMIT_RETRIES = 3
+export const RETRY_WINDOW_MS = 1_000
+// A multi-line or long prompt arrives as a bracketed paste (herdr `agent
+// prompt`) or a burst Claude Code reads as one, and the box shows
+// `[Pasted text #1 +2 lines]`, not the text. The Enter sent right behind it
+// can be swallowed while Claude Code is still taking the paste in
+// (2026-11-15, lead-tls-dashboard-v2). Re-read until the placeholder holds
+// still before pressing Enter on it.
+export const PASTE_SETTLE_MS = 300
+const PASTE_SETTLE_READS = 3
 
 // Who a UserPromptSubmit hook (or a watch) is about. Any non-empty field that
 // matches is enough: the hook's session key is derived from the same tty /
@@ -233,10 +246,39 @@ function textPrefix(text: string): string {
   return norm(text).slice(0, 16)
 }
 
-// Our text is still typed (not dim) on the input line: the Enter was lost.
+// Claude Code's stand-in for a paste, alone on the input line.
+const PASTE_RE = /^❯[\s ]*\[Pasted text #\d+[^\]]*\]\s*$/
+
+function pastedLine(pane: string): string | null {
+  const lines = unstyle(pane).split("\n")
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^❯/.test(lines[i] ?? "")) return PASTE_RE.test(lines[i]!) ? lines[i]!.trim() : null
+  }
+  return null
+}
+
+// Our text is still on the input line, typed (not dim) or as the paste
+// placeholder: the Enter was lost. The placeholder is ours: the inject guard
+// saw an empty box and we hold the pane since.
 function stillInBox(pane: string, prefix: string): boolean {
+  if (pastedLine(pane)) return true
   const typed = inputLine(pane)
   return !!prefix && !!typed && norm(typed).startsWith(prefix)
+}
+
+const sleep = (ms: number, clock: SubmitClock) => new Promise<void>((r) => clock.setTimeout(r, ms))
+
+// Re-read a pasted box until the placeholder reads the same twice (bounded).
+// Returns the last capture, or null when the pane can't be read.
+async function settledPaste(deps: ConfirmDeps, pane: string): Promise<string | null> {
+  let last = pane
+  for (let i = 0; i < PASTE_SETTLE_READS; i++) {
+    await sleep(PASTE_SETTLE_MS, deps.clock ?? realClock)
+    const next = await deps.capture()
+    if (next === null || !pastedLine(next) || pastedLine(next) === pastedLine(last)) return next
+    last = next
+  }
+  return last
 }
 
 // Claude is mid-turn and our text shows above the box (the queued-prompt
@@ -267,27 +309,39 @@ async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
   // Enter into an idle box.
   if (await deps.watch.wait(0, deps.clock)) return { ok: true, confirmed: true, retried: false }
 
-  // Retry ONLY when our own text is visibly sitting unsent in the input box
-  // and nothing modal is on screen. Anything else — an empty box, a picker, a
-  // panel — means the text went somewhere else, and an Enter there would
-  // answer a prompt nobody chose (review of PR #51, item 1).
-  let retried = false
-  if (stillInBox(before, prefix) && !PICKER_RE.test(unstyle(before))) {
-    retried = true
+  // Retry ONLY while our own text (or its paste placeholder) is visibly
+  // sitting unsent in the input box and nothing modal is on screen. Anything
+  // else — an empty box, a picker, a panel — means the text went somewhere
+  // else, and an Enter there would answer a prompt nobody chose (review of
+  // PR #51, item 1). Bounded: SUBMIT_RETRIES presses at most.
+  const pending = (pane: string | null): pane is string => pane !== null && stillInBox(pane, prefix) && !PICKER_RE.test(unstyle(pane))
+  let presses = 0
+  let seen: string | null = before
+  while (presses < SUBMIT_RETRIES && pending(seen)) {
+    if (pastedLine(seen)) {
+      seen = await settledPaste(deps, seen)
+      if (await deps.watch.wait(0, deps.clock)) return { ok: true, confirmed: true, retried: presses > 0 }
+      if (!pending(seen)) break
+    }
+    presses++
     await deps.pressEnter()
-    if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: true }
+    if (await deps.watch.wait(RETRY_WINDOW_MS, deps.clock)) return { ok: true, confirmed: true, retried: true }
+    seen = await deps.capture()
   }
+  const retried = presses > 0
 
-  const after = await deps.capture()
+  const after = retried ? seen : await deps.capture()
   if (after !== null && queuedBehindTurn(after, prefix)) return { ok: true, confirmed: false, queued: true }
   // A picker still means the text went into it, busy or not.
   const last = after ?? before
   if (!PICKER_RE.test(unstyle(last)) && (await deps.busy?.())) return { ok: true, confirmed: false, queued: true }
   // Our text is gone from the input line and nothing modal took it: it was
-  // most likely submitted and the hook is just late. Wait once more.
-  // Never for hookless input (/cmd, !cmd): no hook is coming.
-  if (!deps.hookless && !retried && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
-    if (await deps.watch.wait(deps.lateGraceMs ?? LATE_HOOK_GRACE_MS, deps.clock)) return { ok: true, confirmed: true, retried: false }
+  // most likely submitted and the hook is just late. Wait for what is left of
+  // the grace after the retries. Never for hookless input (/cmd, !cmd): no
+  // hook is coming.
+  if (!deps.hookless && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
+    const grace = (deps.lateGraceMs ?? LATE_HOOK_GRACE_MS) - presses * RETRY_WINDOW_MS
+    if (grace > 0 && (await deps.watch.wait(grace, deps.clock))) return { ok: true, confirmed: true, retried }
   }
   return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
 }

@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test"
-import { type ConfirmDeps, type SubmitClock, LATE_HOOK_GRACE_MS, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, injectConfirmed, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
+import { type ConfirmDeps, type SubmitClock, LATE_HOOK_GRACE_MS, PASTE_SETTLE_MS, RETRY_WINDOW_MS, SUBMIT_RETRIES, SUBMIT_WINDOW_MS, activeWatchCount, confirmSubmit, echoPromptOnInject, injectConfirmed, noteUserPromptSubmit, paneExcerpt, watchSubmit } from "./submit-confirm"
 import * as keyboard from "./keyboard-inject"
 import * as tmux from "./tmux-pane"
 import type { Herdr } from "./herdr"
@@ -115,14 +115,14 @@ test("retry-then-confirm: our text still in the box → one more Enter → hook 
   h.watch.close()
 })
 
-test("retry that still gets no hook → not_submitted, exactly one retry", async () => {
+test("retry that still gets no hook → not_submitted, exactly SUBMIT_RETRIES retries", async () => {
   const h = harness(STUCK)
   const result = confirmSubmit(h.deps)
   await h.c.advance(SUBMIT_WINDOW_MS)
-  await h.c.advance(SUBMIT_WINDOW_MS)
+  for (let i = 0; i < SUBMIT_RETRIES; i++) await h.c.advance(RETRY_WINDOW_MS)
   const r = await result
   expect(r.ok).toBe(false)
-  expect(h.presses.length).toBe(1)
+  expect(h.presses.length).toBe(SUBMIT_RETRIES)
   h.watch.close()
 })
 
@@ -223,7 +223,7 @@ test("a hook from another session does not confirm", async () => {
   noteUserPromptSubmit({ key: "claude:tty:/dev/pts/9", sessionId: "other", tty: "/dev/pts/9" })
   noteUserPromptSubmit({})
   await h.c.advance(SUBMIT_WINDOW_MS)
-  await h.c.advance(SUBMIT_WINDOW_MS)
+  for (let i = 0; i < SUBMIT_RETRIES; i++) await h.c.advance(RETRY_WINDOW_MS)
   expect((await result).ok).toBe(false)
   h.watch.close()
 })
@@ -279,10 +279,10 @@ test("no grace when our text is still typed in the box (that is the Enter-retry 
   const h = harness(STUCK)
   const result = confirmSubmit(h.deps)
   await h.c.advance(SUBMIT_WINDOW_MS)
-  await h.c.advance(SUBMIT_WINDOW_MS)
+  for (let i = 0; i < SUBMIT_RETRIES; i++) await h.c.advance(RETRY_WINDOW_MS)
   const r = await result
   expect(r.ok).toBe(false)
-  expect(h.presses).toEqual([1])
+  expect(h.presses).toEqual([1, 1, 1])
   h.watch.close()
 })
 
@@ -291,5 +291,68 @@ test("no grace with a picker on screen: the text went into it", async () => {
   const result = confirmSubmit(h.deps)
   await h.c.advance(SUBMIT_WINDOW_MS)
   expect((await result).ok).toBe(false)
+  h.watch.close()
+})
+
+// 2026-11-15, lead-tls-dashboard-v2: a 3-line brief went in as a bracketed
+// paste; Claude Code collapsed it to a placeholder and the Enter that came
+// with it was lost. The box held our paste, not our text, so no retry fired.
+const PASTED = box("❯ [Pasted text #1 +2 lines]")
+
+test("paste placeholder in the box: settles, then Enter → hook confirms", async () => {
+  const h = harness(PASTED)
+  h.deps.text = "line one\nline two\nline three"
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  expect(h.presses).toEqual([])
+  await h.c.advance(PASTE_SETTLE_MS)
+  expect(h.presses).toEqual([1])
+  noteUserPromptSubmit({ key: ID.key })
+  expect(await result).toEqual({ ok: true, confirmed: true, retried: true })
+  h.watch.close()
+})
+
+test("paste placeholder still growing: no Enter until two reads agree", async () => {
+  const h = harness([box("❯ [Pasted text #1 +2 lines]"), box("❯ [Pasted text #1 +9 lines]"), box("❯ [Pasted text #1 +9 lines]")])
+  h.deps.text = "a\nlong\nbrief"
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  await h.c.advance(PASTE_SETTLE_MS)
+  expect(h.presses).toEqual([])
+  await h.c.advance(PASTE_SETTLE_MS)
+  expect(h.presses).toEqual([1])
+  noteUserPromptSubmit({ key: ID.key })
+  expect(await result).toEqual({ ok: true, confirmed: true, retried: true })
+  h.watch.close()
+})
+
+test("Enter lost again: retried up to SUBMIT_RETRIES, then not_submitted", async () => {
+  const h = harness(PASTED)
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  for (let i = 0; i < SUBMIT_RETRIES; i++) {
+    await h.c.advance(PASTE_SETTLE_MS)
+    expect(h.presses.length).toBe(i + 1)
+    await h.c.advance(RETRY_WINDOW_MS)
+  }
+  const r = await result
+  expect(r.ok).toBe(false)
+  expect(h.presses.length).toBe(SUBMIT_RETRIES)
+  h.watch.close()
+})
+
+test("second Enter submits: box empties, the late hook still confirms", async () => {
+  // before, settle read, after Enter 1, settle read, after Enter 2 (empty)
+  const h = harness([PASTED, PASTED, PASTED, PASTED, box("❯ ")])
+  const result = confirmSubmit(h.deps)
+  await h.c.advance(SUBMIT_WINDOW_MS)
+  await h.c.advance(PASTE_SETTLE_MS)
+  await h.c.advance(RETRY_WINDOW_MS)
+  await h.c.advance(PASTE_SETTLE_MS)
+  expect(h.presses).toEqual([1, 1])
+  await h.c.advance(RETRY_WINDOW_MS)
+  noteUserPromptSubmit({ key: ID.key })
+  expect(await result).toEqual({ ok: true, confirmed: true, retried: true })
+  expect(h.presses).toEqual([1, 1])
   h.watch.close()
 })

@@ -3,7 +3,7 @@ import type { ServerWebSocket, WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
 import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
-import { injectRefusal } from "./lib/inject-guard"
+import { awaitPrompt, injectRefusal } from "./lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "./lib/secret-store"
 import { isSuperAuto } from "./lib/super-auto"
 import { clearWaitingForTarget, resolveSession, listSessions, waitingSummary } from "./lib/sessions"
@@ -171,7 +171,7 @@ export const websocket: WebSocketHandler<WsData> = {
           const refusal = injectRefusal({
             lookup, target, paneFree,
             dialog: paneFree ? await openDialogFor(target) : null,
-            pane: paneFree ? await screenSnapshotFor(target) : undefined,
+            pane: paneFree ? await awaitPrompt(() => screenSnapshotFor(target), target?.firstSeenAt) : undefined,
             paneWidth: paneFree ? await paneWidthFor(target) : undefined,
           })
           if (refusal) {

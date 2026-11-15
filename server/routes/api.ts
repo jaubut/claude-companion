@@ -7,7 +7,7 @@ import { workerSupervisor } from "../wiring/worker-mcp"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
 import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
-import { injectRefusal } from "../lib/inject-guard"
+import { awaitPrompt, injectRefusal } from "../lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
@@ -482,7 +482,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
   const refusal = injectRefusal({
     lookup, target, paneFree,
     dialog: paneFree ? await openDialogFor(target) : null,
-    pane: paneFree ? await screenSnapshotFor(target) : undefined,
+    pane: paneFree ? await awaitPrompt(() => screenSnapshotFor(target), target?.firstSeenAt) : undefined,
     paneWidth: paneFree ? await paneWidthFor(target) : undefined,
   })
   if (refusal) {
