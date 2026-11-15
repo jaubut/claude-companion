@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 196,
+          "lines": 198,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -123,7 +123,8 @@
             "wiring/brain.ts",
             "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
-            "wiring/auto-deploy.ts"
+            "wiring/auto-deploy.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -197,7 +198,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1289,
+          "lines": 1293,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -260,7 +261,8 @@
             "lib/question-driver.ts",
             "lib/transcript.ts",
             "lib/transcript-cursor.ts",
-            "lib/transcript-backfill.ts"
+            "lib/transcript-backfill.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2196,6 +2198,26 @@
           "imports": [
             "lib/log.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/handoff-claim.ts",
+          "lines": 57,
+          "kind": "lib",
+          "exports": [
+            "handoffKeysPath",
+            "ClaimCheck",
+            "mintHandoffClaim",
+            "verifyHandoffClaim"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -6368,7 +6390,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 194,
+          "lines": 206,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6380,6 +6402,7 @@
             "WorkerTaskStatus",
             "StreamJsonEvent",
             "parseStreamJsonLine",
+            "scrubAgentEnv",
             "buildWorkerEnv",
             "resolveWorkerFamily",
             "buildHeadlessClaudeArgs",
@@ -6401,7 +6424,7 @@
         },
         {
           "path": "lib/worker-mcp.ts",
-          "lines": 269,
+          "lines": 271,
           "kind": "lib",
           "exports": [
             "WORKER_MCP_TOOLS",
@@ -6426,8 +6449,56 @@
           "externals": []
         },
         {
+          "path": "lib/worker-pid.ts",
+          "lines": 32,
+          "kind": "lib",
+          "exports": [
+            "defaultIsPidAlive",
+            "defaultKillPid",
+            "defaultGetPidIdentity"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-pr-link.ts",
+          "lines": 143,
+          "kind": "lib",
+          "exports": [
+            "OWNABLE",
+            "LinkOutcome",
+            "bindWorkerTask",
+            "linkWorkerPr",
+            "workerReceipt",
+            "Linked",
+            "backfillWorkerPrLinks"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/handoff-claim.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-progress-trace.ts",
-          "lines": 88,
+          "lines": 85,
           "kind": "lib",
           "exports": [
             "WorkerProgressTraceDeps",
@@ -6441,6 +6512,7 @@
           "apiCalls": [],
           "imports": [
             "lib/brain-trace.ts",
+            "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts"
           ],
           "listeners": [],
@@ -6449,18 +6521,16 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 575,
+          "lines": 581,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
+            "ClaimStatus",
             "SupervisedTaskSnapshot",
             "SpawnedWorkerHandle",
             "SpawnWorkerOpts",
             "WorkerSupervisorDeps",
             "defaultResolveRepoDir",
-            "defaultIsPidAlive",
-            "defaultKillPid",
-            "defaultGetPidIdentity",
             "defaultSpawnWorker",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -6476,6 +6546,31 @@
             "lib/jev-model-router.ts",
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-pid.ts",
+            "lib/worker-task-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-task-store.ts",
+          "lines": 42,
+          "kind": "lib",
+          "exports": [
+            "workerStateFile",
+            "PersistedTaskRecord",
+            "saveTaskRecords",
+            "loadTaskRecords"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts"
           ],
           "listeners": [],
@@ -6484,7 +6579,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 591,
+          "lines": 592,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -6794,7 +6889,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 402,
+          "lines": 405,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6815,6 +6910,7 @@
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
             "lib/vault-guard.ts",
+            "lib/worker-invocation.ts",
             "wiring/brain.ts",
             "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
@@ -7911,7 +8007,7 @@
         },
         {
           "path": "wiring/brain-handoff.ts",
-          "lines": 52,
+          "lines": 58,
           "kind": "lib",
           "exports": [
             "HandoffInput",
@@ -7928,6 +8024,7 @@
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "lib/dispatch-tasks.ts",
+            "lib/handoff-claim.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/turso.ts",
@@ -7972,7 +8069,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 267,
+          "lines": 270,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -9223,12 +9320,13 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 131,
+          "lines": 154,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
             "workerSupervisor",
             "startWorkerSessionPrune",
+            "replayWorkerPrLinks",
             "workerMcp"
           ],
           "state": [
@@ -9242,11 +9340,15 @@
             "lib/brain.ts",
             "lib/dispatch-tasks.ts",
             "lib/live-repo.ts",
+            "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/session-prune-gone.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
             "lib/worker-mcp.ts",
+            "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
@@ -9499,6 +9601,12 @@
             "wiring/shell-sessions.ts",
             "wiring/worker-mcp.ts",
             "ws.ts"
+          ]
+        },
+        "replayWorkerPrLinks": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "brainEnabled": {
@@ -10195,6 +10303,12 @@
             "lib/agy-feed.ts"
           ]
         },
+        "scrubAgentEnv": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
         "ApnsEnv": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -10254,6 +10368,7 @@
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
             "lib/voice-memo.ts",
+            "lib/worker-pr-link.ts",
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#DELETE /api/learned",
@@ -10318,6 +10433,7 @@
             "wiring/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -10751,6 +10867,7 @@
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
+            "lib/worker-pr-link.ts",
             "routes/my-tasks.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
@@ -12229,6 +12346,7 @@
           "module": "lib/triage-pr.ts",
           "callers": [
             "lib/merge-gate.ts",
+            "lib/worker-pr-link.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -14601,10 +14719,34 @@
             "lib/worker-mcp.ts"
           ]
         },
+        "verifyHandoffClaim": {
+          "module": "lib/handoff-claim.ts",
+          "callers": [
+            "lib/worker-pr-link.ts"
+          ]
+        },
+        "TASK_ID_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts"
+          ]
+        },
+        "REPO_NAME_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts",
+            "routes/brain.ts"
+          ]
+        },
         "SupervisedTaskSnapshot": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
             "lib/worker-progress-trace.ts",
+            "lib/worker-task-store.ts",
             "wiring/worker-mcp.ts"
           ]
         },
@@ -14615,6 +14757,13 @@
             "wiring/brain-activity.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "workerReceipt": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "lib/worker-progress-trace.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "rowId": {
@@ -14646,18 +14795,6 @@
             "lib/worker-progress-trace.ts",
             "wiring/brain-workers.ts",
             "wiring/events.ts"
-          ]
-        },
-        "TASK_ID_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "REPO_NAME_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
           ]
         },
         "SAFE_IDENTIFIER_RE": {
@@ -14751,6 +14888,48 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-lead.ts",
             "wiring/resolver.ts"
+          ]
+        },
+        "workerStateFile": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "PersistedTaskRecord": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultIsPidAlive": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetPidIdentity": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "saveTaskRecords": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "loadTaskRecords": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
           ]
         },
         "clearStaleGitConfigLock": {
@@ -16214,7 +16393,8 @@
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "MyTasksResponse": {
@@ -16984,7 +17164,8 @@
             "wiring/brain-task-cancel.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "KeepNote": {
@@ -17284,6 +17465,12 @@
           "callers": [
             "wiring/brain-handoff.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "mintHandoffClaim": {
+          "module": "lib/handoff-claim.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
           ]
         },
         "fileHandoff": {
@@ -19130,14 +19317,26 @@
             "wiring/worker-mcp.ts"
           ]
         },
-        "receiptText": {
-          "module": "lib/worker-progress-trace.ts",
+        "bindWorkerTask": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "linkWorkerPr": {
+          "module": "lib/worker-pr-link.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]
         },
         "startGoneSessionPrune": {
           "module": "lib/session-prune-gone.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "backfillWorkerPrLinks": {
+          "module": "lib/worker-pr-link.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

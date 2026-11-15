@@ -433,7 +433,7 @@ export async function fileTask(ctx: WriteCtx, input: FileInput): Promise<{ id: s
  * dispatch-run's. No status and a non-agent assignee keep dispatch-run, pm-nightly and the PM off it. Not `pending`: the
  * relay's ACK refuses that state.
  */
-export async function fileHandoff(ctx: WriteCtx, input: Pick<FileInput, "id" | "noteId" | "title" | "description"> & { origin: "jeremie" | "unknown" }): Promise<{ id: string; inserted: boolean }> {
+export async function fileHandoff(ctx: WriteCtx, input: Pick<FileInput, "id" | "noteId" | "title" | "description"> & { origin: "jeremie" | "unknown"; claim?: { repo: string; turnId: string; kid: string } }): Promise<{ id: string; inserted: boolean }> {
   const title = input.title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX)
   const { affected } = await ctx.exec(
     `INSERT OR IGNORE INTO tasks (id, note_id, text, description, done, position, assignee, ${ctx.cols.origin ? "origin, " : ""}created_at, updated_at) ` +
@@ -441,7 +441,7 @@ export async function fileHandoff(ctx: WriteCtx, input: Pick<FileInput, "id" | "
     [input.id, input.noteId, title, input.description, input.noteId, ...(ctx.cols.origin ? [input.origin] : [])],
   )
   const inserted = affected > 0
-  if (inserted) await ledger(ctx, { id: input.id, agent: "handoff" }, "handoff", `→handoff: ${title}`, { op: "file", note: input.noteId, origin: input.origin })
+  if (inserted) await ledger(ctx, { id: input.id, agent: "handoff" }, "handoff", `→handoff: ${title}`, { op: "file", note: input.noteId, origin: input.origin, ...input.claim })
   return { id: input.id, inserted }
 }
 

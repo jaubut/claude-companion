@@ -1,4 +1,5 @@
 import { type TraceRow, getRow, rowId, upsertRow } from "./brain-trace"
+import { workerReceipt } from "./worker-pr-link"
 import type { SupervisedTaskSnapshot } from "./worker-supervisor"
 
 // One live brain_trace card per headless worker turn (row `headless:<jobId>`):
@@ -20,11 +21,7 @@ export interface WorkerProgressTraceDeps {
 
 /** The receipt posted to the brain thread when a turn ends (it wakes the brain). */
 export function receiptText(t: Snap): string {
-  if (t.status === "completed") {
-    const result = t.result ? `\nResult: ${t.result.slice(0, 600)}` : ""
-    return t.prUrl ? `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${result}` : `completed [${t.taskId}] ${t.repo} — ${t.title}${result}`
-  }
-  return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}`
+  return workerReceipt(t)
 }
 
 const cardId = (t: Snap): string => rowId.headless(t.turnCount <= 1 ? t.taskId : `${t.taskId}:t${t.turnCount}`)
