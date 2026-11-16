@@ -8,11 +8,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 277 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1298)
+⚠ over cap: `lib/agy-feed.ts` (1275)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/agy-feed.ts` | 1298 ⚠ 1298 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
+| `lib/agy-feed.ts` | 1275 ⚠ 1275 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |

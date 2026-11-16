@@ -579,7 +579,7 @@ export function inferAgyTranscriptStatus(sessionId: string, home = homedir(), db
       }
     }
 
-    if (lastStep.type === "USER_INPUT" || lastStep.type === "GENERIC") {
+    if (lastStep.type === "USER_INPUT" || lastStep.type === "GENERIC" || lastStep.type === "SYSTEM_MESSAGE") {
       return "busy"
     }
 
@@ -843,6 +843,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
   const polledIds = new Set<string>()
   for (const c of convos) {
     polledIds.add(c.id)
+    if (brainState.sessionId && c.id === brainState.sessionId && activeAgyProcs.has(AGY_BRAIN_KEY)) c.status = "busy"
     events.push(...readAgyTranscriptDelta(c, home))
   }
   if (brainState.sessionId && !polledIds.has(brainState.sessionId) && existsSync(agyTranscriptPath(brainState.sessionId, home))) {
@@ -965,16 +966,11 @@ export function readAgyTranscriptDelta(
     start = Math.max(0, size - FIRST_READ_TAIL_BYTES)
   }
 
+  const canClearActivity = Boolean(ident.key && !identOverride && !(ident.key === AGY_BRAIN_KEY && activeAgyProcs.has(AGY_BRAIN_KEY)))
   if (size <= start) {
     offsets.set(path, size)
-    if (convo.status === "idle" && ident.key) {
-      clearExternalSessionActivity({
-        cwd: ident.cwd ?? "",
-        sessionId: ident.sessionId,
-        tty: ident.tty,
-        transcriptPath: path,
-        sessionKey: ident.key,
-      })
+    if (convo.status === "idle" && canClearActivity) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
     }
     return []
   }
@@ -984,14 +980,8 @@ export function readAgyTranscriptDelta(
   let bytesRead = 0
   try {
     const fd = openSync(path, "r")
-    try {
-      bytesRead = readSync(fd, buf, 0, readLen, start)
-    } finally {
-      closeSync(fd)
-    }
-  } catch {
-    return []
-  }
+    try { bytesRead = readSync(fd, buf, 0, readLen, start) } finally { closeSync(fd) }
+  } catch { return [] }
   if (bytesRead <= 0) return []
 
   const slice = buf.subarray(0, bytesRead)
@@ -1010,14 +1000,8 @@ export function readAgyTranscriptDelta(
 
   const body = bodySlice.toString("utf8")
   if (!body.trim()) {
-    if (convo.status === "idle" && ident.key) {
-      clearExternalSessionActivity({
-        cwd: ident.cwd ?? "",
-        sessionId: ident.sessionId,
-        tty: ident.tty,
-        transcriptPath: path,
-        sessionKey: ident.key,
-      })
+    if (convo.status === "idle" && canClearActivity) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
     }
     return []
   }
@@ -1028,9 +1012,7 @@ export function readAgyTranscriptDelta(
   for (const line of lines) {
     const stepEvents = parseAgyTranscriptLine(line, ident, convo.id, undefined, { transcriptPath: path, home })
     for (const ev of stepEvents) {
-      if (!firstRead && isDuplicateInjectedUserPrompt(ev, convo.id, ident)) {
-        continue
-      }
+      if (!firstRead && isDuplicateInjectedUserPrompt(ev, convo.id, ident)) continue
       out.push(ev)
     }
   }
@@ -1038,21 +1020,16 @@ export function readAgyTranscriptDelta(
   syncAgyOpenQuestion(lines, convo, ident, home)
   if (ident.key) {
     const lastStatusEvent = [...out].reverse().find(
-      (e) => e.kind === "tool_start" || e.kind === "tool_end" || e.kind === "assistant_text",
+      (e) => e.kind === "tool_start" || e.kind === "tool_end" || e.kind === "assistant_text" || e.kind === "assistant_thinking" || e.kind === "user_prompt",
     )
-    if (convo.status === "idle" || lastStatusEvent?.kind === "assistant_text") {
-      clearExternalSessionActivity({
-        cwd: ident.cwd ?? "",
-        sessionId: ident.sessionId,
-        tty: ident.tty,
-        transcriptPath: path,
-        sessionKey: ident.key,
-      })
-    } else if (!firstRead && convo.status === "busy" && lastStatusEvent?.kind === "tool_start") {
+    if ((convo.status === "idle" || lastStatusEvent?.kind === "assistant_text") && canClearActivity) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
+    } else if (!firstRead && convo.status === "busy" && lastStatusEvent) {
+      const isTool = lastStatusEvent.kind === "tool_start"
       syncExternalToolActivity({
-        verb: verbFor(lastStatusEvent.tool ?? "tool"),
-        tool: lastStatusEvent.tool ?? "tool",
-        summary: lastStatusEvent.summary ?? "",
+        verb: isTool ? verbFor(lastStatusEvent.tool ?? "tool") : "Thinking",
+        tool: isTool ? (lastStatusEvent.tool ?? "tool") : "gemini",
+        summary: isTool ? (lastStatusEvent.summary ?? "") : (lastStatusEvent.text?.slice(0, 80) ?? "Orchestrator"),
         cwd: ident.cwd ?? "",
         sessionId: ident.sessionId,
         tty: ident.tty,
