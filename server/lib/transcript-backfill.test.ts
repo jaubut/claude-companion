@@ -368,6 +368,8 @@ describe("transcript backfill", () => {
 
     expect(extractAgyUserPrompt("<USER_REQUEST>\n/boost Audit the Companion failover flow\n</USER_REQUEST>"))
       .toBe("Audit the Companion failover flow")
+    expect(extractAgyUserPrompt("<USER_REQUEST>\nLmk when the cad is done\n\n[Active Design State] file=Untitled (/Users/jeremieaubut/intent-profiler/reference-sites.figcraft) brand=tls theme=light primary=#171717\n</USER_REQUEST>"))
+      .toBe("Lmk when the cad is done")
   })
 
   test("Brain · Boost child subagents are discovered from escaped conversationIds in the root transcript tail", async () => {

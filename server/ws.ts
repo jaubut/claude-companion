@@ -15,6 +15,7 @@ import { announceWaiting } from "./wiring/waiting"
 import { copyJobs } from "./wiring/copy-jobs"
 import { builderJobs } from "./wiring/builder-jobs"
 import { canvasSnapshot } from "./wiring/canvas"
+import { designStateSnapshotFrame } from "./wiring/design-state"
 import { wireSessions } from "./lib/shell-sessions"
 import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
 import { mirrorClose, mirrorMessage, mirrorOpen } from "./wiring/pane-mirror"
@@ -67,6 +68,8 @@ export const websocket: WebSocketHandler<WsData> = {
     // The canvas board + tri-state status (wiring/canvas.ts), only when the board has nodes.
     const canvas = canvasSnapshot()
     if (canvas) ws.send(JSON.stringify(canvas))
+    const designFrame = designStateSnapshotFrame()
+    if (designFrame) ws.send(JSON.stringify(designFrame))
     for (const req of pendingList) {
       ws.send(JSON.stringify({
         type: "approval",
