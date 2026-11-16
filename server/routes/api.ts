@@ -451,14 +451,18 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
     }
     const { cleared } = clearWaitingForTarget(explicit, "turn-end")
     announceWaiting(cleared)
+    if (target.herdrPane === AGY_BRAIN_PANE) {
+      const ok = deliverHeadlessAgyBrainTurn({ prompt: text, cwd: target.cwd, model: target.model })
+      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
+    }
+    if (target.herdrPane.startsWith("headless:agy:")) {
+      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text, model: target.model })
+      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
+    }
     recordUserPrompt({ text, cwd: target.cwd, sessionId: target.sessionId, tty: target.tty, sessionKey: target.key })
     if (target.herdrPane === "headless:brain") {
       const r = await headlessBrainRunner.deliver(text)
       return r.ok ? Response.json({ ok: true, confirmed: true }) : r
-    }
-    if (target.herdrPane === AGY_BRAIN_PANE) {
-      const ok = deliverHeadlessAgyBrainTurn({ prompt: text, cwd: target.cwd, model: target.model })
-      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
     }
     if (target.herdrPane.startsWith("headless:worker:")) {
       const taskId = target.taskId || target.herdrPane.slice("headless:worker:".length)
@@ -468,14 +472,11 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
         // A known task keeps its recorded family+model; the session's model is a display value (picker changes go through setTaskModel).
         prompt: text, mode: "auto",
         ...(existing ? {} : { family: target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude", model: target.model || undefined }),
+        inheritClaim: true, // Jeremie's own channel (Bearer): his follow-up resumes a bound task with its stored claim
       })
       return dispatched.ok
         ? Response.json({ ok: true, confirmed: true })
         : Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
-    }
-    if (target.herdrPane.startsWith("headless:agy:")) {
-      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text, model: target.model })
-      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
     }
   }
 

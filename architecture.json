@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-15",
+  "generatedAt": "2026-11-16",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 196,
+          "lines": 218,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -76,6 +76,7 @@
             "lib/auth.ts",
             "lib/json-body.ts",
             "state.ts",
+            "routes/github-webhook.ts",
             "routes/hooks.ts",
             "routes/api.ts",
             "routes/orchestrator.ts",
@@ -103,8 +104,10 @@
             "routes/tasks-agent.ts",
             "wiring/tasks-agent.ts",
             "routes/canvas.ts",
+            "routes/design-state.ts",
             "lib/turso.ts",
             "wiring/canvas.ts",
+            "wiring/design-state.ts",
             "lib/vault-guard.ts",
             "lib/request-gate.ts",
             "ws.ts",
@@ -123,7 +126,8 @@
             "wiring/brain.ts",
             "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
-            "wiring/auto-deploy.ts"
+            "wiring/auto-deploy.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -197,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1289,
+          "lines": 1298,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -260,7 +264,9 @@
             "lib/question-driver.ts",
             "lib/transcript.ts",
             "lib/transcript-cursor.ts",
-            "lib/transcript-backfill.ts"
+            "lib/transcript-backfill.ts",
+            "lib/design-state.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1712,6 +1718,36 @@
           "externals": []
         },
         {
+          "path": "lib/design-state.ts",
+          "lines": 382,
+          "kind": "lib",
+          "exports": [
+            "DesignStateSnapshot",
+            "DesignStatePatch",
+            "DesignStateDeps",
+            "formatDesignStatePrompt",
+            "withDesignStatePrompt",
+            "createDesignStateService",
+            "DesignStateService",
+            "registerActiveDesignPromptProvider",
+            "withActiveDesignStatePrompt"
+          ],
+          "state": [
+            "ALLOWED_SCALES: Set",
+            "let activePromptProvider"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/figcraft.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/dialog-watch.ts",
           "lines": 250,
           "kind": "lib",
@@ -2108,6 +2144,38 @@
           "externals": []
         },
         {
+          "path": "lib/figcraft.ts",
+          "lines": 227,
+          "kind": "lib",
+          "exports": [
+            "FigcraftFrameSummary",
+            "FigcraftPageSummary",
+            "FigcraftFileEntry",
+            "DesignBrandTokens",
+            "CliResult",
+            "CliRunner",
+            "FRAME_LIMIT",
+            "CONTROL_CHARS_RE",
+            "sanitizeDesignText",
+            "safeRealpath",
+            "resolveAllowedFigcraftPath",
+            "defaultCliRunner",
+            "parseFigcraftInfoOutput",
+            "parseThemeCssTokens",
+            "discoverFigcraftFiles",
+            "readThemeCssCached"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/front-door.ts",
           "lines": 205,
           "kind": "lib",
@@ -2196,6 +2264,58 @@
           "imports": [
             "lib/log.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/github-webhook.ts",
+          "lines": 261,
+          "kind": "lib",
+          "exports": [
+            "TargetHost",
+            "GithubIssueDispatch",
+            "GithubWebhookAction",
+            "githubWebhookSecretPath",
+            "getGithubWebhookSecret",
+            "verifyGithubSignature",
+            "buildGithubIssueTaskId",
+            "allowedWebhookOwners",
+            "parseGithubWebhookEvent",
+            "buildGithubIssuePrompt"
+          ],
+          "state": [
+            "TRIGGER_ACTIONS: Set",
+            "SKIP_LABELS: Set",
+            "REDISPATCH_LABELS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/handoff-claim.ts",
+          "lines": 57,
+          "kind": "lib",
+          "exports": [
+            "handoffKeysPath",
+            "ClaimCheck",
+            "mintHandoffClaim",
+            "verifyHandoffClaim"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4189,14 +4309,15 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 86,
+          "lines": 96,
           "kind": "lib",
           "exports": [
             "hostAllowed",
             "tailscaleNameOf",
             "refreshTailscaleName",
             "watchTailscaleName",
-            "hookCallerAllowed"
+            "hookCallerAllowed",
+            "funnelRequestAllowed"
           ],
           "state": [
             "NAMES: Set",
@@ -6347,7 +6468,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 203,
+          "lines": 215,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6359,6 +6480,7 @@
             "WorkerTaskStatus",
             "StreamJsonEvent",
             "parseStreamJsonLine",
+            "scrubAgentEnv",
             "buildWorkerEnv",
             "resolveWorkerFamily",
             "modelFitsFamily",
@@ -6381,7 +6503,7 @@
         },
         {
           "path": "lib/worker-mcp.ts",
-          "lines": 269,
+          "lines": 271,
           "kind": "lib",
           "exports": [
             "WORKER_MCP_TOOLS",
@@ -6406,8 +6528,56 @@
           "externals": []
         },
         {
+          "path": "lib/worker-pid.ts",
+          "lines": 32,
+          "kind": "lib",
+          "exports": [
+            "defaultIsPidAlive",
+            "defaultKillPid",
+            "defaultGetPidIdentity"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-pr-link.ts",
+          "lines": 143,
+          "kind": "lib",
+          "exports": [
+            "OWNABLE",
+            "LinkOutcome",
+            "bindWorkerTask",
+            "linkWorkerPr",
+            "workerReceipt",
+            "Linked",
+            "backfillWorkerPrLinks"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/handoff-claim.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-progress-trace.ts",
-          "lines": 88,
+          "lines": 85,
           "kind": "lib",
           "exports": [
             "WorkerProgressTraceDeps",
@@ -6421,6 +6591,7 @@
           "apiCalls": [],
           "imports": [
             "lib/brain-trace.ts",
+            "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts"
           ],
           "listeners": [],
@@ -6429,18 +6600,16 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 579,
+          "lines": 589,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
+            "ClaimStatus",
             "SupervisedTaskSnapshot",
             "SpawnedWorkerHandle",
             "SpawnWorkerOpts",
             "WorkerSupervisorDeps",
             "defaultResolveRepoDir",
-            "defaultIsPidAlive",
-            "defaultKillPid",
-            "defaultGetPidIdentity",
             "defaultSpawnWorker",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -6456,6 +6625,31 @@
             "lib/jev-model-router.ts",
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-pid.ts",
+            "lib/worker-task-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-task-store.ts",
+          "lines": 42,
+          "kind": "lib",
+          "exports": [
+            "workerStateFile",
+            "PersistedTaskRecord",
+            "saveTaskRecords",
+            "loadTaskRecords"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts"
           ],
           "listeners": [],
@@ -6464,7 +6658,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 593,
+          "lines": 594,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -6774,7 +6968,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 402,
+          "lines": 405,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -6795,6 +6989,7 @@
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
             "lib/vault-guard.ts",
+            "lib/worker-invocation.ts",
             "wiring/brain.ts",
             "wiring/brain-handoff.ts",
             "wiring/brain-todo.ts",
@@ -6845,7 +7040,7 @@
         },
         {
           "path": "routes/canvas.ts",
-          "lines": 207,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "CanvasRouteDeps",
@@ -6977,6 +7172,29 @@
           "externals": []
         },
         {
+          "path": "routes/design-state.ts",
+          "lines": 109,
+          "kind": "lib",
+          "exports": [
+            "DesignStateRouteDeps",
+            "createDesignStateRoute",
+            "handleDesignStateRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/design-state.ts",
+            "lib/json-body.ts",
+            "wiring/design-state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "routes/dialogs.ts",
           "lines": 104,
           "kind": "route-host",
@@ -7061,6 +7279,31 @@
             "lib/gauge.ts",
             "lib/vault-guard.ts",
             "wiring/gauge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/github-webhook.ts",
+          "lines": 66,
+          "kind": "lib",
+          "exports": [
+            "GithubWebhookRouteDeps",
+            "GITHUB_WEBHOOK_PATH",
+            "createGithubWebhookRoute",
+            "handleGithubWebhookRoute"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/github-webhook.ts",
+            "state.ts",
+            "wiring/github-webhook.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7891,7 +8134,7 @@
         },
         {
           "path": "wiring/brain-handoff.ts",
-          "lines": 52,
+          "lines": 58,
           "kind": "lib",
           "exports": [
             "HandoffInput",
@@ -7908,6 +8151,7 @@
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "lib/dispatch-tasks.ts",
+            "lib/handoff-claim.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/turso.ts",
@@ -7952,7 +8196,7 @@
         },
         {
           "path": "wiring/brain-lead.ts",
-          "lines": 267,
+          "lines": 270,
           "kind": "lib",
           "exports": [
             "leadArgs",
@@ -8337,7 +8581,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 200,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "canvasStore",
@@ -8367,7 +8611,8 @@
             "lib/log.ts",
             "lib/sessions.ts",
             "lib/turso.ts",
-            "state.ts"
+            "state.ts",
+            "wiring/design-state.ts"
           ],
           "listeners": [
             "onSessions",
@@ -8393,6 +8638,42 @@
           "imports": [
             "lib/copy-jobs.ts",
             "lib/session-resolve.ts",
+            "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/design-state.ts",
+          "lines": 101,
+          "kind": "lib",
+          "exports": [
+            "startDesignStateWatcher",
+            "stopDesignStateWatcher",
+            "getDesignStateSnapshot",
+            "designStateSnapshotFrame",
+            "refreshDesignState",
+            "updateDesignState",
+            "syncDesignStateFromCanvasPick",
+            "designStateHookContext",
+            "appendDesignStatePrompt",
+            "renderFigcraftNodePreview",
+            "exportDesignTokens"
+          ],
+          "state": [
+            "let service",
+            "let activeForHooks",
+            "let unsub"
+          ],
+          "emits": [
+            "design_state"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/design-state.ts",
             "state.ts"
           ],
           "listeners": [],
@@ -8595,6 +8876,35 @@
             "lib/sessions.ts",
             "state.ts",
             "wiring/auto-compact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/github-webhook.ts",
+          "lines": 220,
+          "kind": "lib",
+          "exports": [
+            "McpToolOutcome",
+            "GithubWebhookDispatcherDeps",
+            "GithubWebhookResult",
+            "createGithubWebhookDispatcher",
+            "GithubWebhookDispatcher",
+            "githubWebhookDispatcher"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/github-webhook.ts",
+            "lib/log.ts",
+            "lib/triage-pr.ts",
+            "lib/worker-supervisor.ts",
+            "state.ts",
+            "wiring/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9203,11 +9513,12 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 125,
+          "lines": 149,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
             "workerSupervisor",
+            "replayWorkerPrLinks",
             "workerMcp"
           ],
           "state": [
@@ -9221,15 +9532,20 @@
             "lib/brain.ts",
             "lib/dispatch-tasks.ts",
             "lib/live-repo.ts",
+            "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
             "lib/worker-mcp.ts",
+            "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
             "wiring/brain.ts",
             "wiring/builder-jobs.ts",
+            "wiring/design-state.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
           ],
@@ -9239,7 +9555,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 244,
+          "lines": 247,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -9277,6 +9593,7 @@
             "wiring/copy-jobs.ts",
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
+            "wiring/design-state.ts",
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
             "wiring/pane-mirror.ts",
@@ -9321,6 +9638,7 @@
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
+            "wiring/design-state.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -9367,6 +9685,66 @@
             "companion-server.ts"
           ]
         },
+        "createCanvasRoute": {
+          "module": "routes/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStore": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasStatus": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "HOST_INFO": {
+          "module": "state.ts",
+          "callers": [
+            "companion-server.ts",
+            "routes/api.ts#* /api/status",
+            "routes/github-webhook.ts",
+            "wiring/body-agent.ts",
+            "wiring/brain.ts",
+            "wiring/canvas.ts",
+            "wiring/github-webhook.ts",
+            "wiring/orchestrator.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts",
+            "ws.ts"
+          ]
+        },
+        "canvasSend": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "referencesFor": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "canvasPickNotify": {
+          "module": "wiring/canvas.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "syncDesignStateFromCanvasPick": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "tursoQuery": {
           "module": "lib/turso.ts",
           "callers": [
@@ -9386,58 +9764,6 @@
             "wiring/tasks-agent.ts",
             "wiring/triage.ts",
             "wiring/trips.ts"
-          ]
-        },
-        "createCanvasRoute": {
-          "module": "routes/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "HOST_INFO": {
-          "module": "state.ts",
-          "callers": [
-            "companion-server.ts",
-            "routes/api.ts#* /api/status",
-            "wiring/body-agent.ts",
-            "wiring/brain.ts",
-            "wiring/canvas.ts",
-            "wiring/orchestrator.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
-            "wiring/triage.ts",
-            "wiring/worker-mcp.ts",
-            "ws.ts"
-          ]
-        },
-        "canvasStore": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "canvasSend": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "canvasPickNotify": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "referencesFor": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
-          ]
-        },
-        "canvasStatus": {
-          "module": "wiring/canvas.ts",
-          "callers": [
-            "companion-server.ts"
           ]
         },
         "disableAutoSelectFamily": {
@@ -9476,6 +9802,18 @@
             "wiring/shell-sessions.ts",
             "wiring/worker-mcp.ts",
             "ws.ts"
+          ]
+        },
+        "replayWorkerPrLinks": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "startDesignStateWatcher": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "companion-server.ts"
           ]
         },
         "brainEnabled": {
@@ -9548,6 +9886,12 @@
             "companion-server.ts"
           ]
         },
+        "funnelRequestAllowed": {
+          "module": "lib/request-gate.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
         "hookCallerAllowed": {
           "module": "lib/request-gate.ts",
           "callers": [
@@ -9563,6 +9907,7 @@
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
+            "routes/github-webhook.ts",
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/worker-mcp.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers"
@@ -9573,6 +9918,7 @@
           "callers": [
             "companion-server.ts#* /ws",
             "routes/brain.ts",
+            "routes/github-webhook.ts",
             "routes/records.ts",
             "routes/vault.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers"
@@ -9582,6 +9928,12 @@
           "module": "routes/capture.ts",
           "callers": [
             "companion-server.ts#* /ws"
+          ]
+        },
+        "GITHUB_WEBHOOK_PATH": {
+          "module": "routes/github-webhook.ts",
+          "callers": [
+            "companion-server.ts#* /hooks/brain/media"
           ]
         },
         "waitForFirstDiscovery": {
@@ -9756,6 +10108,12 @@
             "companion-server.ts#* /ws"
           ]
         },
+        "handleDesignStateRoute": {
+          "module": "routes/design-state.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
         "handleDialogRoute": {
           "module": "routes/dialogs.ts",
           "callers": [
@@ -9770,6 +10128,12 @@
         },
         "handleGaugeRoute": {
           "module": "routes/gauge.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleGithubWebhookRoute": {
+          "module": "routes/github-webhook.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10172,6 +10536,18 @@
             "lib/agy-feed.ts"
           ]
         },
+        "withActiveDesignStatePrompt": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
+        "scrubAgentEnv": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/agy-feed.ts"
+          ]
+        },
         "ApnsEnv": {
           "module": "lib/push-tokens.ts",
           "callers": [
@@ -10231,6 +10607,7 @@
             "lib/super-auto.ts",
             "lib/vault-upstream.ts",
             "lib/voice-memo.ts",
+            "lib/worker-pr-link.ts",
             "routes/api.ts#POST /api/register-token",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#DELETE /api/learned",
@@ -10286,6 +10663,7 @@
             "wiring/dispatch.ts",
             "wiring/events.ts",
             "wiring/front-door.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/pane-mirror.ts",
             "wiring/repo-view.ts",
@@ -10295,6 +10673,7 @@
             "wiring/triage-repos.ts",
             "wiring/triage.ts",
             "wiring/trips.ts",
+            "wiring/worker-mcp.ts",
             "ws.ts"
           ]
         },
@@ -10728,6 +11107,7 @@
             "lib/tasks-agent-testdb.test-util.ts",
             "lib/tasks-agent.ts",
             "lib/triage-pr.ts",
+            "lib/worker-pr-link.ts",
             "routes/my-tasks.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
@@ -11398,6 +11778,90 @@
             "lib/receipt-jev.ts"
           ]
         },
+        "CONTROL_CHARS_RE": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "CliRunner": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "DesignBrandTokens": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftFileEntry": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftFrameSummary": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "defaultCliRunner": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "discoverFigcraftFiles": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "parseFigcraftInfoOutput": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "parseThemeCssTokens": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "readThemeCssCached": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "resolveAllowedFigcraftPath": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "sanitizeDesignText": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "FigcraftPageSummary": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
+        "CliResult": {
+          "module": "lib/figcraft.ts",
+          "callers": [
+            "lib/design-state.ts"
+          ]
+        },
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -11845,6 +12309,39 @@
             "lib/front-door.ts"
           ]
         },
+        "WorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "TASK_ID_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts"
+          ]
+        },
+        "SAFE_IDENTIFIER_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "REPO_NAME_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/github-webhook.ts",
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts",
+            "routes/brain.ts"
+          ]
+        },
         "herdrGateKey": {
           "module": "lib/herdr.ts",
           "callers": [
@@ -12206,9 +12703,11 @@
           "module": "lib/triage-pr.ts",
           "callers": [
             "lib/merge-gate.ts",
+            "lib/worker-pr-link.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
+            "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
@@ -14569,10 +15068,18 @@
             "lib/worker-mcp.ts"
           ]
         },
+        "verifyHandoffClaim": {
+          "module": "lib/handoff-claim.ts",
+          "callers": [
+            "lib/worker-pr-link.ts"
+          ]
+        },
         "SupervisedTaskSnapshot": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
             "lib/worker-progress-trace.ts",
+            "lib/worker-task-store.ts",
+            "wiring/github-webhook.ts",
             "wiring/worker-mcp.ts"
           ]
         },
@@ -14583,6 +15090,13 @@
             "wiring/brain-activity.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "workerReceipt": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "lib/worker-progress-trace.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "rowId": {
@@ -14616,24 +15130,6 @@
             "wiring/events.ts"
           ]
         },
-        "TASK_ID_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "REPO_NAME_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "SAFE_IDENTIFIER_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "ALLOWED_MODES": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -14641,12 +15137,6 @@
           ]
         },
         "ALLOWED_FAMILIES": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "WorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -14727,6 +15217,48 @@
             "wiring/resolver.ts"
           ]
         },
+        "workerStateFile": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "PersistedTaskRecord": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultIsPidAlive": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetPidIdentity": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "saveTaskRecords": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "loadTaskRecords": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "clearStaleGitConfigLock": {
           "module": "lib/git-config-lock.ts",
           "callers": [
@@ -14785,6 +15317,7 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
+            "routes/design-state.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
@@ -15085,6 +15618,18 @@
             "ws.ts"
           ]
         },
+        "deliverHeadlessAgyBrainTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "deliverHeadlessAgyTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "recordUserPrompt": {
           "module": "lib/activity.ts",
           "callers": [
@@ -15099,23 +15644,12 @@
             "routes/api.ts#* /api/feed"
           ]
         },
-        "deliverHeadlessAgyBrainTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
         "workerSupervisor": {
           "module": "wiring/worker-mcp.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "routes/model.ts#POST /api/model/set"
-          ]
-        },
-        "deliverHeadlessAgyTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
+            "routes/model.ts#POST /api/model/set",
+            "wiring/github-webhook.ts"
           ]
         },
         "yieldPaneForInject": {
@@ -15804,6 +16338,50 @@
             "ws.ts"
           ]
         },
+        "exportDesignTokens": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "getDesignStateSnapshot": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "refreshDesignState": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "renderFigcraftNodePreview": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "updateDesignState": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "routes/design-state.ts"
+          ]
+        },
+        "DesignStateSnapshot": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "routes/design-state.ts",
+            "wiring/design-state.ts"
+          ]
+        },
+        "DesignStatePatch": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "routes/design-state.ts",
+            "wiring/design-state.ts"
+          ]
+        },
         "opensChordWindow": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -15835,6 +16413,30 @@
           "module": "lib/gauge.ts",
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
+        "GithubWebhookDispatcher": {
+          "module": "wiring/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "githubWebhookDispatcher": {
+          "module": "wiring/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "getGithubWebhookSecret": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
+          ]
+        },
+        "verifyGithubSignature": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "routes/github-webhook.ts"
           ]
         },
         "removeSessionByKey": {
@@ -16195,7 +16797,8 @@
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts",
             "wiring/tasks-agent.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "MyTasksResponse": {
@@ -16883,7 +17486,8 @@
         "workerMcp": {
           "module": "wiring/worker-mcp.ts",
           "callers": [
-            "routes/worker-mcp.ts"
+            "routes/worker-mcp.ts",
+            "wiring/github-webhook.ts"
           ]
         },
         "CompactTarget": {
@@ -16963,9 +17567,11 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
+            "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
             "wiring/resolver-dry-run.ts",
-            "wiring/triage.ts"
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "KeepNote": {
@@ -17265,6 +17871,12 @@
           "callers": [
             "wiring/brain-handoff.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "mintHandoffClaim": {
+          "module": "lib/handoff-claim.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
           ]
         },
         "fileHandoff": {
@@ -17728,6 +18340,13 @@
             "wiring/canvas.ts"
           ]
         },
+        "designStateHookContext": {
+          "module": "wiring/design-state.ts",
+          "callers": [
+            "wiring/canvas.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "sessionStatuses": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -17759,6 +18378,30 @@
           "callers": [
             "wiring/copy-jobs.ts",
             "wiring/gauge.ts"
+          ]
+        },
+        "DesignStateService": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "createDesignStateService": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "registerActiveDesignPromptProvider": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
+          ]
+        },
+        "withDesignStatePrompt": {
+          "module": "lib/design-state.ts",
+          "callers": [
+            "wiring/design-state.ts"
           ]
         },
         "SessionStatus": {
@@ -18140,6 +18783,36 @@
           "module": "lib/gauge.ts",
           "callers": [
             "wiring/gauge.ts"
+          ]
+        },
+        "GithubIssueDispatch": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "GithubWebhookAction": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "buildGithubIssuePrompt": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "parseGithubWebhookEvent": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "DispatchTaskInput": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
           ]
         },
         "sweepMedia": {
@@ -19111,8 +19784,20 @@
             "wiring/worker-mcp.ts"
           ]
         },
-        "receiptText": {
-          "module": "lib/worker-progress-trace.ts",
+        "bindWorkerTask": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "linkWorkerPr": {
+          "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "backfillWorkerPrLinks": {
+          "module": "lib/worker-pr-link.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]
@@ -19137,6 +19822,12 @@
         },
         "canvasSnapshot": {
           "module": "wiring/canvas.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
+        "designStateSnapshotFrame": {
+          "module": "wiring/design-state.ts",
           "callers": [
             "ws.ts"
           ]

@@ -12,6 +12,8 @@ import { driveQuestionPicker } from "./question-driver"
 import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
+import { withActiveDesignStatePrompt } from "./design-state"
+import { scrubAgentEnv } from "./worker-invocation"
 
 export const AGY_BRAIN_KEY = "gemini:brain"
 export const AGY_BRAIN_PANE = "headless:agy-brain"
@@ -219,11 +221,9 @@ export function normalizeAgyCliModelFlag(raw: string): string {
 export function extractAgyUserPrompt(rawContent: unknown): string | null {
   if (typeof rawContent !== "string") return null
   const m = rawContent.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i)
-  let text = (m ? m[1] ?? "" : rawContent).trim()
+  let text = (m ? m[1] ?? "" : rawContent).replace(/\n*\[Active Design State\][^\n]*$/i, "").trim()
   if (!text || text.startsWith("<") || text.startsWith("[Request interrupted")) return null
-  if (/^\/boost\s+\S/i.test(text)) {
-    text = text.replace(/^\/boost\s+/i, "").trim()
-  }
+  if (/^\/boost\s+\S/i.test(text)) text = text.replace(/^\/boost\s+/i, "").trim()
   return text || null
 }
 
@@ -721,6 +721,7 @@ export function syncAgyOpenQuestion(
         prompt: formatAgyQuestionAnswers(questions, answers),
         cwd,
         boost: false,
+        skipDesignContext: true,
         home,
       })
     } else {
@@ -729,6 +730,7 @@ export function syncAgyOpenQuestion(
         cwd,
         prompt: formatAgyQuestionAnswers(questions, answers),
         model: exactSession?.model,
+        skipDesignContext: true,
         home,
       })
     }
@@ -1110,6 +1112,7 @@ export function deliverHeadlessAgyBrainTurn(opts: {
   cwd?: string
   model?: string
   boost?: boolean
+  skipDesignContext?: boolean
   home?: string
 }): boolean {
   const home = opts.home ?? homedir()
@@ -1151,6 +1154,7 @@ export function deliverHeadlessAgyBrainTurn(opts: {
     boost: effectiveBoost,
     isBrain: true,
     sessionKey: AGY_BRAIN_KEY,
+    skipDesignContext: opts.skipDesignContext,
     home,
   })
 }
@@ -1163,6 +1167,7 @@ export function deliverHeadlessAgyTurn(opts: {
   boost?: boolean
   isBrain?: boolean
   sessionKey?: string
+  skipDesignContext?: boolean
   home?: string
 }): boolean {
   const home = opts.home ?? homedir()
@@ -1171,8 +1176,9 @@ export function deliverHeadlessAgyTurn(opts: {
     opts.sessionId !== AGY_BRAIN_TASK_ID &&
     existsSync(agyTranscriptPath(opts.sessionId, home)),
   )
+  const promptWithDesign = opts.skipDesignContext ? opts.prompt : withActiveDesignStatePrompt(opts.prompt)
   const args = buildHeadlessAgyArgs({
-    prompt: opts.prompt,
+    prompt: promptWithDesign,
     sessionId: opts.sessionId,
     model: opts.model,
     boost: opts.boost,
@@ -1184,6 +1190,9 @@ export function deliverHeadlessAgyTurn(opts: {
   try {
     const proc = Bun.spawn(["agy", ...args], {
       cwd,
+      // A headless agy worker turn gets the scrubbed env (no Turso/db/Companion tokens); the Brain · Boost
+      // orchestrator keeps the server env like the claude brain (wiring/brain-headless.ts).
+      ...(opts.isBrain ? {} : { env: scrubAgentEnv(process.env) }),
       stdout: "pipe",
       stderr: "ignore",
     })
