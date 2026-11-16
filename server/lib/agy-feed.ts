@@ -969,7 +969,7 @@ export function readAgyTranscriptDelta(
   const canClearActivity = Boolean(ident.key && !identOverride && !(ident.key === AGY_BRAIN_KEY && activeAgyProcs.has(AGY_BRAIN_KEY)))
   if (size <= start) {
     offsets.set(path, size)
-    if (convo.status === "idle" && canClearActivity) {
+    if (ident.key && convo.status === "idle" && canClearActivity) {
       clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
     }
     return []
@@ -1000,7 +1000,7 @@ export function readAgyTranscriptDelta(
 
   const body = bodySlice.toString("utf8")
   if (!body.trim()) {
-    if (convo.status === "idle" && canClearActivity) {
+    if (ident.key && convo.status === "idle" && canClearActivity) {
       clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
     }
     return []

@@ -1,16 +1,24 @@
 import {
   type GithubIssueDispatch,
-  type GithubWebhookAction,
+  allowedWebhookActors,
+  allowedWebhookOwners,
   buildGithubIssuePrompt,
   parseGithubWebhookEvent,
 } from "../lib/github-webhook"
+import { BRAIN_THREAD } from "../lib/brain"
+import { approveUrl } from "../lib/dispatch-tasks"
+import { createGithubWebhookStore, type GithubWebhookJob, type GithubWebhookStore } from "../lib/github-webhook-store"
+import { db } from "../lib/orchestrator-db"
+import { appendTurn } from "../lib/orchestrator-chat"
 import { companionLog } from "../lib/log"
 import { type GhFn, realGh } from "../lib/triage-pr"
-import type { DispatchTaskInput, SupervisedTaskSnapshot } from "../lib/worker-supervisor"
+import type { SupervisedTaskSnapshot } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { workerMcp, workerSupervisor } from "./worker-mcp"
+import { defaultGithubWebhookTasks } from "./github-webhook-tasks"
+import { orchEmit } from "./orchestrator"
 
-const MAX_RECENT_DELIVERIES = 500
+const PR_CAP = 3
 
 export interface McpToolOutcome {
   ok: boolean
@@ -26,36 +34,22 @@ export interface GithubWebhookDispatcherDeps {
   gh?: GhFn
   log?: (msg: string) => void
   listLocalTasks?: () => SupervisedTaskSnapshot[]
-  dispatchLocal?: (input: DispatchTaskInput) => Promise<{ ok: true; task: SupervisedTaskSnapshot } | { ok: false; status: number; error: string }>
+  listHostTasks?: (host: string) => Promise<SupervisedTaskSnapshot[]>
   callMcpDispatch?: (args: Record<string, unknown>) => Promise<McpToolOutcome>
   allowedOwners?: ReadonlySet<string>
-  commentOnIssue?: boolean
+  allowedActors?: ReadonlySet<string>
+  store?: GithubWebhookStore
+  tasks?: ReturnType<typeof defaultGithubWebhookTasks>
+  brainReceipt?: (text: string, taskId: string) => void
+  autoDrain?: boolean
 }
 
 export type GithubWebhookResult =
   | { ok: true; status: "ping"; hookId: number | null; repo: string | null }
   | { ok: true; status: "duplicate_delivery"; deliveryId: string }
   | { ok: true; status: "ignored"; reason: string; repo?: string; issueNumber?: number }
-  | { ok: true; status: "already_running"; taskId: string; repo: string; issueNumber: number; host: string }
-  | { ok: true; status: "already_completed"; taskId: string; repo: string; issueNumber: number; prUrl: string | null }
-  | {
-    ok: true
-    status: "dispatched"
-    taskId: string
-    repo: string
-    issueNumber: number
-    host: string
-    fallbackFrom?: string
-    family: string
-    model: string | null
-    branch: string
-  }
+  | { ok: true; status: "queued" | "already_dispatched"; taskId: string; repo: string; issueNumber: number; link: string }
   | { ok: false; status: "dispatch_failed"; httpStatus: number; error: string; taskId: string }
-
-function isPeerUnavailableError(err: string | undefined): boolean {
-  if (!err) return false
-  return err.startsWith("peer_unreachable") || err.startsWith("peer_not_configured") || /^peer_http_5\d\d$/.test(err)
-}
 
 async function defaultCallMcpDispatch(args: Record<string, unknown>): Promise<McpToolOutcome> {
   const rpc = await workerMcp.callTool(1, "dispatch_task", args)
@@ -77,143 +71,140 @@ export function createGithubWebhookDispatcher(deps: GithubWebhookDispatcherDeps 
   const env = deps.env ?? process.env
   const gh = deps.gh ?? realGh
   const log = deps.log ?? companionLog
+  const store = deps.store ?? createGithubWebhookStore(db)
+  const tasks = deps.tasks ?? defaultGithubWebhookTasks(localHost, env)
   const listLocalTasks = deps.listLocalTasks ?? (() => workerSupervisor.listTasks())
-  const dispatchLocal = deps.dispatchLocal ?? ((input: DispatchTaskInput) => workerSupervisor.dispatchTask(input))
   const callMcpDispatch = deps.callMcpDispatch ?? defaultCallMcpDispatch
-  const commentEnabled = deps.commentOnIssue ?? true
-  const recentDeliveries = new Set<string>()
-
-  function rememberDelivery(id: string | null): void {
-    if (!id) return
-    if (recentDeliveries.has(id)) recentDeliveries.delete(id)
-    recentDeliveries.add(id)
-    while (recentDeliveries.size > MAX_RECENT_DELIVERIES) {
-      const oldest = recentDeliveries.values().next().value
-      if (oldest === undefined) break
-      recentDeliveries.delete(oldest)
+  const brainReceipt = deps.brainReceipt ?? ((text: string, id: string) => {
+    if (!db.query("SELECT 1 FROM orchestrator_turns WHERE thread_id = ? AND task_id = ? AND text = ?").get(BRAIN_THREAD, id, text)) {
+      orchEmit(appendTurn("orchestrator", text, id, BRAIN_THREAD))
     }
+  })
+  const listHostTasks = deps.listHostTasks ?? (async (host: string) => {
+    if (host === "local" || host === localHost) return listLocalTasks()
+    const rpc = await workerMcp.callTool(1, "list_tasks", { host })
+    const data = (rpc.result as { structuredContent?: { ok?: boolean; tasks?: SupervisedTaskSnapshot[] } } | undefined)?.structuredContent
+    if (!data?.ok || !Array.isArray(data.tasks)) throw new Error("peer_status_unavailable")
+    return data.tasks
+  })
+  const hostOf = (req: GithubIssueDispatch): string => req.targetHost === "auto" ? env.COMPANION_WEBHOOK_DEFAULT_HOST?.trim() || "local" : req.targetHost
+  let draining: Promise<void> | null = null
+
+  async function receipts(job: GithubWebhookJob): Promise<void> {
+    const { req, taskId, state, reason, generation } = job
+    const link = approveUrl(taskId)
+    const text = `GitHub issue ${req.repoFull}#${req.issueNumber}: ${state} (${reason}). TASK ${taskId} — ${link} — ${req.url} (dispatch ${generation})`
+    if (!job.brainReceipt) { brainReceipt(text, taskId); store.brainReceipt(taskId) }
+    if (job.issueReceipt) return
+    const marker = `<!-- companion:${taskId}:${generation}:${state} -->`
+    const found = await gh(["api", `repos/${req.repoFull}/issues/${req.issueNumber}/comments`, "--paginate", "--jq", `.[] | select(.body | contains("${marker}")) | .id`])
+    if (found.code !== 0) throw new Error("issue_comment_lookup_failed")
+    if (!found.stdout.trim()) {
+      const comment = `${marker}\nBuilder ${state} (${reason}). Task [${taskId}](${link}).`
+      const out = await gh(["issue", "comment", String(req.issueNumber), "--repo", req.repoFull, "--body", comment])
+      if (out.code !== 0) throw new Error("issue_comment_failed")
+    }
+    store.issueReceipt(taskId)
   }
 
-  function postDispatchComment(req: GithubIssueDispatch, host: string, taskId: string, model: string | null): void {
-    if (!commentEnabled) return
-    const lines = [
-      `Dispatched headless **${req.family}** worker on \`${host}\`.`,
-      `- Task ID: \`${taskId}\``,
-      `- Branch: \`dispatch/${taskId}\``,
-      ...(model ? [`- Model: \`${model}\``] : []),
-    ]
-    void gh(["issue", "comment", String(req.issueNumber), "--repo", req.repoFull, "--body", lines.join("\n")])
-      .then((r) => {
-        if (r.code !== 0) log(`[github-webhook] issue comment failed for ${req.repoFull}#${req.issueNumber}: ${r.stderr.slice(0, 160)}`)
-      })
-      .catch((err) => {
-        log(`[github-webhook] issue comment error for ${req.repoFull}#${req.issueNumber}: ${(err as Error)?.message ?? String(err)}`)
-      })
-  }
-
-  async function dispatch(req: GithubIssueDispatch): Promise<GithubWebhookResult> {
-    const existing = listLocalTasks().find((t) => t.taskId === req.taskId && t.repo.toLowerCase() === req.repo.toLowerCase())
-    if (existing?.status === "running") {
-      return { ok: true, status: "already_running", taskId: req.taskId, repo: req.repoFull, issueNumber: req.issueNumber, host: localHost }
+  async function dispatch(job: GithubWebhookJob): Promise<void> {
+    const req = job.req
+    const host = hostOf(req)
+    const snapshots = await listHostTasks(host)
+    const existing = snapshots.find((t) => t.taskId === req.taskId)
+    if (existing && (existing.status === "running" || !req.forceRedispatch || job.state !== "queued")) {
+      store.state(req.taskId, "dispatched", `worker_${existing.status}`)
+      return
     }
-    if (existing?.status === "completed" && existing.prUrl && !req.forceRedispatch) {
-      return { ok: true, status: "already_completed", taskId: req.taskId, repo: req.repoFull, issueNumber: req.issueNumber, prUrl: existing.prUrl }
+    if (job.state !== "queued") {
+      // A lost response can hide a started worker. Never repeat it or fall back to a different host.
+      if (job.state === "starting") store.state(req.taskId, "uncertain", "dispatch_acceptance_unknown")
+      return
     }
-
-    const defaultEnvHost = env.COMPANION_WEBHOOK_DEFAULT_HOST?.trim().toLowerCase()
-    const defaultHost = defaultEnvHost === "zettlab" || defaultEnvHost === "mac" ? defaultEnvHost : "local"
-    const requestedHost = req.targetHost === "auto" ? defaultHost : req.targetHost
-    const prompt = buildGithubIssuePrompt(req)
-    const title = `#${req.issueNumber} ${req.title}`.slice(0, 200)
-
-    let out = await callMcpDispatch({
-      task_id: req.taskId,
-      repo: req.repo,
-      prompt,
-      title,
-      family: req.family,
-      ...(req.model ? { model: req.model } : {}),
-      mode: "auto",
-      host: requestedHost,
-    })
-
-    let fallbackFrom: string | undefined
-    if (!out.ok && requestedHost !== "local" && isPeerUnavailableError(out.error)) {
-      log(`[github-webhook] peer ${requestedHost} unavailable (${out.error}); falling back to local (${localHost}) for ${req.repoFull}#${req.issueNumber}`)
-      fallbackFrom = requestedHost
-      const localOut = await dispatchLocal({
-        taskId: req.taskId,
-        repo: req.repo,
-        prompt,
-        title,
-        family: req.family,
-        ...(req.model ? { model: req.model } : {}),
-        mode: "auto",
-      })
-      out = localOut.ok
-        ? { ok: true, host: localHost, task: localOut.task }
-        : { ok: false, error: localOut.error, status: localOut.status }
+    const prepared = await tasks.prepare(req)
+    if (prepared.settled) { store.state(req.taskId, "dispatched", "task_already_started"); return }
+    const prs = await gh(["pr", "list", "--repo", req.repoFull, "--state", "open", "--limit", "100", "--json", "headRefName"])
+    if (prs.code !== 0) throw new Error("pr_capacity_unavailable")
+    let raw: unknown
+    try { raw = JSON.parse(prs.stdout) } catch { throw new Error("pr_capacity_unavailable") }
+    if (!Array.isArray(raw) || raw.some((p: unknown) => !p || typeof p !== "object" || !("headRefName" in p) || typeof p.headRefName !== "string")) throw new Error("pr_capacity_unavailable")
+    const branches = new Set((raw as Array<{ headRefName: string }>).map((p) => p.headRefName))
+    const reserved = new Set([...snapshots, ...listLocalTasks()].filter((t) => t.repo.toLowerCase() === req.repo.toLowerCase() && t.status === "running" && !branches.has(t.branch)).map((t) => t.taskId))
+    for (const pending of store.jobs()) if (pending.req.repoFull === req.repoFull && ["starting", "uncertain"].includes(pending.state) && !branches.has(`dispatch/${pending.taskId}`)) reserved.add(pending.taskId)
+    if (raw.length + reserved.size >= PR_CAP && !branches.has(`dispatch/${req.taskId}`)) {
+      store.state(req.taskId, "queued", "pr_cap")
+      return
     }
-
+    // Commit intent before any worker call; a crash here is conservative (uncertain), never a second start.
+    store.state(req.taskId, "starting", "dispatching")
+    if (!await tasks.start(req.taskId)) { store.state(req.taskId, "dispatched", "task_already_started"); return }
+    const out = await callMcpDispatch({ task_id: req.taskId, repo: req.repo, prompt: buildGithubIssuePrompt(req),
+      title: `[repo:${req.repo}] Issue #${req.issueNumber}`, family: req.family,
+      ...(req.model ? { model: req.model } : {}), mode: "auto", host, claim: prepared.claim, require_claim: true })
     if (!out.ok) {
-      if (out.status === 409 && out.error === "task_already_running") {
-        return { ok: true, status: "already_running", taskId: req.taskId, repo: req.repoFull, issueNumber: req.issueNumber, host: requestedHost }
+      if (out.status === 409 && ["task_already_running", "task_dispatch_in_progress"].includes(out.error ?? "")) {
+        store.state(req.taskId, "dispatched", "worker_already_running")
+      } else if (out.status && out.status >= 400 && out.status < 600) {
+        // A supervisor refusal explicitly means no worker was started. Transport failures have no status here.
+        await tasks.defer(req.taskId)
+        store.state(req.taskId, "queued", "worker_refused")
+      } else {
+        store.state(req.taskId, "uncertain", "dispatch_acceptance_unknown")
       }
-      log(`[github-webhook] dispatch failed for ${req.repoFull}#${req.issueNumber}: ${out.error ?? "unknown_error"}`)
-      return {
-        ok: false,
-        status: "dispatch_failed",
-        httpStatus: out.status && out.status >= 400 ? out.status : 500,
-        error: out.error ?? "dispatch_failed",
-        taskId: req.taskId,
+      return
+    }
+    store.state(req.taskId, "dispatched", `worker_on_${out.host ?? host}`)
+    log(`[github-webhook] dispatched ${req.taskId} for ${req.repoFull}#${req.issueNumber}`)
+  }
+
+  function drain(): Promise<void> {
+    if (draining) return draining
+    draining = (async () => {
+      for (const job of store.jobs()) {
+        try {
+          if (job.state !== "dispatched") await dispatch(job)
+        } catch {
+          const current = store.get(job.taskId)!
+          store.state(job.taskId, current.state === "starting" ? "uncertain" : current.state, current.state === "starting" ? "dispatch_acceptance_unknown" : "dependency_unavailable")
+          log(`[github-webhook] deferred ${job.taskId}: ${store.get(job.taskId)!.reason}`)
+        }
+        try { await receipts(store.get(job.taskId)!) } catch { log(`[github-webhook] receipt pending for ${job.taskId}`) }
       }
-    }
-
-    const dispatchedHost = out.host ?? (fallbackFrom ? localHost : requestedHost === "local" ? localHost : requestedHost)
-    const model = out.task?.model ?? req.model ?? null
-    log(`[github-webhook] dispatched ${req.taskId} for ${req.repoFull}#${req.issueNumber} on ${dispatchedHost} (${req.family})`)
-    postDispatchComment(req, dispatchedHost, req.taskId, model)
-
-    return {
-      ok: true,
-      status: "dispatched",
-      taskId: req.taskId,
-      repo: req.repoFull,
-      issueNumber: req.issueNumber,
-      host: dispatchedHost,
-      ...(fallbackFrom ? { fallbackFrom } : {}),
-      family: req.family,
-      model,
-      branch: `dispatch/${req.taskId}`,
-    }
+    })().finally(() => { draining = null })
+    return draining
   }
 
   return {
+    drain,
     async handleEvent(eventName: string | null, deliveryId: string | null, payload: unknown): Promise<GithubWebhookResult> {
-      const cleanDelivery = deliveryId?.trim() || null
-      if (cleanDelivery && recentDeliveries.has(cleanDelivery)) {
-        return { ok: true, status: "duplicate_delivery", deliveryId: cleanDelivery }
-      }
-
-      const parsed: GithubWebhookAction = parseGithubWebhookEvent(eventName, payload, {
-        ...(deps.allowedOwners ? { allowedOwners: deps.allowedOwners } : {}),
+      const cleanDelivery = deliveryId?.trim()
+      if (!cleanDelivery || cleanDelivery.length > 200) return { ok: false, status: "dispatch_failed", httpStatus: 400, error: "delivery_id_required", taskId: "" }
+      const parsed = parseGithubWebhookEvent(eventName, payload, {
+        allowedOwners: deps.allowedOwners ?? allowedWebhookOwners(env), allowedActors: deps.allowedActors ?? allowedWebhookActors(env),
       })
+      const accepted = store.accept(cleanDelivery, parsed.kind === "dispatch" ? parsed.req : undefined)
+      if (accepted === "duplicate_delivery") return { ok: true, status: accepted, deliveryId: cleanDelivery }
       if (parsed.kind === "ping") {
-        rememberDelivery(cleanDelivery)
         log(`[github-webhook] ping received${parsed.repo ? ` for ${parsed.repo}` : ""}`)
         return { ok: true, status: "ping", hookId: parsed.hookId, repo: parsed.repo }
       }
       if (parsed.kind === "ignored") {
-        rememberDelivery(cleanDelivery)
+        log(`[github-webhook] ignored ${parsed.repo ?? "event"}#${parsed.issueNumber ?? ""}: ${parsed.reason}`)
         return { ok: true, status: "ignored", reason: parsed.reason, ...(parsed.repo ? { repo: parsed.repo } : {}), ...(parsed.issueNumber ? { issueNumber: parsed.issueNumber } : {}) }
       }
-
-      const res = await dispatch(parsed.req)
-      if (res.ok) rememberDelivery(cleanDelivery)
-      return res
+      if (deps.autoDrain !== false) void drain().catch(() => log("[github-webhook] queue drain failed"))
+      return { ok: true, status: accepted === "queued" ? "queued" : "already_dispatched", taskId: parsed.req.taskId,
+        repo: parsed.req.repoFull, issueNumber: parsed.req.issueNumber, link: approveUrl(parsed.req.taskId) }
     },
   }
 }
 
 export type GithubWebhookDispatcher = ReturnType<typeof createGithubWebhookDispatcher>
 export const githubWebhookDispatcher = createGithubWebhookDispatcher()
+
+export function startGithubWebhookQueue(): void {
+  if (process.env.NODE_ENV === "test") return
+  const tick = () => void githubWebhookDispatcher.drain().catch(() => companionLog("[github-webhook] queue drain failed"))
+  tick()
+  setInterval(tick, 15_000).unref()
+}

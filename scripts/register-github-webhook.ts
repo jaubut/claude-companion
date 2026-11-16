@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { getGithubWebhookSecret, githubWebhookSecretPath } from "../server/lib/github-webhook"
+import { getGithubWebhookSecret } from "../server/lib/github-webhook"
 import { tailscaleNameOf } from "../server/lib/request-gate"
 
 interface ExistingHook {
@@ -78,6 +78,7 @@ async function main(): Promise<void> {
   }
 
   const secret = getGithubWebhookSecret()
+  if (!secret) throw new Error("GITHUB_WEBHOOK_SECRET is unset; provision it in ~/.config/tls-agent/env and load it before registration")
   const listRes = await runGh(["api", `repos/${repoFull}/hooks`])
   if (listRes.code !== 0) {
     throw new Error(`gh api repos/${repoFull}/hooks failed: ${listRes.stderr.trim() || listRes.stdout.trim()}`)
@@ -98,7 +99,7 @@ async function main(): Promise<void> {
       hookId: matched?.id ?? null,
       repo: repoFull,
       url: webhookUrl,
-      secretPath: githubWebhookSecretPath(),
+      secretSource: "GITHUB_WEBHOOK_SECRET",
       events: ["issues"],
     }, null, 2))
     return
@@ -135,7 +136,7 @@ async function main(): Promise<void> {
     url: saved?.config?.url ?? webhookUrl,
     events: saved?.events ?? ["issues"],
     active: saved?.active ?? true,
-    secretPath: githubWebhookSecretPath(),
+    secretSource: "GITHUB_WEBHOOK_SECRET",
   }, null, 2))
 }
 

@@ -54,6 +54,7 @@ import { startStuckEvents } from "./wiring/brain-stuck-events"
 import { brainEnabled } from "./lib/brain"
 import { startAutoDeploy } from "./wiring/auto-deploy"
 import { replayWorkerPrLinks } from "./wiring/worker-mcp"
+import { startGithubWebhookQueue } from "./wiring/github-webhook"
 
 // How long a /ws upgrade may wait for the boot discovery pass. The phone
 // treats init's `sessions` as authoritative, so an init sent before discovery
@@ -85,6 +86,7 @@ export function createCompanionServer(port: number) {
   disableAutoSelectFamily()
   startEndedSweep(listSessions)
   replayWorkerPrLinks()
+  startGithubWebhookQueue()
   startDesignStateWatcher()
   // brain-v2: the supervised brain agent runs on the host that opts in (Zettlab).
   // and with it the auto-deployer (wiring/auto-deploy.ts: claude-companion + claude-config follow origin/main).
