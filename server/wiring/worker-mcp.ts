@@ -17,6 +17,7 @@ import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } 
 import { HOST_INFO } from "../state"
 import { emitTrace, getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
+import { designStateHookContext } from "./design-state"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
@@ -81,6 +82,7 @@ export const workerSupervisor = createWorkerSupervisor({
   sh: realSh,
   trust: (dir) => ensureFolderTrusted(dir),
   reportJob: (r) => builderJobs.report(r),
+  designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
     const model = task.model || DEFAULT_FAMILY_MODELS[task.family]
     const recorded = recordSession({

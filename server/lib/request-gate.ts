@@ -83,3 +83,13 @@ export function hookCallerAllowed(req: Request): boolean {
   if (site !== null && site !== "none" && site !== "same-origin") return false
   return clientOrigin(req, peerOf(req)).transport === "loopback" || checkBearer(req)
 }
+
+/**
+ * Public Tailscale Funnel traffic (`Tailscale-Funnel-Request` set by
+ * tailscaled after stripping client headers) is admitted ONLY on
+ * `/webhooks/github`, never on `/api/*`, `/hooks/*`, `/ws`, `/health`, or `/`.
+ */
+export function funnelRequestAllowed(req: Request, pathname: string): boolean {
+  if (!req.headers.has("tailscale-funnel-request")) return true
+  return pathname === "/webhooks/github"
+}

@@ -11,7 +11,7 @@ import type { QueryFn } from "./turso"
 // `brain` (P7a): the one Brain card per board, on the brain host (Mac app id "brain"; it reads the
 // brain thread over the turn API, never a tty). A reference target since canvas-note-refs.
 // `turso_note` (P8a): a Turso note card, ref = note id or ref_code; a context source like note/task.
-export const NODE_KINDS = ["agent", "task", "note", "preview", "group", "brain", "turso_note"] as const
+export const NODE_KINDS = ["agent", "task", "note", "preview", "group", "brain", "turso_note", "figcraft"] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 // `context` = task → agent, sent once on "Send?" (P6). `reference` (canvas-note-refs, 2026-10-30) =
 // note|turso_note → agent|brain: a live read-only link, never sent — the agent is told about it on
