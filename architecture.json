@@ -15611,6 +15611,18 @@
             "ws.ts"
           ]
         },
+        "deliverHeadlessAgyBrainTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
+        "deliverHeadlessAgyTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed"
+          ]
+        },
         "recordUserPrompt": {
           "module": "lib/activity.ts",
           "callers": [
@@ -15625,24 +15637,12 @@
             "routes/api.ts#* /api/feed"
           ]
         },
-        "deliverHeadlessAgyBrainTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
         "workerSupervisor": {
           "module": "wiring/worker-mcp.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
             "routes/model.ts#POST /api/model/set",
             "wiring/github-webhook.ts"
-          ]
-        },
-        "deliverHeadlessAgyTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
           ]
         },
         "yieldPaneForInject": {
