@@ -135,7 +135,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
 export function scrubAgentEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   for (const key of Object.keys(env)) {
-    if (/^COMPANION_(AUTH_|PEER_|TOKEN)|^COMPANION_.*(TOKEN|SECRET|KEY)|^(TURSO|LIBSQL)_|^(DATABASE_URL|BROKER_TOKEN)$/i.test(key)) delete env[key]
+    if (/^COMPANION_(AUTH_|PEER_|TOKEN)|^COMPANION_.*(TOKEN|SECRET|KEY)|^(TURSO|LIBSQL)_|^(DATABASE_URL|BROKER_TOKEN|GITHUB_WEBHOOK_SECRET)$/i.test(key)) delete env[key]
   }
   env.CLAUDE_NO_AGENT_ENV = "1"
   return env

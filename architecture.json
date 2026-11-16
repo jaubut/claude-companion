@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 218,
+          "lines": 220,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -127,7 +127,8 @@
             "wiring/brain-stuck-events.ts",
             "lib/brain.ts",
             "wiring/auto-deploy.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/worker-mcp.ts",
+            "wiring/github-webhook.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2269,18 +2270,39 @@
           "externals": []
         },
         {
+          "path": "lib/github-webhook-store.ts",
+          "lines": 58,
+          "kind": "lib",
+          "exports": [
+            "GithubWebhookJob",
+            "createGithubWebhookStore",
+            "GithubWebhookStore"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/github-webhook.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/github-webhook.ts",
-          "lines": 261,
+          "lines": 246,
           "kind": "lib",
           "exports": [
             "TargetHost",
             "GithubIssueDispatch",
             "GithubWebhookAction",
-            "githubWebhookSecretPath",
             "getGithubWebhookSecret",
             "verifyGithubSignature",
             "buildGithubIssueTaskId",
             "allowedWebhookOwners",
+            "allowedWebhookActors",
             "parseGithubWebhookEvent",
             "buildGithubIssuePrompt"
           ],
@@ -6502,7 +6524,7 @@
         },
         {
           "path": "lib/worker-mcp.ts",
-          "lines": 271,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "WORKER_MCP_TOOLS",
@@ -6599,7 +6621,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 585,
+          "lines": 588,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -7300,6 +7322,7 @@
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
+            "lib/vault-guard.ts",
             "lib/github-webhook.ts",
             "state.ts",
             "wiring/github-webhook.ts"
@@ -8881,8 +8904,34 @@
           "externals": []
         },
         {
+          "path": "wiring/github-webhook-tasks.ts",
+          "lines": 56,
+          "kind": "lib",
+          "exports": [
+            "GithubTaskDeps",
+            "createGithubWebhookTasks",
+            "defaultGithubWebhookTasks"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/github-webhook.ts",
+            "lib/handoff-claim.ts",
+            "lib/live-repo.ts",
+            "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/github-webhook.ts",
-          "lines": 220,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "McpToolOutcome",
@@ -8890,7 +8939,8 @@
             "GithubWebhookResult",
             "createGithubWebhookDispatcher",
             "GithubWebhookDispatcher",
-            "githubWebhookDispatcher"
+            "githubWebhookDispatcher",
+            "startGithubWebhookQueue"
           ],
           "state": [],
           "emits": [],
@@ -8899,11 +8949,18 @@
           "apiCalls": [],
           "imports": [
             "lib/github-webhook.ts",
+            "lib/brain.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/github-webhook-store.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-chat.ts",
             "lib/log.ts",
             "lib/triage-pr.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/worker-mcp.ts",
+            "wiring/github-webhook-tasks.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9758,6 +9815,7 @@
             "wiring/body.ts",
             "wiring/canvas.ts",
             "wiring/dispatch.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/resolver-dry-run.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
@@ -9805,6 +9863,12 @@
         },
         "replayWorkerPrLinks": {
           "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "companion-server.ts"
+          ]
+        },
+        "startGithubWebhookQueue": {
+          "module": "wiring/github-webhook.ts",
           "callers": [
             "companion-server.ts"
           ]
@@ -9906,7 +9970,6 @@
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
-            "routes/github-webhook.ts",
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/worker-mcp.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers"
@@ -9980,6 +10043,7 @@
           "callers": [
             "companion-server.ts#* /ws",
             "lib/vault-guard.ts",
+            "routes/github-webhook.ts",
             "routes/records.ts",
             "routes/vault.ts"
           ]
@@ -11052,6 +11116,7 @@
             "lib/triage-sources.ts",
             "routes/orchestrator.ts",
             "wiring/brain-task-cancel.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts"
@@ -11115,6 +11180,7 @@
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -11263,6 +11329,7 @@
             "routes/canvas.ts",
             "routes/goals.ts",
             "routes/my-tasks.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/resolver.ts"
           ]
         },
@@ -11348,6 +11415,8 @@
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
+            "wiring/github-webhook-tasks.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/worker-mcp.ts"
           ]
@@ -12014,6 +12083,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "lib/dispatch-poller.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/resolver-dry-run.ts"
           ]
         },
@@ -12308,20 +12378,19 @@
             "lib/front-door.ts"
           ]
         },
+        "GithubIssueDispatch": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "lib/github-webhook-store.ts",
+            "wiring/github-webhook-tasks.ts",
+            "wiring/github-webhook.ts"
+          ]
+        },
         "WorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/github-webhook.ts",
             "lib/worker-supervisor.ts"
-          ]
-        },
-        "TASK_ID_RE": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/github-webhook.ts",
-            "lib/worker-pr-link.ts",
-            "lib/worker-supervisor.ts",
-            "lib/worker-task-store.ts"
           ]
         },
         "SAFE_IDENTIFIER_RE": {
@@ -12950,6 +13019,7 @@
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/gauge.ts#POST /hooks/gauge",
+            "routes/github-webhook.ts",
             "routes/hooks.ts#POST /hooks/dispatch-event",
             "routes/records.ts",
             "routes/vault.ts",
@@ -12963,6 +13033,7 @@
             "lib/request-gate.ts",
             "lib/terminal-bridge.ts",
             "routes/brain.ts",
+            "routes/github-webhook.ts",
             "routes/records.ts",
             "routes/vault.ts",
             "routes/worker-mcp.ts"
@@ -13000,6 +13071,7 @@
           "callers": [
             "lib/pipeline.ts",
             "wiring/body-agent.ts",
+            "wiring/github-webhook.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts"
           ]
@@ -15073,6 +15145,14 @@
             "lib/worker-pr-link.ts"
           ]
         },
+        "TASK_ID_RE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-pr-link.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task-store.ts"
+          ]
+        },
         "SupervisedTaskSnapshot": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
@@ -15398,6 +15478,7 @@
           "callers": [
             "routes/api.ts#POST /api/spawn-session",
             "wiring/brain-lead.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/repo-view.ts",
             "wiring/triage.ts"
           ]
@@ -16789,6 +16870,7 @@
             "routes/my-tasks.ts",
             "wiring/body-investigate.ts",
             "wiring/dispatch.ts",
+            "wiring/github-webhook-tasks.ts",
             "wiring/tasks-agent.ts",
             "wiring/triage.ts",
             "wiring/worker-mcp.ts"
@@ -16864,6 +16946,7 @@
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
             "wiring/front-door.ts",
+            "wiring/github-webhook.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
             "wiring/tasks-agent.ts",
@@ -16896,6 +16979,7 @@
             "wiring/brain.ts",
             "wiring/dispatch.ts",
             "wiring/front-door.ts",
+            "wiring/github-webhook.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/resolver.ts",
@@ -17869,13 +17953,15 @@
         "mintHandoffClaim": {
           "module": "lib/handoff-claim.ts",
           "callers": [
-            "wiring/brain-handoff.ts"
+            "wiring/brain-handoff.ts",
+            "wiring/github-webhook-tasks.ts"
           ]
         },
         "fileHandoff": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
-            "wiring/brain-handoff.ts"
+            "wiring/brain-handoff.ts",
+            "wiring/github-webhook-tasks.ts"
           ]
         },
         "emitTrace": {
@@ -18778,19 +18864,20 @@
             "wiring/gauge.ts"
           ]
         },
-        "GithubIssueDispatch": {
-          "module": "lib/github-webhook.ts",
-          "callers": [
-            "wiring/github-webhook.ts"
-          ]
-        },
-        "GithubWebhookAction": {
-          "module": "lib/github-webhook.ts",
-          "callers": [
-            "wiring/github-webhook.ts"
-          ]
-        },
         "buildGithubIssuePrompt": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook-tasks.ts",
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "allowedWebhookActors": {
+          "module": "lib/github-webhook.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "allowedWebhookOwners": {
           "module": "lib/github-webhook.ts",
           "callers": [
             "wiring/github-webhook.ts"
@@ -18802,8 +18889,26 @@
             "wiring/github-webhook.ts"
           ]
         },
-        "DispatchTaskInput": {
-          "module": "lib/worker-supervisor.ts",
+        "GithubWebhookStore": {
+          "module": "lib/github-webhook-store.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "defaultGithubWebhookTasks": {
+          "module": "wiring/github-webhook-tasks.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "createGithubWebhookStore": {
+          "module": "lib/github-webhook-store.ts",
+          "callers": [
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "GithubWebhookJob": {
+          "module": "lib/github-webhook-store.ts",
           "callers": [
             "wiring/github-webhook.ts"
           ]

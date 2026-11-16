@@ -213,6 +213,75 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — github-issue-dispatch (2026-11-16)
+**Request:** TASK d3fa5fa2b59414d7be4d7169ee20b439. Harden #322's existing receiver; trusted GitHub issues create claim-backed `origin=jeremie` tasks, dispatch through the brain's worker path under the 3-PR cap, and produce issue/brain receipts. Phase 1 ends at a green PR; Jeremie merges before Phase 2 webhook registration and live issue #1 proof.
+**Done when:** Targeted signature/trust/idempotency/routing/queue tests and direct TypeScript check pass; one PR carries this task id and CI is green. Live delivery/worker proof is expressly Phase 2.
+
+**Target shape & drift**
+- Reference: [GitHub webhook best practices](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks) maps delivery GUID to durable receipt, verified event to queued work, and prompt 2xx to asynchronous processing. [Signature validation](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) maps the raw body to HMAC-SHA256 and constant-time comparison.
+- Routes authenticate and validate; pure parsing decides trust; wiring owns external effects; SQLite owns delivery/job state; Turso owns actual tasks and their origin. Existing worker MCP/supervisor owns processes and PR linking. Existing thread frames announce receipts without an iOS contract change.
+- Current drift: Bearer lacks a peer gate; secret auto-generates; only repo owner is checked; an in-memory delivery set forgets restarts; worker dispatch lacks a task row/claim/cap; comments are fire-and-forget.
+- Move these boundaries now. Leave fleet-wide scheduler consolidation, unrelated brain/worker rewrites, and UI changes out of scope.
+
+**State decisions**
+- A webhook-specific SQLite store beside `orchestrator-db` owns delivery GUIDs and jobs keyed by stable task id; only the webhook dispatcher mutates it. Persist acceptance before acknowledgment, serialize dispatch, and retry queued work after restart/when PR space frees. Store receipt completion separately so comment failure cannot cause another worker.
+- Turso row uses `fileHandoff` and `mintHandoffClaim` directly after verified ingress trust; never synthesize a user brain turn or weaken `handoffOrigin`. Resolve REPO_MAP project by id/ref; fallback to configured webhook note (default existing PRJ-OR1T) by id/ref; absent note/origin column fails closed.
+- Queue state is visible as `queued` with `companion:worker:webhook:<host>` owner, written with an origin/assignee guard. This retains the existing handoff OWNABLE invariant; do not broaden global OWNABLE to arbitrary queued tasks.
+- Task identity covers canonical owner/repo/issue and satisfies both DISPATCH_ID and TASK_ID_RE. A second delivery or label keeps the existing job; only an explicit redispatch label schedules another turn, never concurrent with a running turn.
+- Trust: opened actor = issue author; labeled/reopened actor = sender. Require allowlisted author on every dispatch so an allowed label cannot launder outsider issue text. Default actor/author allowlist is jaubut. Derive canonical issue URL from validated owner/repo/number.
+- Title/body are fenced specification data, not execution commands; choose a fence longer than any supplied run. Secret reads only configured GITHUB_WEBHOOK_SECRET; unset rejects all POST paths. HMAC public; unsigned header Bearer only with recorded loopback/tailnet provenance. Strip webhook secret from all builder child environments.
+- PR capacity checks fail closed and count open PRs plus running reservations without counting a PR twice. A full repo stays queued; local queue serialization prevents two simultaneous webhook events claiming the last slot. MCP sends the claim exactly as bin/worker does. No remote fallback after an ambiguous timeout; reconcile via list_tasks before any retry.
+
+**Contracts touched** (architecture map plus source-confirmed blind spots)
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `/webhooks/github` | HTTP | Reject public unsigned, unset-secret, untrusted actors; durable accepted/queued response | `companion-server.ts`, GitHub hook, registration script | Security tightening; retain path and existing fields where applicable |
+| `getGithubWebhookSecret`, `parseGithubWebhookEvent`, `buildGithubIssuePrompt`, `buildGithubIssueTaskId` | exports | Explicit configuration, actor policy, fenced data, collision-safe identity | `routes/github-webhook.ts`, `wiring/github-webhook.ts`, registration script, adjacent tests | Internal migration in same PR |
+| `createGithubWebhookDispatcher` / result | exports | Persist receipt/jobs, task filing, cap queue, claim-bearing MCP, two receipts | `routes/github-webhook.ts`, route/wiring tests, startup | Add queued status; migrate injected test seams |
+| `dispatch_task` | MCP | No schema change; webhook now supplies existing claim field | `wiring/github-webhook.ts`, `routes/worker-mcp.ts`, brain/bin/worker | Existing consumers unchanged |
+| `fileHandoff`, `mintHandoffClaim`, `bindWorkerTask`, `linkWorkerPr` | exports | New verified ingress caller only | `wiring/brain-handoff.ts`, `wiring/worker-mcp.ts`, worker supervisor | Existing checks preserved |
+| `scrubAgentEnv` | exports | Remove GITHUB_WEBHOOK_SECRET | `worker-invocation.ts` buildWorkerEnv and mapped spawn callers | Intentional credential isolation |
+| `orchestrator` / `brain_trace` | WS frames | None; reuse existing turn/trace shapes | `wiring/orchestrator.ts`, `wiring/worker-mcp.ts`, native iOS | Unchanged |
+
+**Files — one owner each**
+| file | owner | change | lines now → after cap check |
+|---|---|---|---|
+| `server/routes/github-webhook.ts`, adjacent test | root | Peer/header gate, missing-secret rejection, full request auth matrix | 66 → ~90; under 600 |
+| `server/lib/github-webhook.ts`, adjacent test | root | Secret configuration, author/actor trust, canonical ids/URLs, safe brief | 261 → ~300; under 600 |
+| `server/wiring/github-webhook.ts`, new adjacent test | root | Preserve dispatcher; coordinate durable jobs, claims, caps, receipts, drain/retry | 220 → <600; split storage/filing responsibilities below |
+| `server/lib/github-webhook-store.ts`, adjacent test (new) | root | NEW: `createGithubWebhookStore`, `GithubWebhookStore`; durable delivery/job/receipt operations with injected SQLite | <350 |
+| `server/wiring/github-webhook-tasks.ts`, adjacent test (new) | root | NEW: task filing/routing factory + its dependency/result types; resolve note, fileHandoff, mint claim, cap reads | <350 |
+| `server/companion-server.ts` | root | Start queue recovery/drain at server startup | 218 → ~222 |
+| `server/lib/worker-invocation.ts`, `server/lib/worker-supervisor.test.ts` | root | Scrub webhook signing secret from child environment; existing env-scrub regression suite | production file under 600 |
+| `scripts/register-github-webhook.ts` | root | Fail when configured secret absent; report config source, never secret | under 600 |
+| `.github/workflows/ci.yml` | root | Add webhook Turso test to the explicit integration file list | under 600 |
+| `STATE.md`, `architecture.md`, `architecture.json` | architect then root | Plan, verification evidence, regenerate map | Docs/generated |
+
+**Fan-in paths to guard**
+- `clientOrigin` / `peerOf` already use `recordPeer(req, server.requestIP(req)?.address)` before route dispatch. Host/XFF text alone must never authorize public Bearer.
+- `fileHandoff` is idempotent by tasks.id; only a stored jeremie origin produces an eligible claim-backed worker. `OWNABLE` and PR branch/repo verification remain authoritative after restart and on link replay.
+- Worker state already denies simultaneous task/worktree dispatch. Durable webhook state must also suppress completed/failed job redelivery, and distinguish an ambiguous transport result from a safe retry.
+- Existing local/peer MCP routes and supervisor consumers remain unchanged; the webhook must not let an unbound fallback run if filing/claim verification failed.
+
+**Risks**
+- GitHub times out slow delivery acknowledgments: persist accepted work before slow Turso/GitHub/process actions; drain in background.
+- Cross-host claim keys must match for peer workers. Fail closed on unknown acceptance; do not turn an ambiguous remote timeout into two workers.
+- SQLite cannot atomically commit a remote task insert or issue comment: stable IDs, guarded writes, recorded progress, and retry of only missing effects provide recovery.
+- A restart between worker acceptance and receipt needs reconciliation against supervisor state before scheduling another turn.
+- Map blind spot: `/webhooks/github` is source-registered through a constant and absent from the endpoint table; registration script is outside the server target. Both callers are explicitly listed above.
+- No external package gotchas apply to these modules (mapped externals empty; crypto, filesystem and SQLite are builtins).
+
+**Verify**
+1. Targeted `bun test` only: valid/tampered/malformed signatures, missing secret, public/Funnel Bearer refusal, spoofed XFF/Host, direct and proxied tailnet admission.
+2. Parser tests: opened author vs labeled/reopened sender; outsider author never reaches routing/brief; skip/actions and fence-break attempts.
+3. Real isolated SQLite tests: concurrent GUID replay and second labels; restart persistence; explicit redispatch; full cap queues, no-cap/gh-error stays queued, drain resumes once; failed receipt retries no worker.
+4. Routing tests: real tls-test task row has origin jeremie and handoff assignee, task claim verifies, MCP receives it; same #311 binding/PR-link regressions remain green. DB tests use existing tls-test guard and owned cleanup.
+5. `bun node_modules/typescript/bin/tsc --noEmit -p .`; lint; regenerate/lint archmap; review diff. Push early, one PR with TASK marker; wait CI green; stop for merge.
+6. After Jeremie merges and resumes Phase 2: register issues webhook with env-stored secret, ping, trigger jaubut/ndi-tx-enclosure#1, show 2xx delivery, task origin, running builder, issue comment, brain receipt. Jeremie sees the receipt/task and resulting worker in the running build.
+
+**Out of scope:** Hook registration, secret provisioning, live issue triggering, deployment/merge and live e2e proof before the explicit Phase 2 resume.
+**Phase 1 evidence (2026-11-16):** 71 targeted tests pass (lib/route/supervisor/handoff-claim/agy-feed + new `wiring/github-webhook-tasks.test.ts`, stub locally, tls-test in CI's integration job); direct tsc, lint and archmap --check clean. Also fixes main's pre-existing agy-feed tsc error (`ident.key` guard).
+
 ### Change Plan — handoff-claim (2026-11-12)
 **Request:** TASK 34e8dfe58e35004a621a3cef8eb501c3, the security follow-up to #309. (1) `bin/propose --handoff` on a Jeremie turn gets a server-signed claim (task id, repo, turn id, HMAC with a server secret). `bin/worker dispatch` and the worker PR link require a valid claim for that exact id and repo; anything else stays origin unknown and is never linked. (2) Headless workers (claude -p, codex exec, gemini) run without Turso/db credentials. The 3 other taint reasons stay as they are. Tests first. High review tier, human merge.
 **Done when:**

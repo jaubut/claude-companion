@@ -1,4 +1,5 @@
-import { checkBearer } from "../lib/auth"
+import { checkBearerHeaderOnly } from "../lib/auth"
+import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { getGithubWebhookSecret, verifyGithubSignature } from "../lib/github-webhook"
 import { HOST_INFO } from "../state"
 import { type GithubWebhookDispatcher, githubWebhookDispatcher } from "../wiring/github-webhook"
@@ -15,16 +16,13 @@ export const GITHUB_WEBHOOK_PATH = "/webhooks/github"
 export function createGithubWebhookRoute(deps: GithubWebhookRouteDeps = {}) {
   const dispatcher = deps.dispatcher ?? githubWebhookDispatcher
   const getSecret = deps.getSecret ?? (() => getGithubWebhookSecret())
-  const authorizeBearer = deps.authorizeBearer ?? checkBearer
+  const authorizeBearer = deps.authorizeBearer ?? checkBearerHeaderOnly
   const localHost = deps.localHost ?? HOST_INFO.name
 
   return async function handleGithubWebhookRoute(req: Request, url: URL): Promise<Response | null> {
     if (url.pathname !== GITHUB_WEBHOOK_PATH) return null
 
-    if (req.method === "GET") {
-      return Response.json({ ok: true, service: "github-webhook", host: localHost })
-    }
-    if (req.method !== "POST") {
+    if (req.method !== "POST" && req.method !== "GET") {
       return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405 })
     }
 
@@ -32,15 +30,17 @@ export function createGithubWebhookRoute(deps: GithubWebhookRouteDeps = {}) {
     const signature = req.headers.get("x-hub-signature-256")
     const isFunnel = req.headers.has("tailscale-funnel-request")
 
+    let secret = ""
+    try { secret = getSecret() } catch { secret = "" }
+    if (!secret) return Response.json({ ok: false, error: "webhook_secret_unset" }, { status: 503 })
     if (signature !== null) {
-      let secret = ""
-      try { secret = getSecret() } catch { secret = "" }
       if (!verifyGithubSignature(rawBody, signature, secret)) {
         return Response.json({ ok: false, error: "invalid_signature" }, { status: 401 })
       }
-    } else if (isFunnel || !authorizeBearer(req)) {
+    } else if (isFunnel || clientOrigin(req, peerOf(req)).transport === "untrusted" || !authorizeBearer(req)) {
       return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
     }
+    if (req.method === "GET") return Response.json({ ok: true, service: "github-webhook", host: localHost })
 
     let payload: unknown = null
     try {

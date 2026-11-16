@@ -29,6 +29,8 @@ export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
   /** The handoff claim from `bin/worker dispatch --claim` (lib/handoff-claim.ts). Stays inside the supervisor. */
   claim?: string
+  /** Trusted ingress can require a verified binding before any process is launched. */
+  requireClaim?: boolean
   /** Server-only (routes/api.ts, Jeremie's authenticated phone inject): resume with the stored claim. Never from a tool call. */
   inheritClaim?: boolean
 }
@@ -322,6 +324,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const prLinkBound = bind === true ? true : bind === null ? null : false
         const handoffClaim = prLinkBound === false ? null : claim
         const claimStatus: ClaimStatus = !claim ? "absent" : bind === true ? "verified" : bind === null ? "pending" : `claim_refused:${bind}`
+        if (input.requireClaim && bind !== true) return { ok: false, status: bind === null ? 503 : 403, error: "verified_claim_required" }
 
         const now = deps.now()
         const resume = !!existing && existing.sessionStarted && !familyChanged

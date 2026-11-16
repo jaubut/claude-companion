@@ -994,7 +994,7 @@ describe("createWorkerSupervisor", () => {
       const h = harness(home)
       const seeded = {
         TURSO_AUTH_TOKEN: "t", TURSO_DATABASE_URL: "libsql://x", TURSO_TEST_AUTH_TOKEN: "t", LIBSQL_AUTH_TOKEN: "l", DATABASE_URL: "d",
-        COMPANION_BODY_PEER_TOKEN: "p", COMPANION_GCAL_TOKEN_FILE: "/f", BROKER_TOKEN: "b", CLAUDE_CODE_OAUTH_TOKEN: "keep-oauth",
+        COMPANION_BODY_PEER_TOKEN: "p", COMPANION_GCAL_TOKEN_FILE: "/f", BROKER_TOKEN: "b", GITHUB_WEBHOOK_SECRET: "secret", CLAUDE_CODE_OAUTH_TOKEN: "keep-oauth",
       }
       const saved = Object.fromEntries(Object.keys(seeded).map((k) => [k, process.env[k]]))
       Object.assign(process.env, seeded)
@@ -1002,7 +1002,7 @@ describe("createWorkerSupervisor", () => {
         for (const [i, family] of (["claude", "codex", "gemini"] as const).entries()) {
           await h.sup.dispatchTask({ taskId: `env-${family}`, repo: "claude-companion", prompt: "Ship PR", family })
           const env = h.spawned[i]!.env
-          for (const k of ["TURSO_AUTH_TOKEN", "TURSO_DATABASE_URL", "TURSO_TEST_AUTH_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_URL", "COMPANION_BODY_PEER_TOKEN", "COMPANION_GCAL_TOKEN_FILE", "BROKER_TOKEN"]) {
+          for (const k of ["TURSO_AUTH_TOKEN", "TURSO_DATABASE_URL", "TURSO_TEST_AUTH_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_URL", "COMPANION_BODY_PEER_TOKEN", "COMPANION_GCAL_TOKEN_FILE", "BROKER_TOKEN", "GITHUB_WEBHOOK_SECRET"]) {
             expect(env[k]).toBeUndefined()
           }
           expect(Object.keys(env).filter((k) => /^(TURSO|LIBSQL)_/i.test(k))).toEqual([])

@@ -202,6 +202,7 @@ export function createWorkerMcpHandler(deps: WorkerMcpDeps) {
         mode: typeof args.mode === "string" ? args.mode : undefined,
         timeoutS: typeof args.timeout_s === "number" && Number.isFinite(args.timeout_s) ? args.timeout_s : undefined,
         claim: typeof args.claim === "string" ? args.claim : undefined,
+        requireClaim: args.require_claim === true,
       })
       if (!out.ok) return rpcOk(id, toolResult({ ok: false, error: out.error, status: out.status }, true))
       return rpcOk(id, toolResult({ ok: true, host: deps.localHost, task: out.task, claim: out.claim }))
