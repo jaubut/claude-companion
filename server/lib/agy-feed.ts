@@ -966,11 +966,11 @@ export function readAgyTranscriptDelta(
     start = Math.max(0, size - FIRST_READ_TAIL_BYTES)
   }
 
-  const canClearActivity = Boolean(ident.key && !identOverride && !(ident.key === AGY_BRAIN_KEY && activeAgyProcs.has(AGY_BRAIN_KEY)))
+  const clearKey = !identOverride && !(ident.key === AGY_BRAIN_KEY && activeAgyProcs.has(AGY_BRAIN_KEY)) ? ident.key : undefined
   if (size <= start) {
     offsets.set(path, size)
-    if (convo.status === "idle" && canClearActivity) {
-      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
+    if (convo.status === "idle" && clearKey) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: clearKey })
     }
     return []
   }
@@ -1000,8 +1000,8 @@ export function readAgyTranscriptDelta(
 
   const body = bodySlice.toString("utf8")
   if (!body.trim()) {
-    if (convo.status === "idle" && canClearActivity) {
-      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
+    if (convo.status === "idle" && clearKey) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: clearKey })
     }
     return []
   }
@@ -1022,8 +1022,8 @@ export function readAgyTranscriptDelta(
     const lastStatusEvent = [...out].reverse().find(
       (e) => e.kind === "tool_start" || e.kind === "tool_end" || e.kind === "assistant_text" || e.kind === "assistant_thinking" || e.kind === "user_prompt",
     )
-    if ((convo.status === "idle" || lastStatusEvent?.kind === "assistant_text") && canClearActivity) {
-      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: ident.key })
+    if ((convo.status === "idle" || lastStatusEvent?.kind === "assistant_text") && clearKey) {
+      clearExternalSessionActivity({ cwd: ident.cwd ?? "", sessionId: ident.sessionId, tty: ident.tty, transcriptPath: path, sessionKey: clearKey })
     } else if (!firstRead && convo.status === "busy" && lastStatusEvent) {
       const isTool = lastStatusEvent.kind === "tool_start"
       syncExternalToolActivity({
