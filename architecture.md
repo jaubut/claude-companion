@@ -17,9 +17,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 592 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `lib/worker-supervisor.ts` | 590 | lib | 10 |  |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/worker-supervisor.ts` | 585 | lib | 10 |  |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `routes/hooks.ts` | 567 | route-host | 1 | emits: user_prompt · routes: 9 |
@@ -94,6 +94,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/orchestrator.ts` | 255 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
+| `lib/worker-invocation.ts` | 247 | lib | 19 |  |
 | `ws.ts` | 247 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `lib/jev-model-router.ts` | 244 | lib | 13 |  |
@@ -124,7 +125,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/canvas.ts` | 210 | lib | 2 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
-| `lib/worker-invocation.ts` | 206 | lib | 16 |  |
 | `lib/front-door.ts` | 205 | lib | 9 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
