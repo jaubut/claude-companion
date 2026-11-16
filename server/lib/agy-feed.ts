@@ -221,11 +221,9 @@ export function normalizeAgyCliModelFlag(raw: string): string {
 export function extractAgyUserPrompt(rawContent: unknown): string | null {
   if (typeof rawContent !== "string") return null
   const m = rawContent.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i)
-  let text = (m ? m[1] ?? "" : rawContent).trim()
+  let text = (m ? m[1] ?? "" : rawContent).replace(/\n*\[Active Design State\][^\n]*$/i, "").trim()
   if (!text || text.startsWith("<") || text.startsWith("[Request interrupted")) return null
-  if (/^\/boost\s+\S/i.test(text)) {
-    text = text.replace(/^\/boost\s+/i, "").trim()
-  }
+  if (/^\/boost\s+\S/i.test(text)) text = text.replace(/^\/boost\s+/i, "").trim()
   return text || null
 }
 
