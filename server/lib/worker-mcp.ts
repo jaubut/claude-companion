@@ -324,7 +324,7 @@ export async function relayWorkerReceipts(deps: ReceiptRelayDeps): Promise<numbe
     for (const r of out.receipts.filter(isWorkerReceipt)) {
       const key = `${host}|${r.id}`
       if (!deps.delivered.has(key)) {
-        if (!(await deps.deliver(workerReceipt(r.task, { host, latest: r.latest }), r).catch(() => false))) continue
+        if (!(await deps.deliver(workerReceipt(r.task, { host, latest: r.latest, note: r.note }), r).catch(() => false))) continue
         deps.delivered.add(key); posted++
       }
       acks.push(r.id)

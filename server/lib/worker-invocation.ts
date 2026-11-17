@@ -1,8 +1,9 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { redactSecrets } from "./secret-redact"
+import { defaultKillPid } from "./worker-pid"
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]{1,100}$/
@@ -11,6 +12,22 @@ export const ALLOWED_MODES = new Set(["acceptEdits", "auto", "default", "dontAsk
 export type WorkerFamily = "claude" | "codex" | "gemini"
 export const ALLOWED_FAMILIES = new Set<WorkerFamily>(["claude", "codex", "gemini"])
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
+
+/** Footer on every worker brief: a turn ends on finished work, and a background-notification turn restates the report. */
+export const WORKER_TURN_RULE = "Turn rule: end your turn only when the work you report is done. Never end a turn saying you are waiting on " +
+  "background work (a background shell, a long render or run): wait for it in this turn, or stop it and report what you have. " +
+  "If you are woken again after your report (a background-task notification, a resume), your reply must restate your full final " +
+  "report (links, choices, QA) updated with what changed, never a short note in its place."
+
+/** Footer on every worker brief: the worker ships its own code. No runner commits for a bin/worker task (a88c7bd9 left it all staged). */
+export const WORKER_SHIP_RULE = "Ship rule: if this brief changes files in the repo, you commit them yourself on your current branch " +
+  "(dispatch/<task id>), push it, open ONE pull request with gh pr create (never to main directly, never merge it) and put the PR link " +
+  "in your final report. Nobody commits, pushes or opens the PR after you: a rule or skill saying \"the runner commits the diff and opens " +
+  "the PR\" (headless DISPATCH_HEADLESS jobs) does not apply to this worker. Never end with staged or uncommitted changes. " +
+  "If the brief changes no files, open no PR and say so."
+export const WORKER_FOOTER = `${WORKER_SHIP_RULE}\n\n${WORKER_TURN_RULE}`
+/** After a turn's `result` event, a worker still alive this long is idle on background work: it gets SIGTERM, the turn stays completed. */
+export const DEFAULT_REAP_GRACE_MS = 10_000
 
 export type WorkerTaskStatus = "running" | "completed" | "failed" | "interrupted"
 export interface StreamJsonEvent {
@@ -314,4 +331,31 @@ export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prom
   if (opts.family === "gemini") return { cmd: agyBin(), args: buildHeadlessGeminiArgs(opts) }
   // Worker-only sandbox network additions (lists merge with the user settings): the production jobs Codex already does.
   return { cmd: "claude", args: ["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } }), ...buildHeadlessClaudeArgs(opts)] }
+}
+
+export interface SpawnedWorkerHandle { pid: number; kill(sig: NodeJS.Signals): void }
+
+export interface SpawnWorkerOpts {
+  cmd: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv
+  onStdoutLine(line: string): void; onStderrLine(line: string): void; onExit(code: number | null, signal: NodeJS.Signals | null): void
+}
+
+export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
+  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
+  let outBuf = "", errBuf = ""
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
+    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
+  })
+  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
+    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
+  })
+  child.on("error", (err) => { opts.onStderrLine(err.message); opts.onExit(1, null) })
+  child.on("close", (code, sig) => {
+    if (outBuf.trim()) opts.onStdoutLine(outBuf)
+    if (errBuf.trim()) opts.onStderrLine(errBuf)
+    opts.onExit(code, sig)
+  })
+  return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
 }

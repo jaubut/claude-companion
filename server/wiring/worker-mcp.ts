@@ -71,8 +71,10 @@ export async function syncWorkerTaskToTurso(
   }
 }
 
-/** Receipt relay pass interval (brain host): the fallback for peers' outboxes; a local turn end kicks a pass at once. */
-const RECEIPT_POLL_MS = 30_000
+/** Receipt relay pass interval (brain host): how fast a peer's (Mac) receipt lands; a local turn end kicks a pass at once. */
+const RECEIPT_POLL_MS = 10_000
+/** Finished tasks' worktrees close once their PR is merged or closed (supervisor.sweepWorktrees). */
+const WORKTREE_SWEEP_MS = 5 * 60_000
 const DELIVERED_MAX = 1_000
 let relayStarted = false
 let relaying = false
@@ -92,6 +94,8 @@ export const workerSupervisor = createWorkerSupervisor({
   reportJob: (r) => builderJobs.report(r),
   designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
+    // A finished worker leaves the drawer (pruneGoneSessions drops its row); a follow-up dispatch records it again.
+    if (task.status !== "running") { void syncWorkerTaskToTurso(task, linkBound); return }
     const model = task.model || DEFAULT_FAMILY_MODELS[task.family]
     const recorded = recordSession({
       cwd: task.worktree,
@@ -124,9 +128,15 @@ export const workerSupervisor = createWorkerSupervisor({
   onReceipt: () => kickReceiptRelay(),
 })
 
-/** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
+/** Boot (cli.ts): drop finished workers' sessions every few seconds, and close their worktrees once done with. */
 export function startWorkerSessionPrune(): void {
   startGoneSessionPrune((id) => workerSupervisor.getTask(id)?.status === "running")
+  if (process.env.NODE_ENV === "test") return
+  const sweep = () => void workerSupervisor.sweepWorktrees()
+    .then((ids) => { if (ids.length) companionLog(`[worker] worktree closed: ${ids.join(", ")}`) })
+    .catch((err: unknown) => companionLog(`[worker] worktree sweep: ${(err as Error)?.message ?? String(err)}`))
+  sweep()
+  setInterval(sweep, WORKTREE_SWEEP_MS).unref?.()
 }
 
 /** A link lost to a restart or past the retries: once at server start, tasks whose claim verifies and row is still unlinked. */

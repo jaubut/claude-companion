@@ -5,6 +5,7 @@ import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
 import {
   type SpawnWorkerOpts,
+  WORKER_SHIP_RULE,
   WORKER_TURN_RULE,
   buildHeadlessClaudeArgs,
   buildHeadlessCodexArgs,
@@ -15,7 +16,7 @@ import {
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
-import { WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
+import { WORKER_FOOTER, WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
 
@@ -602,7 +603,7 @@ describe("createWorkerSupervisor", () => {
       // Turn after completion: nothing named → recorded family + model.
       const t2 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Follow up" })
       expect(t2.ok && [t2.task.family, t2.task.model]).toEqual(["codex", "gpt-6-astra"])
-      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", `Follow up\n\n${WORKER_TURN_RULE}`])
+      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", `Follow up\n\n${WORKER_FOOTER}`])
       finish(3)
       // The turn-8 shape: family codex + a stale claude model → still the task's codex model.
       const t3 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Turn 8", family: "codex", model: "claude-opus-5-5" })
@@ -615,7 +616,7 @@ describe("createWorkerSupervisor", () => {
       const t4 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Switch to agy", family: "gemini" })
       expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", null])
       expect(spawned[5]!.cmd).toMatch(/(^|\/)agy$/)
-      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_TURN_RULE}`, "--output-format", "stream-json", "--dangerously-skip-permissions"])
+      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_FOOTER}`, "--output-format", "stream-json", "--dangerously-skip-permissions"])
       spawned[5]!.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-conv-1", init: { cwd: "/w" } }))
       spawned[5]!.onExit(0, null)
 
@@ -761,7 +762,7 @@ describe("createWorkerSupervisor", () => {
         expect(s.env.RESEND_API_KEY).toBeUndefined()
         expect(s.args).not.toContain("--settings")
       }
-      expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: `Deploy\n\n${WORKER_TURN_RULE}`, sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
+      expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: `Deploy\n\n${WORKER_FOOTER}`, sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
@@ -1265,6 +1266,7 @@ describe("createWorkerSupervisor", () => {
       spawned[0]!.onStdoutLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Checking the background job." }] } }))
       spawned[0]!.onStdoutLine(result("The background job hit its time limit; nothing else to do."))
       spawned[0]!.onExit(0, null)
+      await Bun.sleep(5) // a no-PR receipt waits for the worktree's git status
 
       const got = sup.getTaskTurns("fd0fea0d")!
       expect(got.task.status).toBe("completed")
@@ -1301,10 +1303,132 @@ describe("createWorkerSupervisor", () => {
       expect(sup.getTaskTurns("fd0fea0d")!.task.result).toBe("Looking at CI.") // the live card follows the open turn
       spawned[2]!.onStdoutLine(result("Couldn't fix CI, blocked by X."))
       spawned[2]!.onExit(0, null)
+      await Bun.sleep(5)
       expect(sup.getTaskTurns("fd0fea0d")!.task.result).toBe("Couldn't fix CI, blocked by X.")
       expect(sup.pendingReceipts().at(-1)!.task.result).toBe("Couldn't fix CI, blocked by X.")
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  describe("exit when done, own PR, receipts (2026-11-17)", () => {
+    const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
+    const assistant = (text: string) => JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
+    function harness(opts: { dirty?: string; pr?: { state: string; head: string } } = {}) {
+      const home = join(tmpdir(), `worker-sup-exit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+      const spawned: SpawnWorkerOpts[] = []
+      const signals: NodeJS.Signals[] = []
+      const removed: string[] = []
+      const state = { dirty: opts.dirty ?? "", pr: opts.pr ?? null, pushed: false }
+      const sup = createWorkerSupervisor({
+        host: "mac", home, killGraceMs: 50, reapGraceMs: 30, now: () => Date.now(), uuid: () => "dddd1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+        sh: async (cmd, args) => {
+          const ok = (out: string) => ({ ok: true, out, err: "", code: 0 })
+          if (args.includes("worktree") && args.includes("add")) { mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true }); return ok("") }
+          if (args.includes("status") && args.includes("--porcelain")) return ok(state.dirty)
+          if (args.includes("--contains")) return ok(state.pushed ? "  origin/main\n" : "") // unpushed: only a merged / closed PR's head lets it go
+          if (args.includes("rev-parse") && args.includes("HEAD")) return ok("abc123\n")
+          if (cmd === "gh") return state.pr ? ok(JSON.stringify({ state: state.pr.state, headRefOid: state.pr.head })) : { ok: false, out: "", err: "no pr", code: 1 }
+          if (args.includes("worktree") && args.includes("remove")) { removed.push(args.at(-1)!); rmSync(args.at(-1)!, { recursive: true, force: true }); return ok("") }
+          return ok("origin/main\n")
+        },
+        spawnWorker(o) { spawned.push(o); return { pid: 0, kill(sig) { signals.push(sig); queueMicrotask(() => o.onExit(null, sig)) } } },
+      })
+      return { home, sup, spawned, signals, removed, state }
+    }
+
+    test("a worker idle after its turn (background work still running) exits, reads completed, and the receipt says it was stopped (ee0a87d5, 256a637a)", async () => {
+      const h = harness()
+      try {
+        await h.sup.dispatchTask({ taskId: "ee0a87d5", repo: "claude-companion", prompt: "Render the cut" })
+        // Output after a result is a new turn: it holds the reaper off until that turn ends too.
+        h.spawned[0]!.onStdoutLine(result("Rendering in the background, done at 18:09."))
+        h.spawned[0]!.onStdoutLine(assistant("Still checking the render."))
+        await Bun.sleep(60)
+        expect(h.signals).toEqual([])
+        h.spawned[0]!.onStdoutLine(result("Last cold rounds running, I'll report back."))
+        await Bun.sleep(60) // the reap grace, then SIGTERM; no exit from the worker itself
+        expect(h.signals).toEqual(["SIGTERM"])
+        const t = h.sup.getTask("ee0a87d5")!
+        expect([t.status, t.error]).toEqual(["completed", null]) // our signal, not a failure
+        const [r, ...rest] = h.sup.pendingReceipts()
+        expect(rest).toEqual([]) // exactly one receipt
+        expect(r!.note).toContain("background work still running")
+        expect(workerReceipt(r!.task, { host: "mac", note: r!.note })).toContain("nothing it says is still running will finish")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("every brief tells the worker to commit, push and open its own PR, and not to end on background work (a88c7bd9)", async () => {
+      const h = harness()
+      try {
+        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD" })
+        const prompt = h.spawned[0]!.args.at(-1)!
+        expect(prompt).toContain(WORKER_SHIP_RULE)
+        expect(prompt).toContain(WORKER_TURN_RULE)
+        expect(WORKER_SHIP_RULE).toMatch(/commit them yourself.*push.*open ONE pull request.*PR link in your final report/)
+        expect(WORKER_SHIP_RULE).toContain("the runner commits the diff and opens the PR\" (headless DISPATCH_HEADLESS jobs) does not apply")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("finished with no PR: a dirty worktree is kept and the receipt says so; interrupt --close-worktree refuses it; a clean one closes (a88c7bd9)", async () => {
+      const h = harness({ dirty: "A  cad/enclosure.step\nA  cad/lid.step\nM  README.md\n" })
+      try {
+        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD" })
+        h.spawned[0]!.onStdoutLine(result("Enclosure modelled; everything staged, the runner commits."))
+        h.spawned[0]!.onExit(0, null)
+        await Bun.sleep(5)
+        const wt = h.sup.getTask("a88c7bd9")!.worktree
+        const [r] = h.sup.pendingReceipts()
+        expect(r!.note).toBe(`No PR, and 3 uncommitted change(s) left in ${wt}: worktree kept. Resume the task to commit and open the PR.`)
+        expect(workerReceipt(r!.task, { host: "mac", note: r!.note })).toContain("worktree kept")
+        expect(h.removed).toEqual([])
+        const out = await h.sup.interruptTask("a88c7bd9", { closeWorktree: true })
+        expect(out.ok && [out.worktreeRemoved, out.note]).toEqual([false, `worktree kept: 3 uncommitted change(s) in ${wt}`])
+        expect(await h.sup.sweepWorktrees()).toEqual([])
+        expect(h.removed).toEqual([])
+
+        // Clean but HEAD on no remote branch: kept, nothing lost. Clean and on origin: closes on its own.
+        h.state.dirty = ""
+        for (const [i, id, pushed] of [[1, "b1", false], [2, "b2", true]] as const) {
+          h.state.pushed = pushed
+          await h.sup.dispatchTask({ taskId: id, repo: "claude-companion", prompt: "Answer a question" })
+          h.spawned[i]!.onStdoutLine(result("The answer is 42."))
+          h.spawned[i]!.onExit(0, null)
+          await Bun.sleep(5)
+        }
+        expect(h.removed).toEqual([h.sup.getTask("b2")!.worktree])
+        expect(h.sup.pendingReceipts().find((r) => r.task.taskId === "b2")!.note).toBeNull()
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("a PR task's worktree closes once the PR is merged or closed, never while open or dirty", async () => {
+      const PR = "https://github.com/jaubut/claude-companion/pull/400"
+      const h = harness({ pr: { state: "OPEN", head: "abc123" } })
+      try {
+        await h.sup.dispatchTask({ taskId: "pr-task", repo: "claude-companion", prompt: "Fix it" })
+        h.spawned[0]!.onStdoutLine(result(`Done: ${PR}`))
+        h.spawned[0]!.onExit(0, null)
+        expect(h.sup.pendingReceipts()).toHaveLength(1) // a PR receipt never waits on git
+        expect(await h.sup.sweepWorktrees()).toEqual([])
+        h.state.pr = { state: "MERGED", head: "abc123" }
+        h.state.dirty = " M x.ts\n"
+        expect(await h.sup.sweepWorktrees()).toEqual([])
+        h.state.dirty = ""
+        expect(await h.sup.sweepWorktrees()).toEqual(["pr-task"])
+        expect(h.removed).toEqual([h.sup.getTask("pr-task")!.worktree])
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("the receipt carries the report (first 1500 chars) and every link past the cut, so the brain needs no follow-up call (742990dd)", () => {
+      const PR = "https://github.com/jaubut/claude-companion/pull/401"
+      const review = "https://frame.io/reviews/v9-granby"
+      const report = `v9 ready: ${review}\nMusic: Artlist "Northern Lights".\n${"QA line ok. ".repeat(200)}\nPR: ${PR}`
+      const text = workerReceipt({ taskId: "54f3b9d9", repo: "claude-companion", title: "Granby v9", status: "completed", step: "Turn completed", prUrl: null, result: report, error: null }, { host: "mac" })
+      expect(text).toContain(report.slice(0, 1500))
+      expect(text).toContain(`…\nLinks: ${PR}`) // the PR sat past the cut
+      expect(text.match(/frame\.io/g)).toHaveLength(1) // a link already shown isn't repeated
+      expect(text).toEndWith("Full report, every turn: bin/worker get --task 54f3b9d9 --host mac")
+    })
   })
 })

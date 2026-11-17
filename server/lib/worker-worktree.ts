@@ -66,3 +66,38 @@ export async function ensureWorktree(
   if (!wtRes.ok) return { ok: false, error: `worktree add failed: ${(wtRes.err || wtRes.out).trim().slice(0, 200)}` }
   return { ok: true, worktree, branch }
 }
+
+/** `git status --porcelain` of a worktree: the changed paths, or null when it can't be read (never "clean"). */
+export async function worktreeDirtyPaths(sh: ShFn, worktree: string): Promise<string[] | null> {
+  const res = await sh("git", ["-C", worktree, "status", "--porcelain"], { cwd: worktree, timeoutMs: 10_000 })
+  return res.ok ? res.out.split("\n").filter((l) => l.trim()) : null
+}
+
+/** Removes a finished task's worktree and local branch only when nothing is lost: clean, and HEAD on a remote branch (or
+ *  the head of its merged / closed PR). Never a dirty one; the note says why it was kept. */
+export async function closeTaskWorktree(
+  sh: ShFn, t: { worktree: string; repoDir: string; branch: string }, prHead: string | null = null,
+): Promise<{ removed: boolean; note?: string }> {
+  if (!existsSync(t.worktree)) return { removed: false }
+  clearStaleGitConfigLock(t.repoDir)
+  const dirty = await worktreeDirtyPaths(sh, t.worktree)
+  if (dirty === null) return { removed: false, note: `worktree kept: git status failed in ${t.worktree}` }
+  if (dirty.length) return { removed: false, note: `worktree kept: ${dirty.length} uncommitted change(s) in ${t.worktree}` }
+  await sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
+  const pushed = await sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
+  const head = prHead ? (await sh("git", ["-C", t.worktree, "rev-parse", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })).out.trim() : ""
+  if (!(pushed.ok && pushed.out.trim()) && !(prHead && head === prHead)) return { removed: false, note: `worktree kept: HEAD is not pushed to any remote branch (${t.worktree})` }
+  const rm = await sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
+  if (!rm.ok) return { removed: false, note: `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}` }
+  await sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
+  return { removed: true }
+}
+
+/** The PR's head commit once it is merged or closed; null while open or unreadable (the worktree stays). */
+export async function finishedPrHead(sh: ShFn, prUrl: string, cwd: string): Promise<{ head: string | null } | null> {
+  const pr = await sh("gh", ["pr", "view", prUrl, "--json", "state,headRefOid"], { cwd, timeoutMs: 20_000 })
+  try {
+    const j = JSON.parse(pr.out) as { state?: unknown; headRefOid?: unknown }
+    return pr.ok && (j.state === "MERGED" || j.state === "CLOSED") ? { head: typeof j.headRefOid === "string" ? j.headRefOid : null } : null
+  } catch { return null }
+}

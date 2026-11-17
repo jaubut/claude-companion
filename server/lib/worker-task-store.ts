@@ -11,7 +11,7 @@ export const workerStateFile = (home: string): string => join(home, ".claude", "
 /** One worker turn: each `result` event, or the process exit, closes one. Append-only; `result` is never truncated. */
 export interface WorkerTurn { turn: number; startedAt: number; endedAt: number | null; status: WorkerTaskStatus; result: string; prUrl: string | null }
 
-const LINK_RE = /https?:\/\/[^\s)>\]"'`]+/g
+export const LINK_RE = /https?:\/\/[^\s)>\]"'`]+/g
 
 /** The ended turn the brain reads as the task's report: the latest one, unless it is shorter than the report before it
  *  and brings no new PR or link (a background-task notification turn after the real report). */
@@ -89,6 +89,8 @@ export interface WorkerReceipt {
   id: string; at: number
   /** The newest ended turn's text when it isn't the one `task.result` reports (a notification turn after the report). */
   latest: string | null
+  /** What the worker host did after the turn: the process stopped for lingering, a dirty worktree kept. */
+  note?: string | null
   task: SupervisedTaskSnapshot
 }
 
@@ -100,7 +102,7 @@ export function isWorkerReceipt(r: unknown): r is WorkerReceipt {
   const x = r as Partial<WorkerReceipt>
   const str = (v: unknown): boolean => typeof v === "string"
   const opt = (v: unknown): boolean => v === null || typeof v === "string"
-  return typeof x.id === "string" && typeof x.at === "number" && opt(x.latest) && !!x.task && typeof x.task === "object" &&
+  return typeof x.id === "string" && typeof x.at === "number" && opt(x.latest) && (x.note === undefined || opt(x.note)) && !!x.task && typeof x.task === "object" &&
     typeof x.task.taskId === "string" && TASK_ID_RE.test(x.task.taskId) && typeof x.task.repo === "string" && REPO_NAME_RE.test(x.task.repo) &&
     str(x.task.title) && str(x.task.status) && str(x.task.result) && opt(x.task.step) && opt(x.task.prUrl) && opt(x.task.error)
 }

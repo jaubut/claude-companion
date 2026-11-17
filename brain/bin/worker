@@ -8,6 +8,7 @@
 #     turns[]: every turn ended since the last await, full text. task.result = the latest substantive report.
 #   bin/worker get --task <id> [--host local|zettlab|mac]   the task and ALL its turns (full result text, PR url)
 #   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
+#     --close-worktree never removes a dirty or unpushed worktree; a refusal prints "worker: worktree NOT removed: <why>" on stderr.
 #   bin/worker list [--host local|zettlab|mac]
 set -euo pipefail
 
@@ -88,9 +89,19 @@ CURL_SANDBOX_ARGS=()
 if [ "${SANDBOX_RUNTIME:-}" = "1" ]; then
   CURL_SANDBOX_ARGS=(--noproxy "" -H "X-Companion-Sandbox: 1")
 fi
-curl -sS --max-time 140 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/workers-mcp" \
+OUT=$(curl -sS --max-time 140 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/workers-mcp" \
   -H "Content-Type: application/json" \
   -H "X-Companion-Task-Id: ${CALLER_TASK}" \
   -H "X-Companion-Pid: $(claude_pid)" \
-  --data-binary "$BODY"
-echo
+  --data-binary "$BODY")
+printf '%s\n' "$OUT"
+# --close-worktree that kept the worktree (dirty, unpushed, worker alive): say so plainly, never only inside the JSON.
+if [ "$SUB" = "interrupt" ] && [ "$CLOSE_WT" = "1" ]; then
+  printf '%s' "$OUT" | python3 -c '
+import json, sys
+try: r = json.load(sys.stdin)["result"]["structuredContent"]
+except Exception: sys.exit(0)
+if r.get("ok") and not r.get("worktreeRemoved"):
+    print("worker: worktree NOT removed: " + (r.get("note") or "worktree already gone"), file=sys.stderr)
+' || true
+fi

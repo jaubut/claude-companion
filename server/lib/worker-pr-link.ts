@@ -4,6 +4,10 @@ import { companionLog } from "./log"
 import type { GhFn } from "./triage-pr"
 import type { ExecFn } from "./turso"
 import { REPO_NAME_RE, TASK_ID_RE } from "./worker-invocation"
+import { LINK_RE } from "./worker-task-store"
+
+/** How much of the report a receipt carries; the rest is one `bin/worker get` away (its links are listed). */
+const RECEIPT_REPORT_MAX = 1_500
 
 // A bin/worker PR → tasks.dispatch_pr_url, the link the PR shepherd and merge gate read the PR's origin through.
 // Proof of filing: the handoff claim (lib/handoff-claim.ts) the server minted for this task id and repo, passed through
@@ -95,16 +99,20 @@ export function linkWorkerPr(deps: LinkDeps, t: LinkTarget, opts: { write?: bool
  *  that came after the report (shown, never in its place). */
 export function workerReceipt(
   t: { taskId: string; repo: string; title: string; status: string; step: string | null; prUrl: string | null; result: string; error: string | null },
-  opts: { host?: string; latest?: string | null } = {},
+  opts: { host?: string; latest?: string | null; note?: string | null } = {},
 ): string {
-  const result = t.result ? `\nResult: ${t.result.slice(0, 600)}${t.result.length > 600 ? "…" : ""}` : ""
+  // The report itself, so the brain answers without a follow-up call: its head in full, and every link past the cut.
+  const shown = t.result.slice(0, RECEIPT_REPORT_MAX)
+  const cut = [...new Set(t.result.match(LINK_RE) ?? [])].filter((l) => !shown.includes(l)).slice(0, 10)
+  const result = t.result ? `\nResult: ${shown}${t.result.length > RECEIPT_REPORT_MAX ? "…" : ""}${cut.length ? `\nLinks: ${cut.join(" ")}` : ""}` : ""
   const later = opts.latest ? `\nLater turn (kept in history): ${opts.latest.slice(0, 300)}${opts.latest.length > 300 ? "…" : ""}` : ""
+  const hostNote = opts.note ? `\n${opts.note}` : ""
   const full = opts.host ? `\nFull report, every turn: bin/worker get --task ${t.taskId} --host ${opts.host}` : ""
-  if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}${result}${full}`
-  if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}${later}${full}`
+  if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}${result}${hostNote}${full}`
+  if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}${later}${hostNote}${full}`
   const head = `PR ready: ${t.prUrl}`
   const note = t.step?.startsWith(head) ? t.step.slice(head.length) : ""
-  return `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${note}${result}${later}${full}`
+  return `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${note}${result}${later}${hostNote}${full}`
 }
 
 export interface Linked { taskId: string; repo: string; prUrl: string; outcome: LinkOutcome }

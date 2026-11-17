@@ -30,14 +30,13 @@ function recordWorker(taskId: string, cwd: string, sid: string): Session {
 }
 
 describe("pruneGoneSessions", () => {
-  test("a closed worker (worktree removed, process exited) leaves the live list and clients get the removal", () => {
+  test("a finished worker leaves the live list even while its worktree stays; clients get the removal", () => {
     const wt = join(tmp(), "wt")
     mkdirSync(wt)
     const s = recordWorker("task-close", wt, "aaaaaaaa-0000-4000-8000-000000000001")
-    pruneGoneSessions(() => false)
+    pruneGoneSessions((id) => id === "task-close") // still running: stays
     expect(getSessionByKey(s.key)).not.toBeNull()
 
-    rmSync(wt, { recursive: true })
     const pushed: Session[][] = []
     const off = onSessions((list) => pushed.push(list))
     try {
@@ -61,7 +60,7 @@ describe("pruneGoneSessions", () => {
     expect(getSessionByKey(brain.key)).not.toBeNull()
   })
 
-  test("restart: workers the supervisor reloads with a removed worktree, and rehydrated leftovers, are pruned", () => {
+  test("restart: finished workers the supervisor reloads (worktree removed or not), and rehydrated leftovers, are pruned", () => {
     const home = tmp()
     const stateFile = join(home, "tasks.json")
     const wtGone = join(home, "apps", "wt", "repo", "task-old")
@@ -90,6 +89,6 @@ describe("pruneGoneSessions", () => {
     pruneGoneSessions((id) => sup.getTask(id)?.status === "running")
     expect(getSessionByKey(old)).toBeNull()
     expect(getSessionByKey(rehydrated.key)).toBeNull()
-    expect(getSessionByKey(live)).not.toBeNull()
+    expect(getSessionByKey(live)).toBeNull() // finished, worktree still on disk: out of the drawer all the same
   })
 })

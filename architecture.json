@@ -4739,7 +4739,7 @@
         },
         {
           "path": "lib/session-prune-gone.ts",
-          "lines": 34,
+          "lines": 35,
           "kind": "lib",
           "exports": [
             "pruneGoneSessions",
@@ -6516,7 +6516,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 318,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6525,6 +6525,10 @@
             "ALLOWED_MODES",
             "WorkerFamily",
             "ALLOWED_FAMILIES",
+            "WORKER_TURN_RULE",
+            "WORKER_SHIP_RULE",
+            "WORKER_FOOTER",
+            "DEFAULT_REAP_GRACE_MS",
             "WorkerTaskStatus",
             "StreamJsonEvent",
             "parseStreamJsonLine",
@@ -6540,7 +6544,10 @@
             "agyBin",
             "buildHeadlessGeminiArgs",
             "WORKER_SANDBOX_HOSTS",
-            "buildHeadlessWorkerInvocation"
+            "buildHeadlessWorkerInvocation",
+            "SpawnedWorkerHandle",
+            "SpawnWorkerOpts",
+            "defaultSpawnWorker"
           ],
           "state": [],
           "emits": [],
@@ -6548,7 +6555,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/secret-redact.ts"
+            "lib/secret-redact.ts",
+            "lib/worker-pid.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6607,7 +6615,7 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 150,
+          "lines": 158,
           "kind": "lib",
           "exports": [
             "OWNABLE",
@@ -6628,7 +6636,8 @@
             "lib/log.ts",
             "lib/triage-pr.ts",
             "lib/turso.ts",
-            "lib/worker-invocation.ts"
+            "lib/worker-invocation.ts",
+            "lib/worker-task-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6659,7 +6668,7 @@
         },
         {
           "path": "lib/worker-receipt-outbox.ts",
-          "lines": 32,
+          "lines": 33,
           "kind": "lib",
           "exports": [
             "createReceiptOutbox"
@@ -6679,17 +6688,13 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 591,
+          "lines": 587,
           "kind": "lib",
           "exports": [
-            "WORKER_TURN_RULE",
             "DispatchTaskInput",
             "ClaimStatus",
             "SupervisedTaskSnapshot",
-            "SpawnedWorkerHandle",
-            "SpawnWorkerOpts",
             "WorkerSupervisorDeps",
-            "defaultSpawnWorker",
             "createWorkerSupervisor",
             "WorkerSupervisor"
           ],
@@ -6717,11 +6722,12 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 114,
+          "lines": 116,
           "kind": "lib",
           "exports": [
             "workerStateFile",
             "WorkerTurn",
+            "LINK_RE",
             "reportTurn",
             "parseTurns",
             "PersistedTaskRecord",
@@ -6775,12 +6781,15 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 69,
+          "lines": 104,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",
             "cloneRepo",
-            "ensureWorktree"
+            "ensureWorktree",
+            "worktreeDirtyPaths",
+            "closeTaskWorktree",
+            "finishedPrHead"
           ],
           "state": [],
           "emits": [],
@@ -9659,7 +9668,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 192,
+          "lines": 202,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
@@ -15238,6 +15247,13 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-invocation.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "WorkerSupervisor": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
@@ -15268,6 +15284,12 @@
         },
         "verifyHandoffClaim": {
           "module": "lib/handoff-claim.ts",
+          "callers": [
+            "lib/worker-pr-link.ts"
+          ]
+        },
+        "LINK_RE": {
+          "module": "lib/worker-task-store.ts",
           "callers": [
             "lib/worker-pr-link.ts"
           ]
@@ -15361,6 +15383,30 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "WORKER_TURN_RULE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "WORKER_SHIP_RULE": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "WORKER_FOOTER": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "DEFAULT_REAP_GRACE_MS": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "WorkerTaskStatus": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15370,6 +15416,18 @@
           ]
         },
         "StreamJsonEvent": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "SpawnedWorkerHandle": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "SpawnWorkerOpts": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -15429,6 +15487,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "defaultSpawnWorker": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "BuilderReport": {
           "module": "lib/builder-jobs.ts",
           "callers": [
@@ -15450,12 +15514,6 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "wiring/worker-mcp.ts"
-          ]
-        },
-        "defaultKillPid": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
           ]
         },
         "PersistedTaskRecord": {
@@ -15559,6 +15617,24 @@
         },
         "closeTurn": {
           "module": "lib/worker-turns.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "worktreeDirtyPaths": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "closeTaskWorktree": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "finishedPrHead": {
+          "module": "lib/worker-worktree.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -18206,12 +18282,6 @@
             "wiring/brain.ts"
           ]
         },
-        "SpawnedWorkerHandle": {
-          "module": "lib/worker-supervisor.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
         "setKv": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -18222,12 +18292,6 @@
         },
         "decideBrainTurnModel": {
           "module": "lib/jev-model-router.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "defaultSpawnWorker": {
-          "module": "lib/worker-supervisor.ts",
           "callers": [
             "wiring/brain-headless.ts"
           ]

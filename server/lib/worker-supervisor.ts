@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -7,31 +6,25 @@ import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 import {
-  ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
-  type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
+  ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
+  type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
 import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
-import { cloneRepo, defaultResolveRepoDir, ensureWorktree } from "./worker-worktree"
+import { cloneRepo, closeTaskWorktree, defaultResolveRepoDir, ensureWorktree, finishedPrHead, worktreeDirtyPaths } from "./worker-worktree"
 
 export {
-  ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
-  type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
+  ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_SHIP_RULE, WORKER_TURN_RULE,
+  type SpawnWorkerOpts, type SpawnedWorkerHandle, defaultSpawnWorker, type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
 }
 
 const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
-
-/** Footer on every worker brief: a turn ends on finished work, and a background-notification turn restates the report. */
-export const WORKER_TURN_RULE = "Turn rule: end your turn only when the work you report is done. Never end a turn saying you are waiting on " +
-  "background work (a background shell, a long render or run): wait for it in this turn, or stop it and report what you have. " +
-  "If you are woken again after your report (a background-task notification, a resume), your reply must restate your full final " +
-  "report (links, choices, QA) updated with what changed, never a short note in its place."
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
@@ -50,16 +43,9 @@ export interface SupervisedTaskSnapshot {
   error: string | null; startedAt: number; updatedAt: number; completedAt: number | null
 }
 
-export interface SpawnedWorkerHandle { pid: number; kill(sig: NodeJS.Signals): void }
-
-export interface SpawnWorkerOpts {
-  cmd: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv
-  onStdoutLine(line: string): void; onStderrLine(line: string): void; onExit(code: number | null, signal: NodeJS.Signals | null): void
-}
-
 export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
-  stateFile?: string; receiptFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
+  stateFile?: string; receiptFile?: string; killGraceMs?: number; reapGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   /** `linkBound`: the task holds a verified handoff claim, so it may write its notes DB row (wiring's status sync). */
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
@@ -80,31 +66,13 @@ export interface WorkerSupervisorDeps {
 
 export { workerStateFile }
 
-export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
-  let outBuf = "", errBuf = ""
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
-  })
-  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
-  })
-  child.on("error", (err) => { opts.onStderrLine(err.message); opts.onExit(1, null) })
-  child.on("close", (code, sig) => {
-    if (outBuf.trim()) opts.onStdoutLine(outBuf)
-    if (errBuf.trim()) opts.onStderrLine(errBuf)
-    opts.onExit(code, sig)
-  })
-  return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
-}
-
 interface InternalTask extends PersistedTaskRecord {
   pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null; modelPinned: boolean
   activeTurn: number; jobId: string; turnReportedTerminal: boolean; turns: WorkerTurn[]; turnsRead: number; dispatchTurn: number
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
+  /** Armed on each `result` event: the process must exit after its turn (reapGraceMs). `lingered`: it didn't, and was stopped. */
+  reapTimer: ReturnType<typeof setTimeout> | null; lingered: boolean
   waiters: Set<() => void>; stderrTail: string[]
 }
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
@@ -126,6 +94,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+  const reapGraceMs = Math.max(1, deps.reapGraceMs ?? DEFAULT_REAP_GRACE_MS)
   const outbox = createReceiptOutbox(deps.receiptFile ?? workerReceiptFile(deps.home), deps.now, deps.onReceipt)
 
   function syncTaskSession(t: InternalTask): void {
@@ -140,7 +109,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     })))
   }
 
-  function enqueueReceipt(t: InternalTask): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t)) }
+  function enqueueReceipt(t: InternalTask, note: string | null = null): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t), note) }
 
   function loadPersistedTasks(): void {
     const now = deps.now()
@@ -188,7 +157,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         handoffClaim: typeof r.handoffClaim === "string" && r.handoffClaim ? r.handoffClaim : null,
         modelPinned: r.modelPinned === true,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
-        turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
+        turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, reapTimer: null, lingered: false, waiters: new Set(), stderrTail: [],
         turns, turnsRead: typeof r.turnsRead === "number" ? r.turnsRead : turns.at(-1)?.turn ?? 0,
         dispatchTurn: typeof r.dispatchTurn === "number" ? r.dispatchTurn : 0,
       }
@@ -238,6 +207,15 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   function clearTimers(t: InternalTask): void {
     if (t.timeoutTimer) { clearTimeout(t.timeoutTimer); t.timeoutTimer = null }
     if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
+    if (t.reapTimer) { clearTimeout(t.reapTimer); t.reapTimer = null }
+  }
+
+  /** Runs fn on a finished task under the dispatch reservation, so a follow-up dispatch never races a worktree removal. */
+  async function withReservation<T>(t: InternalTask, fn: () => Promise<T>): Promise<T | null> {
+    const wtKey = t.worktree.toLowerCase()
+    if (t.status === "running" || inFlightDispatches.has(t.taskId) || inFlightWorktrees.has(wtKey)) return null
+    inFlightDispatches.add(t.taskId); inFlightWorktrees.add(wtKey)
+    try { return await fn() } finally { inFlightDispatches.delete(t.taskId); inFlightWorktrees.delete(wtKey) }
   }
 
   for (const dir of new Set([...tasks.values()].map((t) => t.repoDir))) clearStaleGitConfigLock(dir)
@@ -328,7 +306,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
           pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim, modelPinned: false,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false, turns: [], turnsRead: 0, dispatchTurn: 0,
-          handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
+          handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, reapTimer: null, lingered: false, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
@@ -337,14 +315,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
-        task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
+        task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []; task.lingered = false
         closeTurn(task, "interrupted", now); task.dispatchTurn = openTurn(task, now).turn; refreshResult(task)
         tasks.set(taskId, task); savePersistedTasks(); syncTaskSession(task)
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
         const dCtx = deps.designContext?.().trim() ?? ""
-        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_TURN_RULE.length - 2)}\n\n${WORKER_TURN_RULE}`
+        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let resolveExit!: () => void
@@ -365,6 +343,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (ev.prUrl) task.prUrl = ev.prUrl
               // Each turn keeps its own text: a later turn (a background-task notification) never overwrites an earlier report.
               if (ev.assistantText || ev.resultText || ev.step) {
+                // Output after a `result`: the worker is working again, so it isn't idle yet.
+                if (task.reapTimer) { clearTimeout(task.reapTimer); task.reapTimer = null }
                 const cur = openTurn(task, task.updatedAt)
                 if (ev.assistantText) { cur.result = ev.assistantText; task.sessionStarted = true }
                 if (ev.resultText) { cur.result = ev.resultText; task.sessionStarted = true }
@@ -372,6 +352,18 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               }
               const turnEnded = !!ev.done && closeTurn(task, ev.isError ? "failed" : "completed", task.updatedAt)
               refreshResult(task)
+              // The turn is over: a process still alive after the grace is idle on background work (ee0a87d5, 256a637a). Stop it.
+              if (turnEnded && !task.reapTimer) {
+                task.reapTimer = setTimeout(() => {
+                  task.reapTimer = null
+                  if (settled || task.activeTurn !== myTurn || task.status !== "running" || task.turns.at(-1)?.endedAt === null) return
+                  task.lingered = true
+                  task.handle?.kill("SIGTERM")
+                  task.killTimer = setTimeout(() => { if (!settled && task.activeTurn === myTurn) task.handle?.kill("SIGKILL") }, killGraceMs)
+                  task.killTimer.unref?.()
+                }, reapGraceMs)
+                task.reapTimer.unref?.()
+              }
               if (ev.step) {
                 task.sessionStarted = true; task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
@@ -395,7 +387,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               clearTimers(task); task.handle = null; task.exitPromise = null
               if (task.pid !== null && !isPidAlive(task.pid)) { task.pid = null; task.pidIdentity = null; task.reloadedFromDisk = false }
               task.updatedAt = deps.now(); task.completedAt = task.updatedAt
-              closeTurn(task, task.status === "interrupted" ? "interrupted" : code === 0 && !sig && !task.error ? "completed" : "failed", task.updatedAt)
+              // Stopped by the reaper after its turn ended: that turn's report stands, the signal is ours.
+              const exitedOk = (task.lingered || (code === 0 && !sig)) && !task.error
+              closeTurn(task, task.status === "interrupted" ? "interrupted" : exitedOk ? "completed" : "failed", task.updatedAt)
               refreshResult(task)
               if (task.status === "interrupted") {
                 if (!task.turnReportedTerminal) {
@@ -405,9 +399,18 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
               const finish = () => {
-                enqueueReceipt(task)
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
                 try { deps.onTaskTerminal?.(toSnapshot(task), task.prLinkBound === true && !!task.handoffClaim) } catch { /* best effort */ }
+                const lingerNote = task.lingered ? `Ended its turn with background work still running: stopped ${Math.round(reapGraceMs / 1000)} s later, so nothing it says is still running will finish. Re-dispatch to finish it.` : null
+                if (task.status !== "completed" || task.prUrl) { enqueueReceipt(task, lingerNote); return }
+                // Completed with no PR: a clean worktree closes; a dirty one is kept and the receipt says so (a88c7bd9).
+                const snap = toSnapshot(task); const turns = dispatchTurns(task)
+                void worktreeDirtyPaths(deps.sh, task.worktree).catch(() => null).then(async (dirty) => {
+                  const keptNote = dirty?.length ? `No PR, and ${dirty.length} uncommitted change(s) left in ${task.worktree}: worktree kept. Resume the task to commit and open the PR.` : null
+                  outbox.enqueue(snap, turns, [lingerNote, keptNote].filter(Boolean).join("\n") || null)
+                  // Only the removal holds the reservation: a follow-up dispatched meanwhile keeps the worktree.
+                  if (dirty && !dirty.length) await withReservation(task, () => closeTaskWorktree(deps.sh, task))
+                }).catch(() => outbox.enqueue(snap, turns, lingerNote))
               }
               const complete = (link: string | null) => {
                 const note = link === "timeout" ? " (PR link still pending)" : link && link !== "linked" && link !== "not_linked" ? ` (not linked: ${link})` : ""
@@ -419,7 +422,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }
                 finish()
               }
-              if (code === 0 && !sig && !task.error) {
+              if (exitedOk) {
                 // The link lands before the turn reads completed (await_task, the brain): the shepherd reads origin through it.
                 if (task.prUrl && task.prLinkBound === true && task.handoffClaim && deps.linkPr) {
                   task.step = `Linking PR: ${task.prUrl}`
@@ -528,29 +531,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const exited = await reconcileSurvivingProcess(t)
         if (!exited) return { ok: true, task: toSnapshot(t), worktreeRemoved: false, note: "worktree kept: worker process has not exited yet" }
 
-        let worktreeRemoved = false
-        let note: string | undefined
-        if (opts.closeWorktree && existsSync(t.worktree)) {
-          clearStaleGitConfigLock(t.repoDir)
-          const statusRes = await deps.sh("git", ["-C", t.worktree, "status", "--porcelain"], { cwd: t.worktree, timeoutMs: 10_000 })
-          if (!statusRes.ok || statusRes.out.trim() !== "") {
-            note = "worktree kept: uncommitted changes present"
-          } else {
-            await deps.sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
-            const pushed = await deps.sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
-            if (!pushed.ok || pushed.out.trim() === "") {
-              note = "worktree kept: HEAD is not pushed to any remote branch"
-            } else {
-              const rm = await deps.sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
-              if (rm.ok) {
-                await deps.sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
-                worktreeRemoved = true
-              } else {
-                note = `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}`
-              }
-            }
-          }
-        }
+        const { removed: worktreeRemoved, note } = opts.closeWorktree ? await closeTaskWorktree(deps.sh, t) : { removed: false, note: undefined }
         return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
       } finally {
         inFlightDispatches.delete(id); inFlightWorktrees.delete(wtKey)
@@ -576,6 +557,21 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     getTaskTurns(taskId: string): { task: SupervisedTaskSnapshot; turns: WorkerTurn[] } | null {
       const t = tasks.get(taskId.trim())
       return t ? { task: toSnapshot(t), turns: t.turns.map((x) => ({ ...x })) } : null
+    },
+
+    /** Closes the worktree of every finished task whose PR is merged or closed, or that completed with no PR; never a dirty one. */
+    async sweepWorktrees(): Promise<string[]> {
+      const closed: string[] = []
+      for (const t of [...tasks.values()]) {
+        if (t.status === "running" || !existsSync(t.worktree) || (!t.prUrl && t.status !== "completed")) continue
+        const out = await withReservation(t, async () => {
+          const pr = t.prUrl ? await finishedPrHead(deps.sh, t.prUrl, t.repoDir) : null
+          if (t.prUrl && !pr) return false
+          return (await closeTaskWorktree(deps.sh, t, pr?.head ?? null)).removed
+        }).catch(() => false)
+        if (out) closed.push(t.taskId)
+      }
+      return closed
     },
 
     pendingReceipts(): WorkerReceipt[] { return outbox.pending() },
