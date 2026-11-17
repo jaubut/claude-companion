@@ -2,7 +2,7 @@ import { companionLog } from "./lib/log"
 import type { ServerWebSocket, WebSocketHandler } from "bun"
 import { resolveApproval, getPending } from "./lib/pty-manager"
 import { resolveQuestion, getPendingQuestions, type QuestionAnswer } from "./lib/questions"
-import { deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
+import { INJECT_BUDGET_MS, deliveryFailedHint, injectConfirmed } from "./lib/submit-confirm"
 import { awaitPrompt, injectRefusal } from "./lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "./lib/secret-store"
 import { isSuperAuto } from "./lib/super-auto"
@@ -161,6 +161,8 @@ export const websocket: WebSocketHandler<WsData> = {
           const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
           const tag = target?.tty ? ` → ${target.label || target.key} (${target.tty})` : lookup ? ` → ${lookup} [unresolved]` : " → frontmost"
           companionLog(`${cyan}ws inject${reset}${tag} "${msg.text.slice(0, 60)}"`)
+          // Shared answer-by time with the submit confirmation (INJECT_BUDGET_MS).
+          const deadline = Date.now() + INJECT_BUDGET_MS
           // Our own /help scrape never refuses a user's message: abort it and
           // take the pane back first (same as POST /api/inject). A pane we
           // could not take back is `busy_flow`, not a blind send-keys — the
@@ -204,7 +206,7 @@ export const websocket: WebSocketHandler<WsData> = {
           // its turn-end reason, since typed text answers nothing else.
           const { cleared } = clearWaitingForTarget(target, "turn-end")
           announceWaiting(cleared)
-          const res = await injectConfirmed(msg.text.trim(), target ?? undefined)
+          const res = await injectConfirmed(msg.text.trim(), target ?? undefined, undefined, undefined, deadline)
           if (!res.ok && res.error === "pane_not_ready") {
             // herdr: the agent is at an approval/question — same frame as the
             // pre-inject refusal above.
