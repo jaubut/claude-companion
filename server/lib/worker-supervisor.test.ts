@@ -12,11 +12,11 @@ import {
   buildHeadlessWorkerInvocation,
   buildWorkerEnv,
   createWorkerSupervisor,
-  defaultResolveRepoDir,
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
 import { WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
+import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
 
 describe("parseStreamJsonLine", () => {

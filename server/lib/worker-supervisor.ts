@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, realpathSync } from "node:fs"
-import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
 import { clearStaleGitConfigLock } from "./git-config-lock"
 import { decideWorkerModel } from "./jev-model-router"
@@ -14,10 +13,10 @@ import {
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
-import {
-  type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn,
-  loadReceipts, loadTaskRecords, parseTurns, reportTurn, saveReceipts, saveTaskRecords, workerReceiptFile, workerStateFile,
-} from "./worker-task-store"
+import { createReceiptOutbox } from "./worker-receipt-outbox"
+import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
+import { closeTurn, openTurn, refreshResult, restoreTurns } from "./worker-turns"
+import { cloneRepo, defaultResolveRepoDir, ensureWorktree } from "./worker-worktree"
 
 export {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
@@ -27,8 +26,6 @@ export {
 }
 
 const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
-// ponytail: unacked receipts past this drop oldest first (no brain host polling at all); a real queue if that ever matters.
-const OUTBOX_MAX = 200
 
 /** Footer on every worker brief: a turn ends on finished work, and a background-notification turn restates the report. */
 export const WORKER_TURN_RULE = "Turn rule: end your turn only when the work you report is done. Never end a turn saying you are waiting on " +
@@ -83,13 +80,6 @@ export interface WorkerSupervisorDeps {
 
 export { workerStateFile }
 
-export function defaultResolveRepoDir(repo: string, home = homedir()): string | null {
-  if (!REPO_NAME_RE.test(repo)) return null
-  const candidates = [repo === "claude-companion-ios" ? join(home, "apps", "claude companion") : "", join(home, repo), join(home, "lanes", repo), join(home, "Developer", repo), join(home, "apps", repo), join(home, ".cache", "dispatch-repos", repo)].filter(Boolean)
-  for (const c of candidates) if (existsSync(join(c, ".git"))) return c
-  return null
-}
-
 export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
   const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
   let outBuf = "", errBuf = ""
@@ -124,29 +114,6 @@ function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
 }
-/** The open turn, or a new one: output after a `result` event is a turn the harness started on its own. */
-function openTurn(t: InternalTask, now: number): WorkerTurn {
-  const last = t.turns.at(-1)
-  if (last && last.endedAt === null) return last
-  const turn: WorkerTurn = { turn: (last?.turn ?? 0) + 1, startedAt: now, endedAt: null, status: "running", result: "", prUrl: null }
-  t.turns.push(turn)
-  return turn
-}
-function closeTurn(t: InternalTask, status: WorkerTaskStatus, now: number): boolean {
-  const last = t.turns.at(-1)
-  if (!last || last.endedAt !== null) return false
-  last.endedAt = now; last.status = status
-  return true
-}
-/** `result` = the report (reportTurn); while no turn has ended, the open turn's live text. */
-function refreshResult(t: InternalTask): void {
-  const last = t.turns.at(-1)
-  t.result = reportTurn(t.turns)?.result || (last?.endedAt === null ? last.result : "")
-}
-function sameRealPath(a: string, b: string): boolean {
-  try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
-}
-
 export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const tasks = new Map<string, InternalTask>()
   const inFlightDispatches = new Set<string>()
@@ -159,18 +126,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
-  const receiptFile = deps.receiptFile ?? workerReceiptFile(deps.home)
-  const outbox = loadReceipts(receiptFile)
-
-  // No checkout on this host: a full clone of jaubut/<repo> into ~/apps/<repo>, where the resolver finds it next time.
-  // Never ~/leads/<repo>: a lead's clone is shallow, lead-writable and wiped on every lead respawn.
-  async function cloneRepo(repo: string): Promise<string | null> {
-    const dir = join(deps.home, "apps", repo)
-    if (existsSync(dir)) return null
-    mkdirSync(dirname(dir), { recursive: true })
-    const r = await deps.sh("git", ["clone", "-q", `https://github.com/jaubut/${repo}.git`, dir], { cwd: deps.home, timeoutMs: 300_000 })
-    return r.ok && existsSync(join(dir, ".git")) ? dir : null
-  }
+  const outbox = createReceiptOutbox(deps.receiptFile ?? workerReceiptFile(deps.home), deps.now, deps.onReceipt)
 
   function syncTaskSession(t: InternalTask): void {
     try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
@@ -184,17 +140,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     })))
   }
 
-  /** Exactly one receipt per finished dispatch turn, on disk until the brain host acks it. */
-  function enqueueReceipt(t: InternalTask): void {
-    const id = `${t.taskId}#${t.turnCount}@${t.completedAt ?? t.updatedAt}`
-    if (outbox.some((r) => r.id === id)) return
-    const report = reportTurn(t.turns)
-    const latest = t.turns.findLast((x) => x.endedAt !== null && !!x.result)
-    outbox.push({ id, at: deps.now(), latest: latest && latest !== report ? latest.result : null, task: toSnapshot(t) })
-    if (outbox.length > OUTBOX_MAX) outbox.splice(0, outbox.length - OUTBOX_MAX)
-    saveReceipts(receiptFile, outbox)
-    try { deps.onReceipt?.() } catch { /* best effort */ }
-  }
+  function enqueueReceipt(t: InternalTask): void { outbox.enqueue(toSnapshot(t), t.turns) }
 
   function loadPersistedTasks(): void {
     const now = deps.now()
@@ -216,14 +162,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
       const loadedFamily = resolveWorkerFamily({ family: r.family, model: r.model ?? undefined }) ?? "claude"
-      const legacyResult = typeof r.result === "string" ? r.result : ""
-      const turns = r.turns !== undefined ? parseTurns(r.turns) : legacyResult
-        ? [{ turn: 1, startedAt: r.startedAt ?? now, endedAt: r.completedAt ?? r.updatedAt ?? now, status: wasRunning ? "interrupted" as const : r.status ?? "completed", result: legacyResult, prUrl: r.prUrl ?? null }]
-        : []
       // The restart killed the process, but a turn that already ended completed (its `result` event came) delivered its report.
-      const lastTurn = turns.at(-1)
-      const reported = wasRunning && lastTurn?.endedAt != null && lastTurn.status === "completed"
-      if (wasRunning && lastTurn?.endedAt === null) { lastTurn.endedAt = now; lastTurn.status = "interrupted" }
+      const { turns, reported } = restoreTurns(r, wasRunning, now)
       const taskRecord: InternalTask = {
         taskId: r.taskId, repo: r.repo, repoDir: r.repoDir,
         title: typeof r.title === "string" ? r.title : r.taskId,
@@ -301,41 +241,6 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   for (const dir of new Set([...tasks.values()].map((t) => t.repoDir))) clearStaleGitConfigLock(dir)
 
-  async function ensureWorktree(repoDir: string, repo: string, taskId: string, ownedByTask: boolean): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
-    clearStaleGitConfigLock(repoDir)
-    const wtRoot = join(deps.home, "apps", "wt", repo)
-    const worktree = join(wtRoot, taskId)
-    const branch = `dispatch/${taskId}`
-    for (const other of tasks.values()) {
-      if ((other.taskId !== taskId || other.repo !== repo) && other.worktree.toLowerCase() === worktree.toLowerCase()) {
-        return { ok: false, error: `worktree collision with ${other.repo}/${other.taskId}` }
-      }
-    }
-    if (existsSync(worktree)) {
-      if (!ownedByTask && !existsSync(join(worktree, ".git"))) return { ok: false, error: "worktree path already exists and is not a git worktree" }
-      const common = await deps.sh("git", ["-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: worktree, timeoutMs: 10_000 })
-      if (!common.ok) return { ok: false, error: "existing worktree is not a valid git repository" }
-      const commonOut = common.out.trim()
-      if (commonOut.startsWith("/") && !sameRealPath(commonOut, join(repoDir, ".git"))) return { ok: false, error: "existing worktree belongs to a different repository" }
-      const curBranch = await deps.sh("git", ["-C", worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: worktree, timeoutMs: 10_000 })
-      if (!curBranch.ok) return { ok: false, error: "existing worktree is not on a branch" }
-      const bOut = curBranch.out.trim()
-      if (bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
-      return { ok: true, worktree, branch }
-    }
-    mkdirSync(wtRoot, { recursive: true })
-    const sym = await deps.sh("git", ["-C", repoDir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { cwd: repoDir, timeoutMs: 15_000 })
-    const baseRef = sym.ok && sym.out.trim() ? sym.out.trim() : "origin/main"
-    const baseBranch = baseRef.replace(/^origin\//, "")
-    await deps.sh("git", ["-C", repoDir, "fetch", "-q", "origin", baseBranch], { cwd: repoDir, timeoutMs: 30_000 })
-    const hasBranch = (await deps.sh("git", ["-C", repoDir, "show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repoDir, timeoutMs: 10_000 })).ok
-    const wtRes = hasBranch
-      ? await deps.sh("git", ["-C", repoDir, "worktree", "add", "-q", worktree, branch], { cwd: repoDir, timeoutMs: 30_000 })
-      : await deps.sh("git", ["-C", repoDir, "worktree", "add", "-q", "-b", branch, worktree, baseRef], { cwd: repoDir, timeoutMs: 30_000 })
-    if (!wtRes.ok) return { ok: false, error: `worktree add failed: ${(wtRes.err || wtRes.out).trim().slice(0, 200)}` }
-    return { ok: true, worktree, branch }
-  }
-
   return {
     async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot; claim: ClaimStatus } | { ok: false; status: number; error: string }> {
       const taskId = typeof input.taskId === "string" ? input.taskId.trim() : ""
@@ -371,10 +276,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       inFlightDispatches.add(taskId); inFlightWorktrees.add(wtKey)
       try {
         if (existing && !(await reconcileSurvivingProcess(existing))) return { ok: false, status: 409, error: "task_already_running" }
-        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(repo)
+        const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(deps.sh, deps.home, repo)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
-        const wt = await ensureWorktree(repoDir, repo, taskId, !!existing)
+        const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
         const familyChanged = !!existing && existing.family !== family
@@ -672,14 +577,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       return t ? { task: toSnapshot(t), turns: t.turns.map((x) => ({ ...x })) } : null
     },
 
-    pendingReceipts(): WorkerReceipt[] { return [...outbox] },
+    pendingReceipts(): WorkerReceipt[] { return outbox.pending() },
     /** The brain host delivered these: drop them from the outbox. */
-    ackReceipts(ids: string[]): number {
-      const before = outbox.length
-      for (let i = outbox.length - 1; i >= 0; i--) if (ids.includes(outbox[i]!.id)) outbox.splice(i, 1)
-      if (outbox.length !== before) saveReceipts(receiptFile, outbox)
-      return before - outbox.length
-    },
+    ackReceipts(ids: string[]): number { return outbox.ack(ids) },
 
     listTasks(): SupervisedTaskSnapshot[] { return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot) },
     getTask(taskId: string): SupervisedTaskSnapshot | null { const t = tasks.get(taskId.trim()); return t ? toSnapshot(t) : null },
