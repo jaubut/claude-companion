@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { getAuthToken } from "../lib/auth"
 
 // /api/notes* through the real server's bearer gate, against a fake
-// tls-dashboard-v2. Nothing here reaches Turso or a real dashboard.
+// tls-dashboard-v2. Nothing here reaches the notes DB or a real dashboard.
 
 const home = mkdtempSync(join(tmpdir(), "notes-route-"))
 process.env.COMPANION_DB_PATH ??= join(home, "test.db")

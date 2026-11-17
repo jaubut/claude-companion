@@ -40,7 +40,7 @@ const row = (over: Row = {}): Row => ({
 })
 
 describe("status mapping", () => {
-  test("legacy status per Turso state", () => {
+  test("legacy status per notes DB state", () => {
     expect(legacyStatus("queued")).toBe("queued")
     expect(legacyStatus("running")).toBe("running")
     expect(legacyStatus("completed")).toBe("done")
@@ -63,7 +63,7 @@ describe("status mapping", () => {
     expect(phaseOf(fromRow(row({ dispatch_status: "blocked" })))).toBe("blocked")
   })
 
-  test("Turso datetime text parses as UTC", () => {
+  test("Notes DB datetime text parses as UTC", () => {
     expect(parseTs("2026-10-03 12:00:00")).toBe(Date.UTC(2026, 9, 3, 12))
     expect(parseTs("2026-10-03T12:00:00.000Z")).toBe(Date.UTC(2026, 9, 3, 12))
     expect(parseTs(null)).toBe(0)
@@ -181,7 +181,7 @@ describe("write helpers (P2)", () => {
     expect(ANSWER_TEXT_MAX).toBe(ANSWER_MAX)
   })
 
-  test("toTaskDto: a filed proposal keeps its Turso id, note and agent", () => {
+  test("toTaskDto: a filed proposal keeps its notes DB id, note and agent", () => {
     const t: Task = {
       taskId: "abcd1234", threadId: "general", prompt: "p", cwd: "", sessionKey: null, reasoning: "why",
       logTail: null, status: "filed", createdAt: 1, updatedAt: 2, noteId: "projects/x", agent: "builder", dispatchTaskId: "f".repeat(32),

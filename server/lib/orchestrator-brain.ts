@@ -22,7 +22,7 @@ import { parseCliResult } from "./cli-json"
 //    lean (brainArgs): no user settings, hooks, MCP, tools or session file, in a
 //    bare cwd — measured 2026-10-04 on the Mac: ~6.4 s → ~3.0 s per gate call.
 
-// A proposal files a Turso agent task (orchestrator-one-queue P2): noteId + agent
+// A proposal files a notes DB agent task (orchestrator-one-queue P2): noteId + agent
 // are the brain's pick, validated server-side against /projects and the agent
 // allowlist; cwd is only for a live tmux run ("" when none).
 export type BrainDecision =

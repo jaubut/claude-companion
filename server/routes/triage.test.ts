@@ -10,11 +10,11 @@ import { passGate, writeStubTools } from "../lib/merge-gate.test-util"
 import { type GhFn, GhUnreachable } from "../lib/triage-pr"
 import type { ConsiderInput } from "../lib/body-investigate-engine"
 
-// Triage, route level: the real wiring (guarded Turso writes, the proposal
+// Triage, route level: the real wiring (guarded notes DB writes, the proposal
 // approve path incl. the Mac fix-card forward) behind GET / choose. Same harness
 // as body-fix.test.ts: isolated COMPANION_DB_PATH (shared across route test
 // files by Bun's module cache — fixtures here are disjoint: own channel, own
-// ids), "Turso" = in-memory bun:sqlite, a fake tmux runner, a fake gh. The
+// ids), "notes DB" = in-memory bun:sqlite, a fake tmux runner, a fake gh. The
 // model returns null (deterministic fallback options) except for one task.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-triage-")), "companion.db")
@@ -39,7 +39,7 @@ let sqlite: typeof import("../lib/orchestrator-db")["db"]
 let fixStore: import("../lib/body-fix").BodyFixStore
 let channelId: string
 
-// ── fake Turso ───────────────────────────────────────────────────────────────
+// ── fake notes DB ───────────────────────────────────────────────────────────────
 
 const turso = new Database(":memory:")
 turso.exec(`
@@ -224,7 +224,7 @@ describe("GET /api/orchestrator/triage", () => {
 })
 
 describe("choose → the existing guarded paths", () => {
-  test("answer (model option) unblocks: Turso row queued, answer appended to the brief, one ledger row", async () => {
+  test("answer (model option) unblocks: Notes DB row queued, answer appended to the brief, one ledger row", async () => {
     const id = turTask("blocked", "Which currency?")
     modelFor.add(id)
     await sync()
@@ -268,7 +268,7 @@ describe("choose → the existing guarded paths", () => {
     expect(row(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
   })
 
-  test("409 stale when the Turso row moved after the item was shown; the item comes back refreshed", async () => {
+  test("409 stale when the notes DB row moved after the item was shown; the item comes back refreshed", async () => {
     const id = turTask("blocked", "Old question?")
     await sync()
     const item = await itemOf(`task:${id}`)
@@ -291,7 +291,7 @@ describe("choose → the existing guarded paths", () => {
     expect((row(id).description as string).match(/\[unblock/g)).toHaveLength(1)
   })
 
-  test("approve a proposal files one pending Turso row; reject marks it rejected", async () => {
+  test("approve a proposal files one pending notes DB row; reject marks it rejected", async () => {
     const p = chat.createProposal("Build the CSV export", "", "asked", channelId, { noteId: "projects/dash", agent: "builder" })
     const r2 = chat.createProposal("Something else", "", "maybe", channelId, { noteId: "projects/dash" })
     await sync()

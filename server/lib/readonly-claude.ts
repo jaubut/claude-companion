@@ -16,7 +16,7 @@ import { resolveClaudeBin } from "./receipt-sonnet"
 //   --permission-mode dontAsk          anything not allowlisted is denied, never prompted
 //   --tools <list> --add-dir <dirs>    the only tools, the only readable roots
 //   --allowedTools / --disallowedTools the caller's allowlist + the shared deny list
-// The prompt goes on stdin; the env is allowlisted (no Turso / Companion tokens).
+// The prompt goes on stdin; the env is allowlisted (no notes DB / Companion tokens).
 
 export interface ReadonlySpec {
   model: string
@@ -62,7 +62,7 @@ export function readonlyArgs(bin: string, spec: ReadonlySpec): string[] {
 
 const ENV_KEEP = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "DOCKER_HOST"]
 
-/** Allowlisted child env: no Turso / Companion / broker tokens ever reach the child. */
+/** Allowlisted child env: no notes DB / Companion / broker tokens ever reach the child. */
 export function readonlyEnv(env: Record<string, string | undefined> = process.env, home: string = process.env.HOME || homedir()): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of ENV_KEEP) if (env[k]) out[k] = env[k]!

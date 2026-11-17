@@ -58,13 +58,13 @@ export interface BrainRouteDeps {
   enabled: () => boolean
   /** The brain-workers reaper (default: the real one). */
   workers?: BrainWorkers
-  /** The dead-PR close (default: the real one, gh + Turso). */
+  /** The dead-PR close (default: the real one, gh + notes DB). */
   prClose?: typeof closeDeadPr
-  /** The routine-PR merge (default: the real one, gh + Turso). */
+  /** The routine-PR merge (default: the real one, gh + notes DB). */
   prMerge?: typeof mergeAgentPr
-  /** The stale-PR update (default: the real one, gh + Turso). */
+  /** The stale-PR update (default: the real one, gh + notes DB). */
   prUpdate?: typeof updateAgentPr
-  /** The task cancel (default: the real one, Turso + the proposal store). */
+  /** The task cancel (default: the real one, notes DB + the proposal store). */
   taskCancel?: typeof cancelAgentTask
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
   deploy?: ((repo: string) => Promise<DeployResult>) | null
@@ -238,7 +238,7 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
-/** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and Turso. */
+/** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and the notes DB. */
 async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch"): Promise<Response> {
   const leadTask = op === "pr-update-branch" ? leadCallerTaskId(req, deps) : null
   const refused = leadTask ? null : proposeRefusal(req, deps)
@@ -261,7 +261,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   return Response.json(out.body, { status: out.status })
 }
 
-/** bin/task-cancel: the gate (wiring/brain-task-cancel.ts) re-checks it all on Turso and the proposal row. */
+/** bin/task-cancel: the gate (wiring/brain-task-cancel.ts) re-checks it all on the notes DB and the proposal row. */
 async function taskCancel(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) return refused

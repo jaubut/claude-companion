@@ -216,7 +216,7 @@ export function createBrainWiring(deps: BrainDeps) {
         setKv("memory_ref", ref)
         return ref
       }
-    } catch { /* Turso unreachable: the brain looks it up itself */ }
+    } catch { /* Notes DB unreachable: the brain looks it up itself */ }
     return null
   }
 

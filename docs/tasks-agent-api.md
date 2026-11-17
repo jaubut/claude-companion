@@ -2,7 +2,7 @@
 
 PRJ-CT4M WP5. This is the server side of the Tasks agent tab described in the brief "Agent tab design" (approved 2026-10-06). It builds on [tasks-api.md](tasks-api.md).
 
-All routes need the `/api/*` bearer auth. If Turso can't be reached, every route returns `503 {"error":"turso_unreachable"}`.
+All routes need the `/api/*` bearer auth. If notes DB can't be reached, every route returns `503 {"error":"turso_unreachable"}`.
 
 Code:
 
@@ -16,7 +16,7 @@ Code:
 
 **Scope.** "Mine" means the same assignees as in tasks-api.md (`human:jeremie`, `human`). The proposal rules also look at unassigned open tasks (`assignee` NULL or `''`). Tasks assigned to agents (`agent:*`) are never edited here, with one exception: an Undo can restore the assignee that an assignment overwrote (including an assign proposal Jeremie accepted here).
 
-**Rule: no log, no mutation.** Every write by this agent is one Turso transaction (`tursoTx`, a Hrana batch: BEGIN … COMMIT, ROLLBACK on any failure):
+**Rule: no log, no mutation.** Every write by this agent is one notes DB transaction (`tursoTx`, a Hrana batch: BEGIN … COMMIT, ROLLBACK on any failure):
 
 1. One compare-and-set write against the WHOLE task row as it was just read (every tracked field: text, description, project, parent, due date, done, assignee; one definition in `server/lib/tasks-agent-row.ts`, shared by the JS version and the SQL predicate) (`UPDATE`, or for a split the subtask `INSERT`s, guarded on "the parent has no subtasks yet").
 2. One `agent_activity` row (`agent_slug='tasks-agent'`, `target_kind='task'`), inserted only if the write changed a row (`changes() > 0`). Its meta carries the old value and the new value: `{"source":"companion","by":"jeremie","from":…,"to":…,…}`.
@@ -121,7 +121,7 @@ Errors:
 
 ## POST /api/tasks/agent/proposals/:id
 
-Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […], "parentVersion"?: "…", "rowVersions"?: {"<taskId>":"<version>"}}`. The server works the proposal out again from Turso, so an id that no longer applies returns 404.
+Body: `{"action":"accept"|"dismiss", "due"?: …, "subtasks"?: […], "parentVersion"?: "…", "rowVersions"?: {"<taskId>":"<version>"}}`. The server works the proposal out again from the notes DB, so an id that no longer applies returns 404.
 
 Responses:
 

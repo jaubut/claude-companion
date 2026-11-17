@@ -167,7 +167,7 @@ describe("Yes", () => {
     expect(unparked).toEqual(["pr:jaubut/dash#1"])
   })
 
-  test("zero actionable → 409 stale with the next card; unknown repo → 404; Turso down → 503 and no run row", async () => {
+  test("zero actionable → 409 stale with the next card; unknown repo → 404; Notes DB down → 503 and no run row", async () => {
     const { engine, runner } = setup()
     const card = (await engine.list()).repos.find((c) => c.repo === "dash")!
     const stale = await runner.submit({ repo: "dash", decision: "yes", version: card.version, members: [{ id: "task:a", version: "old" }], idemKey: "k6" })

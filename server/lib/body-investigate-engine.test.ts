@@ -9,7 +9,7 @@ import * as m from "./body-investigate-engine"
 import type { RunOutcome } from "./body-investigator"
 import type { Task } from "./orchestrator-chat"
 
-// Engine level: in-memory store, fake Turso detail, fake runner, fake peer.
+// Engine level: in-memory store, fake notes DB detail, fake runner, fake peer.
 // The engine is seams-only (no sqlite), so it is imported statically —
 // a test that loaded orchestrator-db here would steal orchestrator-chat.test's
 // legacy fixture (STATE.md, P1 notes).
@@ -287,7 +287,7 @@ describe("report applier", () => {
     runOn: "mac", result: RESULT, error: null, cwd: "/Users/j/tools", repo: true,
   }
 
-  test("fix → 🔍 turn, proposal card (builder in the repo), task frame, Turso event; med severity never pushes", async () => {
+  test("fix → 🔍 turn, proposal card (builder in the repo), task frame, notes DB event; med severity never pushes", async () => {
     const a = applier()
     expect(await a.apply(base, rec())).toBe("prop0001")
     expect(a.turns[0]!.text).toStartWith("🔍 mac:launchd:x — script deleted (confidence 90%)")

@@ -189,7 +189,7 @@ export function parseAgentEnv(text: string): Record<string, string> {
 
 /**
  * The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. `secrets` (Claude workers: the agent
- * secrets from tls-agent-env) are merged BEFORE the scrub, so a Turso / Companion / Phase key in them never gets through.
+ * secrets from tls-agent-env) are merged BEFORE the scrub, so a notes DB / Companion / Phase key in them never gets through.
  */
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string, secrets: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = scrubAgentEnv({ ...baseEnv, ...secrets })

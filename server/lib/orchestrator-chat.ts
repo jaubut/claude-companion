@@ -11,7 +11,7 @@ export type TurnRole = "user" | "orchestrator" | "worker"
 // Backpressure (Phase 7): past the WIP cap an admitted task parks as queued and
 // drains FIFO into dispatched when a live worker exits. cancelled = user pulled a
 // queued/dispatched/running task.
-// filed (orchestrator-one-queue P2) = approved and handed to Turso `tasks`
+// filed (orchestrator-one-queue P2) = approved and handed to the notes DB `tasks`
 // under dispatch_task_id; the local row is history, listTasks hides it.
 export type TaskStatus = "proposed" | "queued" | "dispatched" | "running" | "done" | "error" | "rejected" | "cancelled" | "filed"
 
@@ -65,8 +65,8 @@ export interface Task {
   status: TaskStatus
   createdAt: number
   updatedAt: number
-  // Proposal target (P2): the Turso project note + agent it files to, and the
-  // Turso id it was (or is being) filed as. Absent on legacy rows.
+  // Proposal target (P2): the project note + agent it files to, and the
+  // Notes DB id it was (or is being) filed as. Absent on legacy rows.
   noteId?: string | null
   agent?: string | null
   title?: string | null
@@ -231,7 +231,7 @@ function insertTask(task: Task): void {
 }
 
 // Legacy (pre-P2) local rows: no production caller since P4 — headless work is
-// filed to Turso and live runs start from a proposal row (createProposal +
+// filed to the notes DB and live runs start from a proposal row (createProposal +
 // stampDispatchId). Kept for the legacy-history fixtures in the tests.
 // Direct dispatch (Phase 1, manual /dispatch): task is spawned immediately.
 export function createTask(prompt: string, cwd: string, threadId: string = GENERAL_CHANNEL): Task {
@@ -257,7 +257,7 @@ export function createQueuedTask(prompt: string, cwd: string, threadId: string =
 }
 
 // Propose-confirm (Phase 2): the brain proposes a dispatch; approve files it to
-// Turso (markFiled).
+// Notes DB (markFiled).
 export function createProposal(prompt: string, cwd: string, reasoning: string, threadId: string = GENERAL_CHANNEL, target: ProposalTarget = {}): Task {
   const now = Date.now()
   const task: Task = {
@@ -272,7 +272,7 @@ export function createProposal(prompt: string, cwd: string, reasoning: string, t
 // ---- filing (orchestrator-one-queue P2) -------------------------------------
 
 /**
- * Stamp the Turso id a proposal will be filed as, BEFORE the Turso insert, so a
+ * Stamp the notes DB id a proposal will be filed as, BEFORE the notes DB insert, so a
  * retried approve reuses it (INSERT OR IGNORE → never two rows). COALESCE keeps
  * the first id if two approves race. Returns the stamped id, null unless proposed.
  */
@@ -284,7 +284,7 @@ export function stampDispatchId(taskId: string, freshId: string): string | null 
   return row?.status === "proposed" ? row.dispatch_task_id : null
 }
 
-/** proposed → filed once the Turso row exists. False when it was not proposed. */
+/** proposed → filed once the notes DB row exists. False when it was not proposed. */
 export function markFiled(taskId: string, target: { noteId: string; agent: string }): boolean {
   const res = db.query(
     "UPDATE orchestrator_tasks SET status = 'filed', note_id = ?, agent = ?, updated_at = ? WHERE task_id = ? AND status = 'proposed' AND dispatch_task_id IS NOT NULL",
@@ -308,9 +308,9 @@ export function setTaskStatus(taskId: string, status: TaskStatus): void {
 
 // List tasks, optionally scoped to one channel. threadId omitted → all channels
 // (the Tasks panel's global view); scoped → that channel's dispatched work.
-// Filed proposals are hidden: their Turso task is listed instead (P2). So are
-// live runs (P4): a local worker row linked to a Turso id past `proposed` — the
-// Turso row carries its identity.
+// Filed proposals are hidden: their notes DB task is listed instead (P2). So are
+// live runs (P4): a local worker row linked to a notes DB id past `proposed` — the
+// Notes DB row carries its identity.
 const LISTED = "status != 'filed' AND (dispatch_task_id IS NULL OR status IN ('proposed', 'rejected'))"
 
 export function listTasks(threadId?: string): Task[] {

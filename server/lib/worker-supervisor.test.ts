@@ -919,7 +919,7 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("the session sync and terminal callbacks are told whether the task is claim-bound (gates the Turso status sync)", async () => {
+    test("the session sync and terminal callbacks are told whether the task is claim-bound (gates the notes DB status sync)", async () => {
       const home = tmpHome()
       const h = harness(home)
       try {
@@ -1049,7 +1049,7 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("every family spawns with no Turso, db or Companion/broker secret, and the claude shim told not to load them", async () => {
+    test("every family spawns with no notes DB, db or Companion/broker secret, and the claude shim told not to load them", async () => {
       const home = tmpHome()
       const h = harness(home)
       const seeded = {

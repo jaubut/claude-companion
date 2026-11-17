@@ -60,7 +60,7 @@ export function createRepoView(deps: RepoViewDeps): RepoView {
     return { name: githubName(e)!, slug: e.github!, project: e.project ?? null, path: hits.find((h) => isDir(h.path))?.path ?? null }
   }
 
-  /** The shepherd's park reason per PR number (its Turso ledger); Turso down → no parks, the view still renders. */
+  /** The shepherd's park reason per PR number (its notes DB ledger); Notes DB down → no parks, the view still renders. */
   async function parks(slug: string): Promise<Map<number, string>> {
     const out = new Map<number, string>()
     try {
@@ -94,7 +94,7 @@ export function createRepoView(deps: RepoViewDeps): RepoView {
     return prs
   }
 
-  /** The open resolve task for this repo (exact title), newest first; throws when Turso is down. */
+  /** The open resolve task for this repo (exact title), newest first; throws when notes DB is down. */
   async function openAgent(r: KnownRepo): Promise<RepoAgent | null> {
     const rows = await deps.dispatch.query(
       `SELECT id, dispatch_status FROM tasks WHERE text = ? AND done = 0 AND dispatch_status IN (${OPEN_AGENT_STATES.map(() => "?").join(", ")}) ORDER BY created_at DESC LIMIT 1`,
@@ -109,7 +109,7 @@ export function createRepoView(deps: RepoViewDeps): RepoView {
     return items.filter((i) => i.repo?.toLowerCase() === r.name.toLowerCase()).length
   }
 
-  /** The repo's project note id (REPO_MAP `project` is a note id or a ref_code); null = none in Turso. */
+  /** The repo's project note id (REPO_MAP `project` is a note id or a ref_code); null = none in the notes DB. */
   async function noteOf(r: KnownRepo): Promise<string | null> {
     if (!r.project) return null
     const rows = await deps.dispatch.query("SELECT id FROM notes WHERE id = ? OR ref_code = ? LIMIT 1", [r.project, r.project])

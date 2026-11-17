@@ -25,7 +25,7 @@ export interface Channel {
   createdAt: number
   archived: boolean
   trust: ChannelTrust
-  // Project link (orchestrator-one-queue): the Turso note this channel views.
+  // Project link (orchestrator-one-queue): the note this channel views.
   // At most one non-archived channel per note; title/ref are a display cache.
   noteId: string | null
   noteTitle: string | null

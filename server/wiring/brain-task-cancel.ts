@@ -11,7 +11,7 @@ import { orchEmit } from "./orchestrator"
 
 // bin/task-cancel (POST /hooks/brain/task-cancel): the brain cancels an obsolete
 // task it proposed (or an infra-gate / human-approved agent task). Every check is
-// made here, from Turso, the server's proposal row, and unforgeable user turns.
+// made here, from the notes DB, the server's proposal row, and unforgeable user turns.
 // A running task is refused outright: no lease exists, so nothing can prove its
 // worker is gone. The cancel and its agent_activity row commit in one transaction.
 
@@ -25,7 +25,7 @@ export interface TaskCancelInput { task: string; reason: string }
 export interface TaskCancelDeps {
   exec: ExecFn
   tx: TxFn
-  /** The server's proposal row for a Turso id: the only proof the brain filed it. */
+  /** The server's proposal row for a notes DB id: the only proof the brain filed it. */
   proposalOf(dispatchTaskId: string): Pick<Task, "threadId" | "status"> | null
   /** The task's PR state on GitHub (OPEN | MERGED | CLOSED | unknown). */
   prState(url: string): Promise<string>

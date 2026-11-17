@@ -20,7 +20,7 @@ import { broadcast } from "../state"
 import { bodySnapshot } from "./body"
 
 // Body auto-investigation, live instance: the engine (lib/body-investigate-engine.ts)
-// wired to the Companion sqlite, Turso, the #Body channel, push and the peer host.
+// wired to the Companion sqlite, notes DB, the #Body channel, push and the peer host.
 // Built on first use; `startBodyInvestigate()` (cli.ts) starts the sweeps.
 
 export { HOP_HEADER, type BodyInvestigator } from "../lib/body-investigate-engine"
@@ -29,7 +29,7 @@ export const SWEEP_MS = 10 * 60_000
 export const BOOT_SWEEP_DELAY_MS = 60_000
 
 const store = createInvestigationStore(db)
-/** Mac fix cards: approve tags their Turso row requires_host=mac (wiring/proposals.ts). */
+/** Mac fix cards: approve tags their notes DB row requires_host=mac (wiring/proposals.ts). */
 export const bodyFixStore = createBodyFixStore(db)
 
 async function listProblems() {
@@ -40,7 +40,7 @@ async function listProblems() {
 }
 
 let applier: ReturnType<typeof createReportApplier> | null = null
-/** The #Body report effects (turn, proposal, Turso event, push) — shared by the investigator and the Opus resolver. */
+/** The #Body report effects (turn, proposal, notes DB event, push) — shared by the investigator and the Opus resolver. */
 export function bodyReportApplier(): ReturnType<typeof createReportApplier> {
   applier ??= createReportApplier({
     appendTurn: (text, taskId = null) => appendTurn("orchestrator", text, taskId, BODY_CHANNEL),

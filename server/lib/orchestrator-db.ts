@@ -58,14 +58,14 @@ function addColumn(table: string, col: string): void {
     /* column already exists */
   }
 }
-// dispatch_task_id: the Turso tasks.id a proposal was filed as (orchestrator-one-queue P2);
+// dispatch_task_id: the notes DB tasks.id a proposal was filed as (orchestrator-one-queue P2);
 // note_id / agent / title: where it files to (brain pick, else the channel's note).
 for (const col of ["tmux_session TEXT", "reasoning TEXT", "log_tail TEXT", "tmux_socket TEXT", "dispatch_task_id TEXT", "note_id TEXT", "agent TEXT", "title TEXT"]) {
   addColumn("orchestrator_tasks", col)
 }
 // card: brain-v2 turn card JSON (dispatch receipt / voice turn); NULL on every other turn.
 addColumn("orchestrator_turns", "card TEXT")
-// note_id links a channel to one Turso project note; title/ref are a display cache.
+// note_id links a channel to one project note; title/ref are a display cache.
 for (const col of ["auto_dispatch INTEGER NOT NULL DEFAULT 0", "note_id TEXT", "note_title TEXT", "note_ref TEXT"]) {
   addColumn("orchestrator_channels", col)
 }
@@ -73,7 +73,7 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_note ON orchestrator_channels (note_id)
     WHERE note_id IS NOT NULL AND archived = 0;
 
-  -- Announce cursor for the Turso dispatch poller (lib/dispatch-mirror.ts):
+  -- Announce cursor for the notes DB dispatch poller (lib/dispatch-mirror.ts):
   -- the last value seen per task, so a restart never re-announces.
   CREATE TABLE IF NOT EXISTS dispatch_seen (
     task_id TEXT PRIMARY KEY,

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite"
 // Tasks agent local state (companion.db, per host):
 //   tasks_agent_seen       device → the agent_activity id seen at the last open (digest baseline)
 //   tasks_agent_decisions  proposal id → accept / dismiss + the proposal version it applied to
-// Turso stays the only task store; this is UI bookkeeping only.
+// Notes DB stays the only task store; this is UI bookkeeping only.
 
 /** A GET more than this after the device's previous one is a new "open": the digest baseline moves. */
 export const OPEN_GAP_MS = 30 * 60_000

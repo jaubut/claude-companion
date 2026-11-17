@@ -64,7 +64,7 @@ describe("classifyWorker", () => {
     expect(classifyWorker(workerWs(), facts())).toEqual({ verdict: "close", reason: "finished (pr)", owned: true })
     for (const phase of ["completed", "done", "failed", "cancelled"]) expect(classifyWorker(workerWs(), facts({ task: { phase, updatedAt: 0 } })).verdict).toBe("close")
   })
-  test("the grace is 2 minutes past Turso updated_at", () => {
+  test("the grace is 2 minutes past notes DB updated_at", () => {
     expect(WORKER_GRACE_MS).toBe(120_000)
     expect(classifyWorker(workerWs(), facts({ task: { phase: "pr", updatedAt: NOW - 119_000 } }))).toMatchObject({ verdict: "keep", reason: "pr, in grace" })
   })
@@ -89,8 +89,8 @@ describe("classifyWorker", () => {
     expect(classifyWorker(workerWs(), facts({ snapshotOk: false }))).toMatchObject({ verdict: "keep", reason: "dispatch state unknown" })
     expect(classifyWorker(workerWs(), facts({ task: null }))).toMatchObject({ verdict: "keep", reason: "task unknown" })
   })
-  test("a done trace row never decides: Turso `queued` (requeued) → keep", () => {
-    // The trace row is not an input at all: only the live Turso phase is.
+  test("a done trace row never decides: Notes DB `queued` (requeued) → keep", () => {
+    // The trace row is not an input at all: only the live notes DB phase is.
     expect(classifyWorker(workerWs(), facts({ task: { phase: "queued", updatedAt: 0 } })).verdict).toBe("keep")
   })
   test("manual (the brain asked): no grace, a settled read now is enough", () => {

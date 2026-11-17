@@ -12,7 +12,7 @@ import { type GhPr, agentTaskTitle, prStatus, repoPrs } from "../lib/repo-view"
 
 // Repo view — GET /api/orchestrator/repos/<repo> + POST …/agent. Same harness
 // as body-agent.test.ts: real Companion sqlite (isolated COMPANION_DB_PATH),
-// "Turso" = in-memory bun:sqlite behind the QueryFn / ExecFn seams, a fake gh.
+// "notes DB" = in-memory bun:sqlite behind the QueryFn / ExecFn seams, a fake gh.
 // The tap files ONE builder task through fileProposal (byHand, herdr runner).
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-repo-view-")), "test.db")
@@ -39,7 +39,7 @@ let liveRepo: typeof import("../lib/live-repo")
 let viewLib: typeof import("../wiring/repo-view")
 let route: typeof import("./triage")
 
-// ── fake Turso ───────────────────────────────────────────────────────────────
+// ── fake notes DB ───────────────────────────────────────────────────────────────
 
 const turso = new Database(":memory:")
 turso.exec(`
@@ -287,14 +287,14 @@ describe("POST /api/orchestrator/repos/<repo>/agent", () => {
     expect(tasks()).toHaveLength(0)
   })
 
-  test("unknown repo → 404; a repo whose project note is not in Turso → 422 no_project", async () => {
+  test("unknown repo → 404; a repo whose project note is not in the notes DB → 422 no_project", async () => {
     expect(await call("POST", "nope", "/agent")).toMatchObject({ status: 404, body: { error: "no_such_repo" } })
     ghPrs = [ghPr(2, { statusCheckRollup: failing })]
     expect(await call("POST", "orphan", "/agent")).toMatchObject({ status: 422, body: { error: "no_project" } })
     expect(tasks()).toHaveLength(0)
   })
 
-  test("Turso down → 503 turso_unreachable, nothing filed", async () => {
+  test("Notes DB down → 503 turso_unreachable, nothing filed", async () => {
     ghPrs = [ghPr(2, { statusCheckRollup: failing })]
     tursoDown = true
     expect(await call("POST", "claude-companion-ios", "/agent")).toMatchObject({ status: 503, body: { error: "turso_unreachable" } })

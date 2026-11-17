@@ -17,9 +17,9 @@ import { createLiveness } from "./takeover-liveness"
 // brain-workers reconciler (STATE.md § Change Plan — brain-workers): closes
 // the herdr workspaces the brain owns once they are finished — leftover
 // `brain` workspaces (claude exited, herdr cleared the agent name) and the
-// `dispatch-<id8>` workspaces of brain-proposed tasks whose live Turso phase is
+// `dispatch-<id8>` workspaces of brain-proposed tasks whose live notes DB phase is
 // terminal. Level-triggered and idempotent: every sweep re-reads herdr, the
-// env on each pane's shell and Turso; the policy is lib/brain-workers.ts.
+// env on each pane's shell and the notes DB; the policy is lib/brain-workers.ts.
 // Jeremie's sessions (cc-*, builder-*, tko-*, phone spawns) carry neither env
 // and are only ever counted as `foreign`.
 //

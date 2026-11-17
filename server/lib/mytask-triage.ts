@@ -27,7 +27,7 @@ export interface MyTaskTriageDeps {
   exec: ExecFn
   now?: () => number
   log?: (msg: string) => void
-  /** Called after a choice wrote Turso (the Tasks API pushes tasks_changed). */
+  /** Called after a choice wrote the notes DB (the Tasks API pushes tasks_changed). */
   onWrite?: (taskIds: string[]) => void
 }
 
@@ -82,7 +82,7 @@ export function createMyTaskTriage(deps: MyTaskTriageDeps) {
     return overdueItems(await listMine(deps.query), localDay(t, TASKS_TZ()), t)
   }
 
-  /** Cached a minute; keeps the last list when Turso is down. */
+  /** Cached a minute; keeps the last list when notes DB is down. */
   async function collect(): Promise<SourceItem[]> {
     if (cache && now() - cache.at < COLLECT_TTL_MS) return cache.items
     const gen = generation

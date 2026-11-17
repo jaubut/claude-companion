@@ -1,6 +1,6 @@
 # Tasks API (Jeremie's own tasks)
 
-PRJ-CT4M WP1. Turso `tasks` is the store; the phone never holds the token. Bearer auth like every `/api/*` route. Code: `server/lib/my-tasks.ts`, `server/routes/my-tasks.ts`.
+PRJ-CT4M WP1. Notes DB `tasks` is the store; the phone never holds the token. Bearer auth like every `/api/*` route. Code: `server/lib/my-tasks.ts`, `server/routes/my-tasks.ts`.
 
 **Mine** = `assignee IN ('human:jeremie', 'human')`, open (`done = 0`). Override with `COMPANION_TASK_ASSIGNEES` (comma list). Agent tasks (`agent:*`) never appear here and can't be written through this API; they belong to dispatch.
 

@@ -53,12 +53,12 @@ export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
-  /** `linkBound`: the task holds a verified handoff claim, so it may write its Turso row (wiring's status sync). */
+  /** `linkBound`: the task holds a verified handoff claim, so it may write its notes DB row (wiring's status sync). */
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
   /** Any state change, plus every new step or summary while running (the brain thread's live card). */
   onTaskProgress?(task: SupervisedTaskSnapshot): void
   onTaskTerminal?(task: SupervisedTaskSnapshot, linkBound: boolean): void
-  /** Does this claim let the worker task link its PR to the Turso row of its id? Persisted; null (lookup failed) = ask next turn. */
+  /** Does this claim let the worker task link its PR to the notes DB row of its id? Persisted; null (lookup failed) = ask next turn. */
   bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
   /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
   linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>

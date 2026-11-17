@@ -1,9 +1,9 @@
-# Orchestrator ↔ Turso dispatch API
+# Orchestrator ↔ notes DB dispatch API
 
-Change Plan: orchestrator-one-queue (STATE.md, 2026-10-03). Turso `tasks` is the one
+Change Plan: orchestrator-one-queue (STATE.md, 2026-10-03). Notes DB `tasks` is the one
 work queue; the Companion reads it (P1), files and steers it (P2), triages it
 from #Body (P3). Every filing is `pending` until the dashboard release stamp (see One work stream).
-All routes sit behind the `/api/*` bearer gate. The phone never sees the Turso token.
+All routes sit behind the `/api/*` bearer gate. The phone never sees the notes DB token.
 Every field below is additive: decode permissively, absent = null.
 
 ## Task DTO
@@ -13,7 +13,7 @@ and in `GET /api/orchestrator/task/<id>`.
 
 ```json
 {
-  "taskId": "Turso id (32-hex, or a dashed UUID for dashboard-made tasks) | 8-char local id",
+  "taskId": "notes DB id (32-hex, or a dashed UUID for dashboard-made tasks) | 8-char local id",
   "threadId": "channel id (linked channel, else general)",
   "prompt": "task title",
   "cwd": "project title for source=dispatch (display only); local cwd otherwise",
@@ -47,12 +47,12 @@ and in `GET /api/orchestrator/task/<id>`.
 `stage`, `shepherd`, `mergedAt` and `prNumber` are `source:"dispatch"` only and optional (absent
 on local tasks and from older servers) — see [Pipeline stage](#pipeline-stage).
 
-- `pr` = Turso `completed` with a PR URL.
+- `pr` = notes DB `completed` with a PR URL.
 - Legacy `status` for `source:"dispatch"`: pending→queued, queued→queued, running→running,
   completed/pr→done, blocked/failed→error, cancelled→cancelled.
-- `prUrl` / `resultRef` need the P0 Turso columns; until then they are null
+- `prUrl` / `resultRef` need the P0 notes DB columns; until then they are null
   (the detail route falls back to the result note whose banner names the task).
-- Takeover tasks (`owner` = `companion:takeover:<name>`; slice B removes them) are listed once, as their Turso row, with
+- Takeover tasks (`owner` = `companion:takeover:<name>`; slice B removes them) are listed once, as their notes DB row, with
   `mode:"live"` plus the session's `sessionKey` and `localTaskId`
   (null until the spawn is recorded). `orchestrator_worker_output` frames and the worker's reply
   turn are tagged with `localTaskId`. `logTail` falls back to the worker's final pane snapshot.
@@ -62,18 +62,18 @@ on local tasks and from older servers) — see [Pipeline stage](#pipeline-stage)
   null since herdr Stage 3b (shipped apps decode them; removed after one iOS release); `source` is
   `proposal` for proposed/rejected/filed, else `local`; `mode` is `live` (tmux worker).
 - Proposals (P2) also carry `noteId` / `agent` (the brain's validated pick, else null),
-  `title`, and `dispatchTaskId` (the Turso id once approve started; set on `filed`).
-  Status `filed` = handed to Turso. The server sends one `orchestrator_task` frame with
-  `status:"filed"` (the card leaves: `isPending` is false) and then the Turso task's own
-  frame. `/thread` never lists `filed` rows; their Turso task is listed instead.
+  `title`, and `dispatchTaskId` (the notes DB id once approve started; set on `filed`).
+  Status `filed` = handed to the notes DB. The server sends one `orchestrator_task` frame with
+  `status:"filed"` (the card leaves: `isPending` is false) and then the notes DB task's own
+  frame. `/thread` never lists `filed` rows; their notes DB task is listed instead.
 
 ## Pipeline stage
 
 The Brain Queue graph (Queue → Dispatch → Builder → Shepherd → Merged, plus Blocked / Failed /
 Cancelled) reads `stage`, which the server derives in `server/lib/dispatch-stage.ts`
-from the Turso row and the PR shepherd's `agent_activity` ledger:
+from the notes DB row and the PR shepherd's `agent_activity` ledger:
 
-| Turso row | `stage` |
+| Notes DB row | `stage` |
 |---|---|
 | `queued` | `queue` |
 | `running`, headless, `dispatch_run_id` NULL (dispatch-run claimed it; the runner has not reported start through `dispatch.sh <id> running`) | `dispatch` |
@@ -110,12 +110,12 @@ from the Turso row and the PR shepherd's `agent_activity` ledger:
 
 | frame | shape | when |
 |---|---|---|
-| `orchestrator_task` | `{task: TaskDto}` | local transition, or a Turso task whose `(dispatch_status, updated_at, done, pr_url, dispatch_run_id, owner)` changed since last seen; re-sent for a note's tasks when its channel link changes |
+| `orchestrator_task` | `{task: TaskDto}` | local transition, or a notes DB task whose `(dispatch_status, updated_at, done, pr_url, dispatch_run_id, owner)` changed since last seen; re-sent for a note's tasks when its channel link changes |
 | `orchestrator_channel` | `{channel: Channel}`; Channel gains `noteId, noteTitle, noteRef, counts{queued,running,blocked,pr,failed,mergedToday}` | channel create/link, or its dispatch counts changed |
 | `orchestrator_queue` (new) | `{queue: {cap, live, queued, dispatch:{queued,running,blocked,pr,failed,mergedToday}}}` | after a poll that changed any of it |
-| `orchestrator` | `{turn}` | a Turso task moved into blocked / pr / completed / done: one turn in the owning channel, `turn.taskId` = the Turso id |
+| `orchestrator` | `{turn}` | a notes DB task moved into blocked / pr / completed / done: one turn in the owning channel, `turn.taskId` = the notes DB id |
 
-Status flows from the record: the server polls Turso every 20 s; `POST /hooks/dispatch-event`
+Status flows from the record: the server polls the notes DB every 20 s; `POST /hooks/dispatch-event`
 only triggers a poll. The announce cursor persists in sqlite (`dispatch_seen`), so a restart
 never re-announces. Blocked / PR transitions push (category `dispatch_task`,
 `userInfo {kind:"dispatch_task", taskId, channel}`) only on a host with
@@ -131,7 +131,7 @@ never re-announces. Blocked / PR transitions push (category `dispatch_task`,
 
 | route | response |
 |---|---|
-| `GET /api/orchestrator/thread?channel=` | `{channel, channels[], turns[], tasks[], queue:{cap,live,queued,dispatch}}`; `tasks` = local rows + the channel's Turso tasks from the last poll (never blocks on Turso) |
+| `GET /api/orchestrator/thread?channel=` | `{channel, channels[], turns[], tasks[], queue:{cap,live,queued,dispatch}}`; `tasks` = local rows + the channel's notes DB tasks from the last poll (never blocks on the notes DB) |
 | `GET /api/orchestrator/channels` | `{channels[]}` with `counts` |
 | `GET /api/orchestrator/task/<id>` | `{ok, task, description, result?:{ref,title,excerpt(≤4000)}, activity:[{action,summary,ts}](≤20)}`; 404 `no such task` |
 | `POST /api/orchestrator/channels/<id>/link` `{noteId: string\|null}` | `{ok, channel}`; 409 `note_linked_elsewhere`; 404 unknown channel/note; 400 bad body or system channel |
@@ -139,11 +139,11 @@ never re-announces. Blocked / PR transitions push (category `dispatch_task`,
 | `GET /api/orchestrator/pipeline` | `{items:[PipelineItem], generatedAt}` (epoch ms), see [Pipeline list](#pipeline-list) |
 | `POST /hooks/dispatch-event` `{taskId?}` | 202 `{ok:true, polled:bool}`; a nudge inside 2 s arms one trailing poll. Loopback peer (dispatch.sh → 127.0.0.1) needs no header; any other peer needs the bearer, else 403 |
 
-Errors: any Turso failure → 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
+Errors: any notes DB failure → 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 ## Pipeline list
 
-`GET /api/orchestrator/pipeline` (one work stream, slice D; `server/lib/pipeline.ts`) is one list of agent tasks with ONE state each. It reads Turso on every call, not the poller cache. It returns the same rows as the poller: `assignee LIKE 'agent:%'` or `'handoff'` with a status (a handoff row has none until the relay's ACK), open, or touched in the last 7 days, newest first, at most 300. The PR shepherd verdict comes from the `pr:*` / `outcome:merged` ledger, the same one the [pipeline stage](#pipeline-stage) uses.
+`GET /api/orchestrator/pipeline` (one work stream, slice D; `server/lib/pipeline.ts`) is one list of agent tasks with ONE state each. It reads the notes DB on every call, not the poller cache. It returns the same rows as the poller: `assignee LIKE 'agent:%'` or `'handoff'` with a status (a handoff row has none until the relay's ACK), open, or touched in the last 7 days, newest first, at most 300. The PR shepherd verdict comes from the `pr:*` / `outcome:merged` ledger, the same one the [pipeline stage](#pipeline-stage) uses.
 
 `PipelineItem = {id, title, agent, noteId, state, prUrl, shepherd, updatedAt, approveUrl?}`
 
@@ -169,12 +169,12 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
 | route | body | 200 | errors |
 |---|---|---|---|
 | `POST /api/orchestrator/proposal/<id>/approve` | optional `{agent?, noteId?}` | `{ok, taskId, status:"queued"|"pending_approval", dispatchTaskId, approveUrl?, replay}` (`queued` for a tap on his own conversation's proposal) (replay=true when it was already filed: same id, no new row) | 404 `no such proposal` · 409 `not proposable (status X)` · 422 `no_project` (no brain pick, no `noteId`, unlinked channel) · 400 `unknown_agent` · 404 `no such note` · 503 `turso_unreachable` (the proposal stays `proposed` and can be retried) |
-| `POST /api/orchestrator/proposal/<id>/reject` | — | `{ok, taskId, status:"rejected"}` | 404 · 409. Never reaches Turso |
-| `POST /api/orchestrator/task/<id>/cancel` | — | local id: `{ok, taskId, status:"cancelled"}` (tmux kill, as before). Turso id: `{ok, taskId, status:"cancelled", task}`. Allowed from pending / queued / blocked / failed; sets `done=1` | 409 `{ok:false, error:"running_on_<owner>", owner, dispatchStatus:"running", task}` for a running task · 409 `{ok:false, error:"conflict", dispatchStatus, owner, task}` when not cancellable or another writer moved it first (`task` = the current, unchanged row) · 404 `no such task` · 503 |
+| `POST /api/orchestrator/proposal/<id>/reject` | — | `{ok, taskId, status:"rejected"}` | 404 · 409. Never reaches the notes DB |
+| `POST /api/orchestrator/task/<id>/cancel` | — | local id: `{ok, taskId, status:"cancelled"}` (tmux kill, as before). Notes DB id: `{ok, taskId, status:"cancelled", task}`. Allowed from pending / queued / blocked / failed; sets `done=1` | 409 `{ok:false, error:"running_on_<owner>", owner, dispatchStatus:"running", task}` for a running task · 409 `{ok:false, error:"conflict", dispatchStatus, owner, task}` when not cancellable or another writer moved it first (`task` = the current, unchanged row) · 404 `no such task` · 503 |
 | `POST /api/orchestrator/task/<id>/requeue` | — | `{ok, task}` (`dispatchStatus:"queued"`, `done:false`) | from blocked / failed / cancelled / completed-not-done only; same 409 / 404 / 503 shapes. Local ids → 409 |
 | `POST /api/orchestrator/task/<id>/unblock` | `{answer: string, 1..4000 chars after trim}` | `{ok, task}` | 400 `answer must be 1..4000 chars` · 409 `conflict` unless blocked · 404 · 503 |
 | `POST /api/orchestrator/channels` | `{name, cwd?, noteId?}` | `{ok, channel}` (with `noteId, noteTitle, noteRef, counts`) | 400 `name required` / bad `noteId` · 404 `no such note` · 409 `note_linked_elsewhere` (nothing created) · 503 |
-| `POST /api/orchestrator/dispatch` | `{prompt, channel?, noteId?, agent?, title?}` | `{ok, taskId, dispatchTaskId, status:"queued"}`: files one Turso task as origin `jeremie` (`pending_approval` + `approveUrl` on a schema without `origin`) | 422 `no_project` · 400 `unknown_agent` · 404 · 503 |
+| `POST /api/orchestrator/dispatch` | `{prompt, channel?, noteId?, agent?, title?}` | `{ok, taskId, dispatchTaskId, status:"queued"}`: files one notes DB task as origin `jeremie` (`pending_approval` + `approveUrl` on a schema without `origin`) | 422 `no_project` · 400 `unknown_agent` · 404 · 503 |
 
 - **Requeue** resets what `dispatch.sh <id> queued` resets: `done=0`, run id, started / completed
   times, blocker, owner, result ref, PR URL.
@@ -217,7 +217,7 @@ There is no generic SQL route. Approve, cancel, requeue and unblock honour `Idem
 
 ## One work stream (filing)
 
-Every Companion write that starts work files ONE Turso row, never `running`. Jeremie's own work
+Every Companion write that starts work files ONE notes DB row, never `running`. Jeremie's own work
 (typed `POST .../dispatch`, or an approve tap on a proposal from his own conversation) is filed
 `origin='jeremie'`, `dispatch_status='queued'`: dispatch-run claims it directly. Everything else
 (#Body proposals and agents, Opus rescopes) has no trusted origin, defaults to

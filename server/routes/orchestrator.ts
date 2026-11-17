@@ -38,11 +38,11 @@ import { companionLog } from "../lib/log"
 import { checked, jsonObject } from "../lib/json-body"
 
 // Orchestrator routes (PRJ-OR1T): channels, thread, send, dispatch, proposal
-// approve/reject, task cancel; plus the Turso dispatch
+// approve/reject, task cancel; plus the notes DB dispatch
 // queue (orchestrator-one-queue): channel ↔ note link, task detail, projects
-// (P1); approve files to Turso, cancel / requeue / unblock through the guarded
+// (P1); approve files to the notes DB, cancel / requeue / unblock through the guarded
 // writes in lib/dispatch-tasks.ts, #Body vitals header (P2/P3). Contract:
-// docs/orchestrator-dispatch-api.md. Returns null for any other path. Turso
+// docs/orchestrator-dispatch-api.md. Returns null for any other path. Notes DB
 // failures → 503 {ok:false, error:"turso_unreachable"}.
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -151,7 +151,7 @@ async function linkChannel(req: Request, id: string, dispatch: DispatchWiring): 
   return Response.json({ ok: true, channel: dispatch.decorate(res.channel) })
 }
 
-// GET .../task/<id>: a local (8-char) task from sqlite, else the Turso row with
+// GET .../task/<id>: a local (8-char) task from sqlite, else the notes DB row with
 // its description, result note excerpt and last 20 activity rows.
 async function taskDetail(id: string, dispatch: DispatchWiring): Promise<Response> {
   if (!TASK_ID.test(id)) return Response.json({ ok: false, error: "no such task" }, { status: 404 })
@@ -190,7 +190,7 @@ function actionTurn(action: TaskAction, t: DispatchTask, answer: string): string
   return `unblocked ${who}\nAnswer: ${answer.slice(0, 500)}`
 }
 
-// POST .../task/<32-hex>/{cancel|requeue|unblock}: one guarded Turso write.
+// POST .../task/<32-hex>/{cancel|requeue|unblock}: one guarded notes DB write.
 // 409 when the row is not in an allowed state or another writer moved it
 // first (state unchanged); a running task names its owner instead.
 async function dispatchAction(req: Request, id: string, action: TaskAction, dispatch: DispatchWiring): Promise<Response> {
@@ -240,7 +240,7 @@ async function taskActionRoute(req: Request, path: string, dispatch: DispatchWir
   return withIdempotency(req, `task-${action}:${taskId}`, () => dispatchAction(req, taskId, action, dispatch))
 }
 
-// POST .../proposal/<id>/{approve|reject}. Approve files ONE `pending` Turso
+// POST .../proposal/<id>/{approve|reject}. Approve files ONE `pending` notes DB
 // row (replay on `filed` → 200 with the same dispatchTaskId); the dashboard
 // release stamp queues it. Both paths live in wiring/proposals.ts (shared with triage).
 async function proposalRoute(req: Request, path: string, dispatch: DispatchWiring): Promise<Response> {
@@ -255,7 +255,7 @@ async function proposalRoute(req: Request, path: string, dispatch: DispatchWirin
   })
 }
 
-// POST .../dispatch {prompt, channel?, noteId?, agent?, title?}: files ONE Turso
+// POST .../dispatch {prompt, channel?, noteId?, agent?, title?}: files ONE notes DB
 // agent task as Jeremie's (he typed it): `queued`, or `pending` on a schema without origin.
 async function dispatchRoute(req: Request, dispatch: DispatchWiring): Promise<Response> {
   const body = (await readJson(req)) ?? {}
@@ -324,8 +324,8 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     if (!ch) return Response.json({ ok: false, error: "no such channel" }, { status: 404 })
     // Returns the channel roster too, so the client fills the rail and the
     // active thread in one round-trip.
-    // tasks = this channel's local rows + its Turso dispatch tasks (from the
-    // poller's last read; never blocks on Turso). queue gains `dispatch`.
+    // tasks = this channel's local rows + its notes DB dispatch tasks (from the
+    // poller's last read; never blocks on the notes DB). queue gains `dispatch`.
     // #Body adds `vitals` (P3): the header line + counts, null when unavailable.
     const vitals = ch.id === BODY_CHANNEL ? { vitals: await bodyVitals(opts.body ?? bodySnapshot, dispatch, opts.vitalsTimeoutMs ?? 1500) } : {}
     const turns = ch.id === BRAIN_THREAD ? getThread(ch.id).filter((t) => !isBrainInternalEvent(t)) : getThread(ch.id)
@@ -343,7 +343,7 @@ async function handleRoute(req: Request, url: URL, dispatch: DispatchWiring, opt
     }
   }
   if (url.pathname === "/api/orchestrator/pipeline" && req.method === "GET") {
-    // One pipeline list (one-stream slice D): read from Turso on every call, never the poller cache.
+    // One pipeline list (one-stream slice D): read from the notes DB on every call, never the poller cache.
     try {
       const now = Date.now()
       return Response.json({ items: await listPipeline(dispatch.query, await dispatch.columns(), now), generatedAt: now })

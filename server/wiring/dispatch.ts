@@ -11,7 +11,7 @@ import { broadcast } from "../state"
 import { BRAIN_THREAD, brainEnabled, isBrainInternalEvent } from "../lib/brain"
 import { traceForDispatch } from "../lib/brain-trace"
 
-// The live Turso dispatch poller (orchestrator-one-queue P1): real Turso, the
+// The live notes DB dispatch poller (orchestrator-one-queue P1): the real notes DB, the
 // sqlite announce cursor, WS broadcast, APNs. Started by cli.ts; nudged by
 // POST /hooks/dispatch-event. Policy lives in lib/dispatch-poller.ts.
 

@@ -2,9 +2,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { readFileSync } from "node:fs"
 
-// Minimal Turso (libSQL Hrana-over-HTTP) client: read-only proxy routes, plus
+// Minimal notes DB client (libSQL Hrana-over-HTTP, tls-sqld; the module keeps its turso name): read-only proxy routes, plus
 // the guarded dispatch-task writes (tursoExec, orchestrator-one-queue P2).
-// The phone never holds the Turso token; the server does. Token source is
+// The phone never holds the notes DB token; the server does. Token source is
 // TURSO_AUTH_TOKEN from the shell env, ~/.claude-companion/.env (loaded by
 // cli.ts), or the agent env files ~/.config/tls-agent/{env,secrets.env}. Never log it, and
 // never put SQL or the token into an error message — callers surface

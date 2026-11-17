@@ -33,7 +33,7 @@ import { reviseProposal } from "./proposals"
 
 // The Opus resolver, live (docs/orchestrator-triage-api.md#opus-resolver):
 // the engine (lib/resolver-engine.ts) + the work (lib/resolver-work.ts) wired
-// to Turso (evidence, read-only; agent_activity rows), `gh` (read-only review,
+// to the notes DB (evidence, read-only; agent_activity rows), `gh` (read-only review,
 // comments), the read-only Opus runner, the triage executor (every write
 // through the existing guarded paths) and #General / #Body turns. A PR that
 // needs changes goes back to the PR shepherd's fix run (`pr:unpark`); the
@@ -185,7 +185,7 @@ export function liveSeams(o: LiveResolverOpts): WorkSeams {
     async investigate(src, model, timeoutMs) {
       if (src.ref.source !== "body") return { ok: false, error: "not a body item" }
       const detail = await buildComponentDetail(tursoQuery, src.ref.componentId).catch(() => null)
-      if (!detail) return { ok: false, error: "component record unavailable (Turso)" }
+      if (!detail) return { ok: false, error: "component record unavailable (notes DB)" }
       const paths = knownPaths(detail.component)
       bodyPaths.set(src.ref.componentId, { state: detail.vitals?.state ?? "unknown", cwd: paths.repo ?? paths.cwd, repo: !!paths.repo })
       const out = await runInvestigatorCli(buildBodyResolverPrompt(detail, paths, [src.facts.error ?? ""].filter(Boolean)), { timeoutMs, model })

@@ -185,7 +185,7 @@ export function updateNote(fields: Record<string, unknown>): Promise<DashReply> 
   return dashboardJson("PUT", "/api/note", fields, 30_000)
 }
 
-/** `{ok, id, url}` — tls-dashboard-v2 POST /api/note/image (base64 image → Turso note_images). */
+/** `{ok, id, url}` — tls-dashboard-v2 POST /api/note/image (base64 image → notes DB note_images). */
 export function uploadNoteImage(input: { note_id?: string | null; mime: string; data: string }): Promise<DashReply> {
   return dashboardJson("POST", "/api/note/image", input, 30_000)
 }
