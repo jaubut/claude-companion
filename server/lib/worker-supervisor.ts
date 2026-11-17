@@ -292,7 +292,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       // A follow-up turn keeps the task's recorded family unless the caller names a family, agent or model.
       const family = existing && !input.family?.trim() && !agent && !model
         ? existing.family
-        : resolveWorkerFamily({ family: input.family, agent, model: model ?? existing?.model ?? undefined })
+        : resolveWorkerFamily({ family: input.family, agent, model })
       if (!family) return { ok: false, status: 400, error: "invalid_family" }
 
       if (existing && existing.repo !== repo) return { ok: false, status: 409, error: `task_repo_mismatch: ${taskId} belongs to ${existing.repo}` }
@@ -331,19 +331,21 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const sessionId = (existing && !familyChanged) ? existing.sessionId : deps.uuid()
         const title = (input.title?.trim() || existing?.title || prompt.split("\n")[0] || taskId).slice(0, 200)
         const myTurn = (existing?.turnCount ?? 0) + 1
+        // Only a model of this family reaches the CLI; when the family changes on resume, drop the previous family's stored model.
+        const usable = (m: string | null | undefined) => m && m.toLowerCase() !== "auto" && modelFitsFamily(m, family) ? m : null
+        const explicitModel = usable(model)
+        const storedModel = existing && !familyChanged ? usable(existing.model) : null
         const routedModel = family === "claude"
           ? (await decideWorkerModel({
               repo,
               title,
               prompt,
               turnCount: myTurn,
-              explicitModel: model ?? null,
-              existingModel: existing?.model ?? null,
+              explicitModel,
+              existingModel: storedModel,
             })).model
           : null
-        // Only a model of this family reaches the CLI; none at all lets codex/gemini use their own config default.
-        const usable = (m: string | null | undefined) => m && m.toLowerCase() !== "auto" && modelFitsFamily(m, family) ? m : null
-        const effectiveModel = usable(model) ?? routedModel ?? usable(existing?.model) ?? null
+        const effectiveModel = explicitModel ?? routedModel ?? storedModel ?? null
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
         // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
