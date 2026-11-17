@@ -9,7 +9,7 @@ import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { startSessionArchive } from "../lib/session-archive"
 import { startGoneSessionPrune } from "../lib/session-prune-gone"
-import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
+import { listSessions, markHeadlessSession, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
@@ -100,6 +100,7 @@ export const workerSupervisor = createWorkerSupervisor({
   designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
     const model = task.model || DEFAULT_FAMILY_MODELS[task.family]
+    markHeadlessSession(task.sessionId)
     const recorded = recordSession({
       cwd: task.worktree,
       agent: task.family,

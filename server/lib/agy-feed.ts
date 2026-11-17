@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, getFeed, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { type Session, getSessionByKey, listSessions, recordSession } from "./sessions"
+import { type Session, getSessionByKey, isHeadlessSession, listSessions, recordSession } from "./sessions"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
 import { withPickerIO } from "./keyboard-inject"
@@ -723,8 +723,8 @@ const activeAgyProcs = new Set<string>()
  * May this conversation create or update a `headless:agy:` drawer row? Never one a worker card owns (the card
  * follows its task, not agy's status), and a print-mode one only once the phone has opened it as a thread.
  */
-export function agyThreadVisible(c: Pick<AgyConversationSummary, "headless">, existing: Pick<Session, "herdrPane"> | undefined): boolean {
-  if (existing?.herdrPane?.startsWith("headless:worker:")) return false
+export function agyThreadVisible(c: Pick<AgyConversationSummary, "id" | "headless">, existing: Pick<Session, "herdrPane"> | undefined): boolean {
+  if (existing?.herdrPane?.startsWith("headless:worker:") || isHeadlessSession(c.id)) return false
   return !c.headless || !!existing?.herdrPane?.startsWith("headless:agy:")
 }
 

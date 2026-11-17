@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { agySummariesDbPath, agyThreadVisible, readRecentAgyConversations } from "./agy-feed"
 import { createEndedStore } from "./ended-sessions"
 import { type ArchivePolicy, archiveReason, archiveStaleSessions } from "./session-archive"
-import { type Session, getSessionByKey, recordSession, removeSessionByKey } from "./sessions"
+import { type Session, getSessionByKey, markHeadlessSession, recordSession, removeSessionByKey } from "./sessions"
 import { workerAgentStatus } from "./worker-invocation"
 
 const H = 60 * 60 * 1000
@@ -63,6 +63,16 @@ test("worker status follows its task: only running reads as working", () => {
 })
 
 describe("archiveStaleSessions", () => {
+  test("an ended (interactive) row keeps its day; past it, it leaves", async () => {
+    const ended = createEndedStore({ herdr: { call: async () => ({ pane: { terminal_id: "t" } }) } as never, now: () => NOW - 2 * H })
+    await ended.note({ sessionId: "33333333-3333-3333-3333-333333333333", sidConfirmed: true, agent: "claude", title: "", label: "", cwd: "/w", herdrPane: "w1:p1" }, () => [])
+    expect(ended.list()).toHaveLength(1)
+    archiveStaleSessions(neverDone, POLICY, NOW, ended)
+    expect(ended.list()).toHaveLength(1)
+    archiveStaleSessions(neverDone, POLICY, NOW + 23 * H, ended)
+    expect(ended.list()).toHaveLength(0)
+  })
+
   test("archived rows stay out on a provisional re-record; new activity or a hook brings them back", () => {
     const meta = { cwd: "/tmp/archive-test", agent: "gemini" as const, sessionId: "arch-1", herdrPane: "headless:agy:arch-1", firstSeenAt: NOW - 48 * H, lastActiveAt: NOW - 30 * H }
     const s = recordSession(meta, { provisional: true })!
@@ -103,10 +113,15 @@ describe("agy print-mode conversations", () => {
   })
 
   test("a print-mode conversation is no thread unless the phone opened it; a worker's is never re-keyed", () => {
-    expect(agyThreadVisible({ headless: true }, undefined)).toBe(false)
-    expect(agyThreadVisible({ headless: false }, undefined)).toBe(true)
-    expect(agyThreadVisible({ headless: true }, { herdrPane: "headless:agy:abc" })).toBe(true)
-    expect(agyThreadVisible({ headless: false }, { herdrPane: "headless:worker:t1" })).toBe(false)
-    expect(agyThreadVisible({ headless: true }, { herdrPane: "headless:worker:t1" })).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: true }, undefined)).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: false }, undefined)).toBe(true)
+    expect(agyThreadVisible({ id: "a", headless: true }, { herdrPane: "headless:agy:abc" })).toBe(true)
+    expect(agyThreadVisible({ id: "a", headless: false }, { herdrPane: "headless:worker:t1" })).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: true }, { herdrPane: "headless:worker:t1" })).toBe(false)
+  })
+
+  test("a worker task's conversation stays out after its card is gone, even with user-input steps (resumed)", () => {
+    markHeadlessSession("resumed-worker-convo")
+    expect(agyThreadVisible({ id: "resumed-worker-convo", headless: false }, undefined)).toBe(false)
   })
 })

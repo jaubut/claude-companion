@@ -95,6 +95,12 @@ const sessions = new Map<string, Session>()
 // Archived key → its lastActiveAt when archived. A provisional re-record
 // (discovery, the agy poll) with no newer activity stays out of the list.
 const archived = new Map<string, number>()
+// Session ids a non-interactive spawner owns (every worker task, running or not, recorded by the
+// supervisor). Never a drawer thread: a resumed gemini worker's agy conversation has user-input
+// steps, so the print-mode test alone would surface it once its card is archived.
+const headlessIds = new Set<string>()
+export function markHeadlessSession(sessionId: string): void { if (sessionId) headlessIds.add(sessionId) }
+export function isHeadlessSession(sessionId: string): boolean { return headlessIds.has(sessionId) }
 const listeners = new Set<Listener>()
 
 // A session can idle for hours without a hook; pruning on last-seen alone

@@ -228,3 +228,21 @@ Responses carry `status:"queued"`, or `status:"pending_approval"` plus `approveU
 filed with `requires_host='mac'` (when the column exists), so only the Mac's dispatch-run claims
 it (docs/one-stream-plan.md, Q1). Live mode (P4: `mode:"live"`, `claimLive`, the tmux worker) is
 gone. A `mode` field is ignored.
+
+## Non-interactive sessions stay out of the drawer
+
+Any agent spawned without a human at the keyboard (headless workers, weft programs, cron scripts) exports
+`COMPANION_HEADLESS=1` (plus `COMPANION_ORIGIN=<spawner>`, for logs). `lib/worker-invocation.ts` `buildWorkerEnv` sets it
+for every worker family. The server reads the marker from the agent's process env (`lib/dispatch-worker.ts`): discovery
+never registers that process and its hooks register, push and ask nothing (`lib/worker-hook-gate.ts`).
+
+- **weft flows:** set it in the env of every step that runs `claude -p`, `codex exec` or `agy -p`, e.g.
+  `env COMPANION_HEADLESS=1 COMPANION_ORIGIN=weft agy -p …`. A `claude -p` without it still shows up while it runs.
+- `agy -p` conversations are also caught after the process exits: a conversation with no user-input step
+  (`last_user_input_step_index = -1`) is print mode and never becomes a `headless:agy:` thread.
+- A worker task's session id is recorded as headless (`markHeadlessSession`), so a resumed gemini worker's
+  conversation does not come back as a thread once its card is gone.
+- The only drawer row a worker gets is its card (`headless:worker:<taskId>`). Its status follows the task: `busy` while
+  running, `idle` otherwise. The card leaves 1 h after the task finished.
+- `lib/session-archive.ts` archives idle sessions after 24 h without activity and ended rows 24 h after they ended,
+  never the Brain, Brain · Boost or a lead. The first pass at boot is the one-time prune after a deploy.

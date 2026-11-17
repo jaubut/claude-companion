@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1250,
+          "lines": 1266,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -231,6 +231,7 @@
             "readRecentAgyConversations",
             "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
+            "agyThreadVisible",
             "isAgyBrainRunning",
             "ensureAgyBrainSession",
             "startAgyFeedMonitor",
@@ -1797,7 +1798,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 588,
+          "lines": 605,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1837,6 +1838,7 @@
             "lib/dispatch-worker.ts",
             "lib/tmux-pane.ts",
             "lib/log.ts",
+            "lib/session-titles.ts",
             "lib/herdr.ts",
             "lib/agy-feed.ts"
           ],
@@ -2034,10 +2036,11 @@
         },
         {
           "path": "lib/dispatch-worker.ts",
-          "lines": 55,
+          "lines": 60,
           "kind": "lib",
           "exports": [
             "DISPATCH_WORKER_ENV",
+            "COMPANION_HEADLESS_ENV",
             "envHasDispatchWorker",
             "resetDispatchWorkerCache",
             "isDispatchWorkerPid",
@@ -4228,7 +4231,7 @@
         },
         {
           "path": "lib/rehydrate.ts",
-          "lines": 76,
+          "lines": 79,
           "kind": "lib",
           "exports": [
             "rehydrateSessions"
@@ -4239,6 +4242,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/recent-sessions.ts",
             "lib/sessions.ts"
           ],
           "listeners": [],
@@ -4689,6 +4693,30 @@
           "externals": []
         },
         {
+          "path": "lib/session-archive.ts",
+          "lines": 58,
+          "kind": "lib",
+          "exports": [
+            "ArchivePolicy",
+            "WorkerDoneAt",
+            "archiveReason",
+            "archiveStaleSessions",
+            "startSessionArchive"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/ended-sessions.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-identity.ts",
           "lines": 59,
           "kind": "lib",
@@ -4832,10 +4860,12 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 599,
+          "lines": 630,
           "kind": "lib",
           "exports": [
             "Session",
+            "markHeadlessSession",
+            "isHeadlessSession",
             "RecordOptions",
             "recordSession",
             "setTitleResolver",
@@ -4851,6 +4881,7 @@
             "getSessionByKey",
             "resolveSession",
             "removeSessionByCwd",
+            "archiveSession",
             "removeSessionByKey",
             "removeSessionByTty",
             "removeSessionByTmuxPane",
@@ -4860,6 +4891,8 @@
           ],
           "state": [
             "sessions: Map",
+            "archived: Map",
+            "headlessIds: Set",
             "listeners: Set",
             "let pruneTimer",
             "let titleResolver",
@@ -6488,7 +6521,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 309,
+          "lines": 314,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6498,6 +6531,7 @@
             "WorkerFamily",
             "ALLOWED_FAMILIES",
             "WorkerTaskStatus",
+            "workerAgentStatus",
             "StreamJsonEvent",
             "parseStreamJsonLine",
             "scrubAgentEnv",
@@ -9537,12 +9571,14 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 155,
+          "lines": 180,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
+            "supervisorStateFile",
             "workerSupervisor",
             "startWorkerSessionPrune",
+            "startDrawerArchive",
             "replayWorkerPrLinks",
             "workerMcp"
           ],
@@ -9559,6 +9595,7 @@
             "lib/live-repo.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/session-archive.ts",
             "lib/session-prune-gone.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
@@ -9567,6 +9604,7 @@
             "lib/worker-mcp.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
+            "lib/worker-invocation.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
             "wiring/brain.ts",
@@ -9811,6 +9849,7 @@
             "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/discover.ts",
+            "lib/session-archive.ts",
             "lib/session-prune-gone.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#POST /api/spawn-session",
@@ -10294,6 +10333,7 @@
             "lib/model-control.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
+            "lib/session-archive.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
             "routes/brain.ts",
@@ -10513,6 +10553,16 @@
             "lib/agy-feed.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts"
+          ]
+        },
+        "isHeadlessSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
           ]
         },
         "getSessionByKey": {
@@ -11929,6 +11979,12 @@
             "routes/model.ts#POST /api/model/set"
           ]
         },
+        "agyThreadVisible": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "ensureAgyBrainSession": {
           "module": "lib/agy-feed.ts",
           "callers": [
@@ -11970,6 +12026,17 @@
           "module": "lib/dispatch-worker.ts",
           "callers": [
             "lib/discover.ts"
+          ]
+        },
+        "transcriptPath": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/orphan-question.ts",
+            "lib/transcript-backfill.ts",
+            "wiring/auto-compact.ts",
+            "wiring/brain-headless.ts",
+            "wiring/events.ts"
           ]
         },
         "PaneRef": {
@@ -12398,6 +12465,7 @@
           "module": "lib/ended-sessions.ts",
           "callers": [
             "lib/herdr-workspace.ts",
+            "lib/session-archive.ts",
             "lib/shell-sessions.ts",
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
@@ -12949,16 +13017,6 @@
           "module": "lib/question-driver.ts",
           "callers": [
             "lib/orphan-question.ts"
-          ]
-        },
-        "transcriptPath": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "lib/orphan-question.ts",
-            "lib/transcript-backfill.ts",
-            "wiring/auto-compact.ts",
-            "wiring/brain-headless.ts",
-            "wiring/events.ts"
           ]
         },
         "pickerShowsQuestions": {
@@ -13640,6 +13698,12 @@
             "lib/records-expiry.ts"
           ]
         },
+        "parseHead": {
+          "module": "lib/recent-sessions.ts",
+          "callers": [
+            "lib/rehydrate.ts"
+          ]
+        },
         "TriageSource": {
           "module": "lib/triage.ts",
           "callers": [
@@ -14050,6 +14114,18 @@
           "module": "lib/readonly-claude.ts",
           "callers": [
             "lib/sent-files.ts"
+          ]
+        },
+        "EndedStore": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "lib/session-archive.ts"
+          ]
+        },
+        "archiveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/session-archive.ts"
           ]
         },
         "runTmux": {
@@ -19819,6 +19895,18 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "markHeadlessSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "workerAgentStatus": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "bindWorkerTask": {
           "module": "lib/worker-pr-link.ts",
           "callers": [
@@ -19833,6 +19921,12 @@
         },
         "startGoneSessionPrune": {
           "module": "lib/session-prune-gone.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "startSessionArchive": {
+          "module": "lib/session-archive.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

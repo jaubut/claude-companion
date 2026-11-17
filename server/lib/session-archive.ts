@@ -1,6 +1,6 @@
-// Keeps the drawer clean: idle sessions with no activity for a day and "done" ones (a worker card whose task
-// finished, an ended row) after an hour leave the live list. Archived = out of the list until real activity
-// brings the session back (sessions.ts archiveSession). Runs at boot and every minute; the first passes after
+// Keeps the drawer clean: idle sessions with no activity for a day and "done" worker cards an hour after their
+// task finished leave the live list. An ended row is an interactive session, so it gets the idle day too.
+// Archived = out of the list until real activity brings the session back (sessions.ts archiveSession). Runs at boot and every minute; the first passes after
 // boot discovery are the one-time prune of whatever a deploy finds stale.
 
 import { type EndedStore, endedStore } from "./ended-sessions"
@@ -12,18 +12,7 @@ const SWEEP_EVERY_MS = 60_000
 
 export interface ArchivePolicy { idleMs: number; doneMs: number }
 
-function envNumber(name: string, fallback: number): number {
-  const n = Number(process.env[name])
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-/** COMPANION_ARCHIVE_IDLE_HOURS (24) and COMPANION_ARCHIVE_DONE_MINUTES (60). */
-export function archivePolicyFromEnv(): ArchivePolicy {
-  return {
-    idleMs: envNumber("COMPANION_ARCHIVE_IDLE_HOURS", 24) * HOUR_MS,
-    doneMs: envNumber("COMPANION_ARCHIVE_DONE_MINUTES", 60) * 60_000,
-  }
-}
+const DEFAULT_POLICY: ArchivePolicy = { idleMs: 24 * HOUR_MS, doneMs: HOUR_MS }
 
 /** When a worker card's task finished, or null while it runs (or for a non-worker row). */
 export type WorkerDoneAt = (taskId: string) => number | null
@@ -46,7 +35,7 @@ export function archiveReason(s: Session, now: number, policy: ArchivePolicy, wo
 /** One pass. Returns how many sessions and ended rows left the drawer. */
 export function archiveStaleSessions(
   workerDoneAt: WorkerDoneAt,
-  policy: ArchivePolicy = archivePolicyFromEnv(),
+  policy: ArchivePolicy = DEFAULT_POLICY,
   now = Date.now(),
   ended: EndedStore = endedStore,
 ): number {
@@ -56,7 +45,7 @@ export function archiveStaleSessions(
     if (reason && archiveSession(s.key, reason)) n++
   }
   for (const e of ended.list()) {
-    if (now - e.endedAt >= policy.doneMs) { ended.drop(e.key); n++ }
+    if (now - e.endedAt >= policy.idleMs) { ended.drop(e.key); n++ }
   }
   return n
 }
