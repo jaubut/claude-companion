@@ -44,8 +44,8 @@ jobs:
       - name: Tests
         run: bun test --isolate
 
-  # Real Turso, on tls-test only (allowlist: server/lib/turso-test-preload.test-util.ts). Its own job so `test` stays
-  # secret-free and a Turso outage can't redden it. Never pull_request_target: it would hand the secrets to fork code.
+  # the real notes DB, on tls-test only (allowlist: server/lib/turso-test-preload.test-util.ts). Its own job so `test` stays
+  # secret-free and a notes DB outage can't redden it. Never pull_request_target: it would hand the secrets to fork code.
   # Forks get no secrets on pull_request, so they skip here rather than go red.
   integration:
     name: Integration (tls-test)

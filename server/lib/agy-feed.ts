@@ -1142,7 +1142,7 @@ export function deliverHeadlessAgyTurn(opts: {
   try {
     const proc = Bun.spawn(["agy", ...args], {
       cwd,
-      // A headless agy worker turn gets the scrubbed env (no Turso/db/Companion tokens); the Brain · Boost
+      // A headless agy worker turn gets the scrubbed env (no notes DB/db/Companion tokens); the Brain · Boost
       // orchestrator keeps the server env like the claude brain (wiring/brain-headless.ts).
       ...(opts.isBrain ? {} : { env: scrubAgentEnv(process.env) }),
       stdout: "pipe",

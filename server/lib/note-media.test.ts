@@ -12,7 +12,7 @@ import { storeSentFile } from "./sent-files"
 import type { QueryFn, Row } from "./turso"
 
 // PRJ-FL49 Phase 2: a linked note's attachments as content blocks. Real stores: the media and
-// sent-files stores in a tmp dir, and Turso's real `inbox_entries` CREATE TABLE (copied from
+// sent-files stores in a tmp dir, and the notes DB's real `inbox_entries` CREATE TABLE (copied from
 // sqlite_master on 2026-10-30) behind the QueryFn — no fake rows.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "note-media-db-")), "test.db")

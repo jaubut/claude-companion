@@ -9,13 +9,13 @@ import { BRAIN_AGENT, BRAIN_THREAD } from "./brain"
 //   brain  = label `brain` + COMPANION_TASK_ID=brain
 //   worker = label `dispatch-<id8>` + DISPATCH_TASK_ID=<id> whose sqlite
 //            proposal row sits in the brain thread
-// Anything unknown (env unreadable, Turso not polled, task unseen) keeps.
+// Anything unknown (env unreadable, notes DB not polled, task unseen) keeps.
 
 export type ReapMode = "observe" | "on" | "off"
 export type Verdict = "close" | "keep"
 export type WsKind = "brain" | "worker"
 
-/** Terminal for this long (past Turso updated_at) before a worker may close. */
+/** Terminal for this long (past notes DB updated_at) before a worker may close. */
 export const WORKER_GRACE_MS = 2 * 60_000
 /** Worker sweep interval: grace + one poll (20 s) + one sweep stays under ~3 min. */
 export const WORKER_SWEEP_MS = 30_000
@@ -77,12 +77,12 @@ export function classifyBrainWs(v: SweepView, live: BrainLive | null): Decision 
   return { verdict: "close", reason: "brain leftover", owned: true }
 }
 
-/** What the worker's task looks like right now. `snapshotOk` false = Turso never polled. */
+/** What the worker's task looks like right now. `snapshotOk` false = notes DB never polled. */
 export interface WorkerFacts {
-  /** The sqlite proposal of this Turso task, or null (not a Companion proposal). */
+  /** The sqlite proposal of this notes DB task, or null (not a Companion proposal). */
   proposal: { proposalId: string; threadId: string } | null
   snapshotOk: boolean
-  /** Live Turso phase + updated_at; null = task not found. */
+  /** Live notes DB phase + updated_at; null = task not found. */
   task: { phase: string; updatedAt: number } | null
   settledSweeps: number
   now: number

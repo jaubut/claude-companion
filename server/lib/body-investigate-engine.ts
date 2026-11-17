@@ -23,7 +23,7 @@ import type { ExecFn } from "./turso"
 // and a sweep on boot + every 10 min. Runs the read-only investigator on the
 // owning host, forwards Mac components from Zettlab to the Mac Companion, and
 // turns each finished investigation into a #Body turn, an optional proposal
-// card, a Turso body_events row and (rarely) a push. Policy lives in
+// card, a notes DB body_events row and (rarely) a push. Policy lives in
 // lib/body-investigate.ts. Contract: docs/body-api.md.
 
 export const PEER_TIMEOUT_MS = 10_000
@@ -50,7 +50,7 @@ export interface InvestigatorDeps {
   localHost: () => BodyHost
   enabled: () => boolean
   now?: () => number
-  /** Component + vitals + events (Turso). null = no such component. */
+  /** Component + vitals + events (notes DB). null = no such component. */
   fetchDetail: (id: string) => Promise<BodyComponentDetail | null>
   /** Non-retired components currently dead / crash_loop / failing. */
   listProblems: () => Promise<{ id: string; host: string | null; state: string; criticality: string | null }[]>
@@ -60,7 +60,7 @@ export interface InvestigatorDeps {
   forward: ((input: ConsiderInput & { state: string }) => Promise<ForwardResult>) | null
   /** Mac → Zettlab (the #Body owner). null = apply locally. Resolves true when the owner accepted it. */
   sendReport: ((report: InvestigationReport) => Promise<boolean>) | null
-  /** Turn, proposal, Turso row, push. Returns the proposal id (if any). */
+  /** Turn, proposal, notes DB row, push. Returns the proposal id (if any). */
   apply: (report: InvestigationReport, record: InvestigationRecord) => Promise<string | null>
   log?: (msg: string) => void
 }
@@ -108,7 +108,7 @@ export function createBodyInvestigator(deps: InvestigatorDeps): BodyInvestigator
     try { detail = await deps.fetchDetail(rec.componentId) } catch { /* below */ }
     let paths: KnownPaths = { files: [], commands: [], cwd: null, repo: null }
     let outcome: Awaited<ReturnType<InvestigatorRunner>>
-    if (!detail) outcome = { ok: false, error: "component record unavailable (Turso)" }
+    if (!detail) outcome = { ok: false, error: "component record unavailable (notes DB)" }
     else {
       paths = deps.paths(detail)
       outcome = await deps.run(buildInvestigationPrompt({ detail, paths }))
@@ -185,7 +185,7 @@ export function createBodyInvestigator(deps: InvestigatorDeps): BodyInvestigator
       }
       let problems: Awaited<ReturnType<InvestigatorDeps["listProblems"]>>
       try { problems = await deps.listProblems() } catch (err) {
-        log(`[body-investigate] sweep skipped: ${(err as Error)?.message ?? "Turso unreachable"}`)
+        log(`[body-investigate] sweep skipped: ${(err as Error)?.message ?? "notes DB unreachable"}`)
         return
       }
       const ids = new Set(problems.map((p) => p.id))
@@ -317,7 +317,7 @@ export function investigationPush(componentId: string, title: string, body: stri
   }
 }
 
-/** The one Turso write this feature makes: an `investigation` row in body_events. */
+/** The one notes DB write this feature makes: an `investigation` row in body_events. */
 export async function writeInvestigationEvent(exec: ExecFn, componentId: string, at: string, state: string, detail: string): Promise<void> {
   await exec("INSERT INTO body_events (component_id, at, kind, from_state, to_state, detail) VALUES (?, ?, 'investigation', NULL, ?, ?)", [componentId, at, state, detail])
 }

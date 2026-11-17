@@ -10,7 +10,7 @@ import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 import type { DispatchWiring } from "../wiring/dispatch"
 
 // brain-v2 routes (routes/brain.ts): the propose hook's auth, dedupe and
-// hand-off end to end (real sqlite proposals, a fake Turso with the
+// hand-off end to end (real sqlite proposals, a fake notes DB with the
 // production tasks/notes columns incl. origin), and the Bearer-gated controls.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-route-")), "test.db")
@@ -295,7 +295,7 @@ describe("POST /hooks/brain/propose — the brain hands off, no Approve card", (
     expect(rows).toEqual([{ dispatch_status: "queued", origin: "jeremie" }, { dispatch_status: "queued", origin: "jeremie" }])
     expect(chat.getThread("brain").some((t) => t.text.startsWith("Proposal [") || t.text.startsWith("filed ["))).toBe(false)
   })
-  test("same (sourceTurnId, prompt) twice → one proposal, one Turso row", async () => {
+  test("same (sourceTurnId, prompt) twice → one proposal, one notes DB row", async () => {
     const t = voiceTurn().id
     const a = await propose(body(t))
     const b = await propose(body(t))

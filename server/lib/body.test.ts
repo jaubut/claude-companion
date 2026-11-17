@@ -6,7 +6,7 @@ import {
   createBodySnapshot, dependentsIndex, emptySummary, isHealthIntent, parseDependsOn, toState, vitalsHeader,
 } from "./body"
 
-// Pure read model against fake Turso rows (the QueryFn seam) — no network.
+// Pure read model against fake notes DB rows (the QueryFn seam) — no network.
 
 interface Comp { id: string; host?: string; kind?: string; name?: string; criticality?: string; depends_on?: string | null; retired?: number; schedule_s?: number; notes?: string }
 interface Vit { component_id: string; observed_at: string; state: string; consecutive_failures?: number; detail?: string; last_ok_at?: string }

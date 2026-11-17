@@ -1,9 +1,9 @@
-# Change Plan: one work stream (Turso task d24874433d5d8ba516bfcbc1a93ffeb6)
+# Change Plan: one work stream (notes DB task d24874433d5d8ba516bfcbc1a93ffeb6)
 
 Decision (Jeremie, 2026-10-21): code work has ONE pipeline.
 
 ```
-Turso tasks row ─▶ pending ─(dashboard /tasks release stamp, task_stamps kind=release, C-020, MFA)─▶ queued
+Notes DB tasks row ─▶ pending ─(dashboard /tasks release stamp, task_stamps kind=release, C-020, MFA)─▶ queued
   ─▶ dispatch-run claims (queued→running, owner = host) ─▶ builder (git isolation, branch + PR)
   ─▶ PR shepherd cascade ─▶ merged ─▶ dispatch-reconcile marks done
 ```
@@ -14,7 +14,7 @@ Line numbers are for `main` at 07b190c (claude-companion) and claude-config `mai
 
 ## Finding that changes the approve path
 
-`tasks.origin` defaults to `'unknown'` (NOT NULL). The Turso trigger `tasks_queue_guard_ins` aborts any INSERT with `dispatch_status='queued'` when origin ∉ {jeremie, system, client} and the row has no `release` stamp. That has two consequences:
+`tasks.origin` defaults to `'unknown'` (NOT NULL). The notes DB trigger `tasks_queue_guard_ins` aborts any INSERT with `dispatch_status='queued'` when origin ∉ {jeremie, system, client} and the row has no `release` stamp. That has two consequences:
 
 1. Companion's `fileTask` (`server/lib/dispatch-tasks.ts:400-405`) inserts `queued` and sets no origin. Every headless approve and every `POST /dispatch` is refused by the trigger, which the route reports as a 503 `turso_unreachable`. In the last 30 days no Companion-filed row (`Filed from Companion` in the description) is in `queued` or `pending`: 9 are cancelled and 10 completed, all `origin='unknown'`.
 2. `claimLive` (`server/lib/dispatch-live.ts:19-28`) inserts `running` directly. The trigger only checks `queued`, so a live run is the one Companion path that still starts work, and it skips the release stamp entirely.
@@ -66,7 +66,7 @@ K = kept as a pipeline stage. F = changed so it only files a tasks row (`pending
 
 ## New: one pipeline list
 
-`GET /api/orchestrator/pipeline` returns `{items:[{id, title, agent, noteId, state, prUrl, shepherd, updatedAt, approveUrl?}], generatedAt}`. It is read from Turso: tasks with `assignee LIKE 'agent:%'`, open or closed in the last 7 days, with the shepherd verdict taken from the latest `agent_activity` `pr:*` row for `dispatch_pr_url`.
+`GET /api/orchestrator/pipeline` returns `{items:[{id, title, agent, noteId, state, prUrl, shepherd, updatedAt, approveUrl?}], generatedAt}`. It is read from the notes DB: tasks with `assignee LIKE 'agent:%'`, open or closed in the last 7 days, with the shepherd verdict taken from the latest `agent_activity` `pr:*` row for `dispatch_pr_url`.
 
 `state` comes from one pure mapper:
 
@@ -92,7 +92,7 @@ Tests run fixtures for each state through the mapper. The existing `orchestrator
 | D: unified pipeline list | claude-companion | new endpoint | ~5 |
 | E: relay claim guard + handoff doc | claude-config | 20-23 | ~4 |
 | F: iOS single list | claude-companion-ios (Mac) | 24 | Mac session |
-| G: host tag. Turso `ALTER TABLE tasks ADD COLUMN requires_host TEXT NOT NULL DEFAULT 'any' CHECK (requires_host IN ('any','mac','zettlab'))`, mirrored in three files (live DB, `tls-dashboard-v2/server/lib/data/schema.sql`, `tls-dashboard-v2/tests/_helpers/test-db.ts`; memory `feedback_schema_sync_three_files`). dispatch-run's claims (`tools/dispatch-run.ts:225`, `tools/client-origin.ts:140`) add `AND requires_host IN ('any', ?)`, where `?` is the runner's host label (mac on darwin, else zettlab). The selector skips rows meant for the other host. Tests in `tools/dispatch-select.test.ts` / `dispatch-runner.test.ts`. | tls-dashboard-v2 + claude-config | Q1 | ~6 |
+| G: host tag. Notes DB `ALTER TABLE tasks ADD COLUMN requires_host TEXT NOT NULL DEFAULT 'any' CHECK (requires_host IN ('any','mac','zettlab'))`, mirrored in three files (live DB, `tls-dashboard-v2/server/lib/data/schema.sql`, `tls-dashboard-v2/tests/_helpers/test-db.ts`; memory `feedback_schema_sync_three_files`). dispatch-run's claims (`tools/dispatch-run.ts:225`, `tools/client-origin.ts:140`) add `AND requires_host IN ('any', ?)`, where `?` is the runner's host label (mac on darwin, else zettlab). The selector skips rows meant for the other host. Tests in `tools/dispatch-select.test.ts` / `dispatch-runner.test.ts`. | tls-dashboard-v2 + claude-config | Q1 | ~6 |
 
 ## Scope gate
 

@@ -8,7 +8,7 @@ import { REPO_NAME_RE, TASK_ID_RE } from "./worker-invocation"
 // A bin/worker PR → tasks.dispatch_pr_url, the link the PR shepherd and merge gate read the PR's origin through.
 // Proof of filing: the handoff claim (lib/handoff-claim.ts) the server minted for this task id and repo, passed through
 // `bin/worker dispatch --claim`. Every half verifies it; no claim, or one for another id or repo, never links.
-//  - bindWorkerTask, when the supervisor dispatches a task id with a claim: the claim verifies and the Turso row of that
+//  - bindWorkerTask, when the supervisor dispatches a task id with a claim: the claim verifies and the notes DB row of that
 //    id is OWNABLE (a brain handoff, open, never claimed by dispatch-run or the relay, unlinked). The supervisor
 //    persists the answer and the claim (a failed read is retried next turn) and refuses the id under another repo.
 //  - linkWorkerPr, on "PR ready" of a bound task, and the startup replay: the claim verifies again (the worker state file

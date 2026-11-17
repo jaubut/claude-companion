@@ -17,7 +17,7 @@ import { redactSecrets } from "./secret-redact"
 //   --tools Read,Grep,Glob,Bash       the only tools that exist in the session
 //   --add-dir /                       without it even `ls` outside cwd is refused
 //   --allowedTools <diagnostic prefixes>  --disallowedTools Edit Write NotebookEdit + secrets + mutating flags
-// The prompt goes on stdin; the env is allowlisted (no Turso / Companion tokens).
+// The prompt goes on stdin; the env is allowlisted (no notes DB / Companion tokens).
 
 export const INVESTIGATE_TIMEOUT_MS = 10 * 60_000
 export const DEFAULT_MODEL = "sonnet"
@@ -218,7 +218,7 @@ export function investigatorArgs(bin: string, model: string): string[] {
   return readonlyArgs(bin, { model, system: SYSTEM, tools: "Read,Grep,Glob,Bash", addDirs: ["/"], allowed: ALLOWED_TOOLS, disallowed: DISALLOWED_TOOLS })
 }
 
-/** Allowlisted child env: no Turso / Companion / broker tokens ever reach the investigator. */
+/** Allowlisted child env: no notes DB / Companion / broker tokens ever reach the investigator. */
 export function investigatorEnv(env: Record<string, string | undefined> = process.env, home: string = realFs.home): Record<string, string> {
   return readonlyEnv(env, home)
 }

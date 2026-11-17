@@ -7,7 +7,7 @@ import { createTripService } from "./trip-service"
 import { createTripStore } from "./trip-store"
 import type { QueryFn, Row } from "./turso"
 
-// The background auto-file sweep against a real sqlite `trip_entries` (Turso's
+// The background auto-file sweep against a real sqlite `trip_entries` (notes DB's
 // shape) and a real companion.db store; the dashboard PATCH is a fake that
 // applies the machine classify like tls-dashboard-v2 does (conditional on unclassified).
 

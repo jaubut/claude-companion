@@ -77,7 +77,7 @@ const DETAIL_MAX = 500
 export const rowId = {
   turn: (turnId: string): string => `turn:${turnId}`,
   repo: (turnId: string, repo: string): string => `repo:${turnId}:${repo}`,
-  /** `taskId` = the Companion proposal id (8 chars); ref.taskId carries the Turso id once filed. */
+  /** `taskId` = the Companion proposal id (8 chars); ref.taskId carries the notes DB id once filed. */
   agent: (taskId: string): string => `agent:${taskId}`,
   pr: (taskId: string): string => `pr:${taskId}`,
   approval: (id: string): string => `appr:${id}`,
@@ -169,7 +169,7 @@ function dispatchStatus(t: DispatchTask): { status: TraceStatus; detail: string 
 }
 
 /**
- * A brain-proposed dispatch task moved: its agent row follows the Turso status
+ * A brain-proposed dispatch task moved: its agent row follows the notes DB status
  * and a PR gets its own row under it. Only rows the brain created (an agent row
  * exists for the proposal) are traced; every other task stays off the trace.
  */

@@ -7,7 +7,7 @@ import { PRICING_AS_OF, unpricedRowSql, usdRowSql } from "./model-prices"
 import type { QueryFn, Row, SqlArg } from "./turso"
 
 // Fleet token view (GET /api/body/tokens). The token-burn collector (claude-config
-// tools/body/, every 5 min per host) upserts daily rollups into Turso; this
+// tools/body/, every 5 min per host) upserts daily rollups into the notes DB; this
 // module only READS them:
 //   token_usage(host, day, session_id, source, model, input, output, cache_read,
 //               cache_creation, turns, PRIMARY KEY(host, day, session_id, source, model))

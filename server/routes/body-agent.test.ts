@@ -10,7 +10,7 @@ import { agentFor, buildAgentPrompt, parseAgentBody } from "../lib/body-agent"
 import { createBodyHandler } from "./body"
 
 // "Get an agent on it" — POST /api/body/component/:id/agent. Same harness as
-// body-fix.test.ts: real Companion sqlite (isolated COMPANION_DB_PATH), "Turso"
+// body-fix.test.ts: real Companion sqlite (isolated COMPANION_DB_PATH), "notes DB"
 // = in-memory bun:sqlite behind the QueryFn / ExecFn seams. The tap files ONE
 // pending row tagged requires_host=<owner> (docs/one-stream-plan.md): no worker,
 // no peer forward.
@@ -33,7 +33,7 @@ let channels: typeof import("../lib/orchestrator-channels")
 let agent: typeof import("../wiring/body-agent")
 let prevAgentDeps: import("../wiring/body-agent").BodyAgentDeps
 
-// ── fake Turso ───────────────────────────────────────────────────────────────
+// ── fake notes DB ───────────────────────────────────────────────────────────────
 
 const turso = new Database(":memory:")
 turso.exec(`
@@ -77,7 +77,7 @@ function makeWiring() {
   })
 }
 
-// Components "in Turso": id → detail.
+// Components "in the notes DB": id → detail.
 const components = new Map<string, BodyComponentDetail>()
 const investigations = new Map<string, InvestigationRecord>()
 
@@ -293,7 +293,7 @@ describe("POST /api/body/component/:id/agent", () => {
     expect(again).toMatchObject({ status: 409, body: { error: "already_running", taskId: r.body.taskId, host: "mac" } })
   })
 
-  test("404 unknown component, 503 when Turso is down", async () => {
+  test("404 unknown component, 503 when notes DB is down", async () => {
     expect(await json(await start("zettlab:docker:nope"))).toMatchObject({ status: 404, body: { error: "no such component" } })
     expect(await json(await start("zettlab:docker:turso-down"))).toMatchObject({ status: 503, body: { error: "turso_unreachable" } })
   })

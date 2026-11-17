@@ -12,7 +12,7 @@ export const BRAIN_THREAD = "brain"
 export const BRAIN_AGENT = "brain"
 /**
  * Brain proposals being filed right now (bin/propose → approveProposal). They are `proposed` for the
- * length of the Turso write; the resolver must not take them (2026-10-30: it carded two of them
+ * length of the notes DB write; the resolver must not take them (2026-10-30: it carded two of them
  * "approving is Jeremie's call" after they were already queued). A failed filing leaves the set.
  */
 export const brainFiling = new Set<string>()
@@ -164,7 +164,7 @@ export function rolloverPrompt(memoryRef: string | null): string {
 
 /** The memory note stays small (it is read at every boot); detail goes to the daily log. */
 export const MEMORY_MAX_CHARS = 3_000
-/** Tag that names the brain's memory note in Turso (the server finds it by this tag). */
+/** Tag that names the brain's memory note in the notes DB (the server finds it by this tag). */
 export const MEMORY_TAG = "brain-memory"
 
 const MEMORY_DUTY = (memoryRef: string | null): string =>

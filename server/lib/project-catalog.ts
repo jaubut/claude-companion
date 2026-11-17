@@ -5,7 +5,7 @@ import { type RepoEntry, isDir as realIsDir, parseRepoMap } from "./live-repo"
 // status — an archived or done project is still a valid "is X on latest nuxt?"
 // target) plus the REPO_MAP repos, each with the aliases a human would type
 // ("chantalmasse.com" → the chantal-masse-website note). Pure; the wiring passes
-// the notes (Turso) and the dispatch-run.ts source text.
+// the notes (notes DB) and the dispatch-run.ts source text.
 
 export interface ProjectNote { noteId: string; ref: string | null; title: string; status: string | null }
 

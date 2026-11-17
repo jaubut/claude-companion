@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { deliverHeadlessAgyTurn } from "./agy-feed"
 
-test("a headless agy turn spawns with no Turso, db or Companion/broker secret", () => {
+test("a headless agy turn spawns with no notes DB, db or Companion/broker secret", () => {
   const seeded = { TURSO_AUTH_TOKEN: "t", TURSO_DATABASE_URL: "libsql://x", LIBSQL_AUTH_TOKEN: "l", DATABASE_URL: "d", COMPANION_AUTH_TOKEN: "c", BROKER_TOKEN: "b" }
   const saved = Object.fromEntries(Object.keys(seeded).map((k) => [k, process.env[k]]))
   Object.assign(process.env, seeded)

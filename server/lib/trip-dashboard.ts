@@ -5,7 +5,7 @@ import type { QueryFn, Row } from "./turso"
 
 // Travel log ↔ tls-dashboard-v2. Writes and phone-facing reads go through the
 // dashboard API with the server-held key (lib/dashboard-client.ts). The
-// classifier and the autofile sweep read `trip_entries` read-only from Turso
+// classifier and the autofile sweep read `trip_entries` read-only from the notes DB
 // (history, home learning, the unclassified backlog, human flips).
 // Dashboard endpoints (tls-dashboard-v2 #175, CONTRACT §2/§3): POST /api/trips/ingest
 // (201 {ok,id,trip,superseded[]} · 409 {error:"duplicate",trip} · 400 {error:"invalid",details[]}),
@@ -113,7 +113,7 @@ export async function fetchClients(): Promise<ClientInfo[]> {
   return arr.map(toClient).filter((c): c is ClientInfo => !!c).sort((a, b) => a.name.localeCompare(b.name, "fr"))
 }
 
-// ── Turso, read-only ─────────────────────────────────────────────────────────
+// ── notes DB, read-only ─────────────────────────────────────────────────────────
 
 export interface TripRow {
   id: string; startedAt: string; endedAt: string | null

@@ -16,7 +16,7 @@ export { retiredPark } from "./brain-pr-park"
 
 // bin/pr-merge (POST /hooks/brain/pr-merge): the brain merges a ROUTINE agent
 // PR. The brain's word counts for nothing: every check is made here, from
-// GitHub and Turso, and any doubt refuses. In order:
+// GitHub and the notes DB, and any doubt refuses. In order:
 //   open
 //   merge gate (403 <stop>, 409 gate_unavailable / head_moved / base_moved, lib/merge-gate.ts):
 //     before draft and the branch check, so no head is exempt, sync/* included

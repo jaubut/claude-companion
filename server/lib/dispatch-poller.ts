@@ -21,7 +21,7 @@ import type { Channel } from "./orchestrator-channels"
 import type { Turn, TurnCard } from "./orchestrator-chat"
 import { type ExecFn, type QueryFn, type Row, TursoUnreachable } from "./turso"
 
-// Turso dispatch poller core (orchestrator-one-queue P1). Status flows from the
+// Notes DB dispatch poller core (orchestrator-one-queue P1). Status flows from the
 // record: every 20 s (or on a /hooks/dispatch-event nudge) read the agent
 // tasks, diff each against the persisted announce cursor, and on a change emit
 // `orchestrator_task`; a move into blocked / pr / completed / done appends one
@@ -59,7 +59,7 @@ export interface DispatchWiringDeps {
   linkedNotes: () => Map<string, string>
   getChannel: (id: string) => Channel | null
   localQueue: () => { cap: number; live: number; queued: number }
-  /** Live mode (P4): the local tmux worker behind a Turso id, if any. */
+  /** Live mode (P4): the local tmux worker behind a notes DB id, if any. */
   liveIdentity?: (dispatchTaskId: string) => LiveIdentity | null
   mirror: Mirror
   /** The catch-all channel id (orchestrator-db GENERAL_CHANNEL). */

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { type FileInput, type WriteCtx, fileTask } from "./dispatch-tasks"
 import type { SqlArg } from "./turso"
 
-// The Turso queue guard refuses a `queued` insert unless origin is trusted, so a
+// The notes DB queue guard refuses a `queued` insert unless origin is trusted, so a
 // tap/typed filing must write origin "jeremie"; anything else leaves it unset.
 function ctx(origin: boolean) {
   const inserts: { sql: string; args: SqlArg[] }[] = []

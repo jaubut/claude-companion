@@ -3,7 +3,7 @@
 #
 #   bin/pr-merge --repo <owner/name> --pr <n> --reason "<why it is routine>"
 #
-# The server re-checks everything on GitHub and Turso and refuses on any doubt:
+# The server re-checks everything on GitHub and the notes DB and refuses on any doubt:
 # the merge gate (403 <stop>: human-merge-path, tainted-sensitive, prod-schema,
 # hold-label; 409 gate_unavailable, head_moved, base_moved, client_gone) · head dispatch/* (403
 # not_agent_branch) · no broken shepherd park or hold (403 parked) · CI green +

@@ -492,7 +492,7 @@ export function createTasksAgent(deps: TasksAgentDeps) {
     })
   }
 
-  /** accept | dismiss one proposal, re-derived fresh from Turso (a stale id → 404). */
+  /** accept | dismiss one proposal, re-derived fresh from the notes DB (a stale id → 404). */
   async function decide(id: string, action: "accept" | "dismiss", body: AcceptBody): Promise<DecideResult> {
     const s = await snapshot(true)
     const p = s.proposals.find((x) => x.id === id)

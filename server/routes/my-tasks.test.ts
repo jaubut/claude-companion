@@ -3,7 +3,7 @@ import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 import { TursoUnreachable } from "../lib/turso"
 import { createMyTasks } from "./my-tasks"
 
-// In-memory stand-in for Turso: answers the exact statements my-tasks issues.
+// In-memory stand-in for the notes DB: answers the exact statements my-tasks issues.
 interface T { id: string; note_id: string; parent_id: string; text: string; description: string; due_date: string; position: number; done: number; assignee: string | null }
 
 function fakeDb(tasks: T[]) {
@@ -101,7 +101,7 @@ describe("GET /api/tasks/mine", () => {
     expect(b.sections.find((s) => s.key === "today")!.count).toBe(1)
   })
 
-  test("Turso down → 503 turso_unreachable", async () => {
+  test("Notes DB down → 503 turso_unreachable", async () => {
     const { call, db } = setup([task(ID)])
     db.setDown(true)
     const res = (await call("/api/tasks/mine"))!

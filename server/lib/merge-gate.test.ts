@@ -167,7 +167,7 @@ describe("mergeGate: fails closed", () => {
     const files = Array.from({ length: 3000 }, (_, i) => `src/f${i}.ts\t`).join("\n")
     expect(await run(world({ files }), writeStubTools())).toEqual(unavailable("file list too long to trust"))
   })
-  test("Turso down", async () => {
+  test("Notes DB down", async () => {
     expect(await run(world({ turso: "down" }), writeStubTools())).toEqual(unavailable("gate error"))
   })
 })

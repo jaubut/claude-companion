@@ -6,7 +6,7 @@ import type { QueryFn, Row } from "../lib/turso"
 import { TursoUnreachable } from "../lib/turso"
 
 // Route level for the orchestrator-one-queue read path: real sqlite store
-// (isolated COMPANION_DB_PATH), fake Turso through the QueryFn seam, the
+// (isolated COMPANION_DB_PATH), fake notes DB through the QueryFn seam, the
 // handler built around a test-owned dispatch wiring. The bearer 401 lives in
 // the server's /api/* gate.
 
@@ -110,7 +110,7 @@ describe("GET /api/orchestrator/thread", () => {
     expect(json.channels.find((c: { id: string }) => c.id === "general").counts).toEqual({ queued: 0, running: 0, blocked: 1, pr: 0, failed: 0, mergedToday: 0 })
   })
 
-  test("Turso down before the first poll: the thread still answers with local tasks only", async () => {
+  test("Notes DB down before the first poll: the thread still answers with local tasks only", async () => {
     failing = true
     const { w, handler } = makeWiring()
     await w.poll()
@@ -143,7 +143,7 @@ describe("POST /api/orchestrator/channels/<id>/link", () => {
     expect(w.tasksFor("general").map((t) => t.taskId)).toContain(ID)
   })
 
-  test("validation: unknown note 404, unknown channel 404, system channel 400, bad body 400, Turso down 503", async () => {
+  test("validation: unknown note 404, unknown channel 404, system channel 400, bad body 400, notes DB down 503", async () => {
     const { handler } = makeWiring()
     const c = channels.createChannel("Dash C")
     expect((await call(handler, "POST", `/api/orchestrator/channels/${c.id}/link`, { noteId: "projects/nope" })).status).toBe(404)
@@ -159,7 +159,7 @@ describe("POST /api/orchestrator/channels/<id>/link", () => {
 })
 
 describe("GET /api/orchestrator/task/<id>", () => {
-  test("Turso task: DTO, description, result excerpt, activity", async () => {
+  test("Notes DB task: DTO, description, result excerpt, activity", async () => {
     const { handler } = makeWiring()
     const { status, json } = await call(handler, "GET", `/api/orchestrator/task/${ID}`)
     expect(status).toBe(200)
@@ -171,7 +171,7 @@ describe("GET /api/orchestrator/task/<id>", () => {
     })
   })
 
-  test("local task from sqlite; unknown 404; Turso down 503", async () => {
+  test("local task from sqlite; unknown 404; Notes DB down 503", async () => {
     const { handler } = makeWiring()
     const local = chat.createProposal("p", "/x", "why", "general")
     expect((await call(handler, "GET", `/api/orchestrator/task/${local.taskId}`)).json).toMatchObject({
@@ -185,7 +185,7 @@ describe("GET /api/orchestrator/task/<id>", () => {
 })
 
 describe("GET /api/orchestrator/projects", () => {
-  test("active projects with open agent-task counts; cached; 503 when Turso is down on a cold cache", async () => {
+  test("active projects with open agent-task counts; cached; 503 when notes DB is down on a cold cache", async () => {
     const { handler } = makeWiring()
     const { json } = await call(handler, "GET", "/api/orchestrator/projects")
     expect(json).toEqual({ projects: [{ noteId: "projects/dash", ref: "PRJ-WCLS", title: "TLS Dashboard", openAgentTasks: 2 }] })

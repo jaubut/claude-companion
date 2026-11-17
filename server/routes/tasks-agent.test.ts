@@ -75,7 +75,7 @@ describe("GET /api/tasks/agent", () => {
     expect(r.body.load.days[0]).toMatchObject({ tasks: 1, busyHours: null })
   })
 
-  test("Turso down → 503; wrong method → 405; other paths fall through", async () => {
+  test("Notes DB down → 503; wrong method → 405; other paths fall through", async () => {
     const s = setup()
     s.t.setDown(true)
     expect((await s.get()).status).toBe(503)

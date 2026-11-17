@@ -555,7 +555,7 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     noteSessionBoundary({ sessionId: body.session_id, tty, pane: tmuxPane })
     return Response.json({ ok: true })
   }
-  // dispatch.sh nudge after each Turso transition: carries no state ({taskId?}
+  // dispatch.sh nudge after each notes DB transition: carries no state ({taskId?}
   // is ignored), only triggers a poll (≤ 1 per 2 s). Loopback, or the bearer.
   if (url.pathname === "/hooks/dispatch-event" && req.method === "POST") {
     const peer = peerOf(req)

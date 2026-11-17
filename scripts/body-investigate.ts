@@ -1,6 +1,6 @@
 // One-shot Body investigation, outside the server: reads the component from
-// Turso, runs the read-only investigator once and prints what it produced.
-// No sqlite record, no #Body turn, no proposal, no Turso write, no push.
+// Notes DB, runs the read-only investigator once and prints what it produced.
+// No sqlite record, no #Body turn, no proposal, no notes DB write, no push.
 //   bun scripts/body-investigate.ts <component_id> [--prompt-only] [--model <m>]
 import { buildComponentDetail } from "../server/lib/body"
 import { buildInvestigationPrompt, investigateModel, investigatorArgs, knownPaths, runInvestigatorCli } from "../server/lib/body-investigator"

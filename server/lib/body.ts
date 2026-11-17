@@ -1,7 +1,7 @@
 import type { QueryFn, Row } from "./turso"
 
 // The "Body" read model (living-system nervous system). Collectors on each host
-// write three Turso tables; this module only READS them:
+// write three notes DB tables; this module only READS them:
 //   body_components(id, host, kind, name, schedule_s, criticality, depends_on JSON,
 //                   notes, first_seen, last_seen, retired)
 //   body_vitals(component_id, observed_at, state, last_exit, last_run_at,
@@ -359,7 +359,7 @@ export interface BodyVitals {
   worst: BodyState
   /** dead + crash_loop + failing. */
   problems: number
-  /** Agent tasks blocked across all projects (Turso dispatch queue). */
+  /** Agent tasks blocked across all projects (notes DB dispatch queue). */
   blockedTasks: number
   generatedAt: string
 }

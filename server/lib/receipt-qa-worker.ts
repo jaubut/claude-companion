@@ -13,7 +13,7 @@ import { vaultUpstream } from "./vault-upstream"
 
 // Receipt QA queue worker (store host only). One row at a time, never on the
 // HTTP path: the capture route only inserts + kicks. Transient failures
-// (dashboard/Turso/claude unreachable) back off 30 s → 1 h, MAX_ATTEMPTS, then
+// (dashboard/notes DB/claude unreachable) back off 30 s → 1 h, MAX_ATTEMPTS, then
 // the row moves on with an issue naming what was unavailable.
 // Kill switch COMPANION_RECEIPT_QA=off: rows stay `queued`, saves still work.
 // Jev fills a BLANK category_code itself (conf ≥ 0.9, receipt clean, no flag).

@@ -10,7 +10,7 @@ import { type GhFn, GhUnreachable, mergePr } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
 // The acceptance matrix: bin/pr-merge and the Companion tap call one gate, loaded by the real loader. gh is faked at
-// the process boundary, Turso is a real sqlite with the prod columns. It runs on stub tools (CI has no
+// the process boundary, notes DB is a real sqlite with the prod columns. It runs on stub tools (CI has no
 // ~/.claude/tools) and again on the real files on any host that has them, so a stub that drifts fails there.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-gate-callers-")), "test.db")
@@ -154,7 +154,7 @@ function matrix(toolsFor: () => string): void {
         expect(await run(w, none)).toMatchObject({ status: 409, error: "gate_unavailable" })
         expect(merges(w)).toHaveLength(0)
       })
-      test("fail-closed: Turso down inside the gate", async () => {
+      test("fail-closed: Notes DB down inside the gate", async () => {
         const w = world({}, "jeremie", { tursoDown: true })
         expect(await run(w, gate)).toMatchObject({ status: 409, error: "gate_unavailable" })
         expect(merges(w)).toHaveLength(0)

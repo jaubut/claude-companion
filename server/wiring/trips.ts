@@ -13,7 +13,7 @@ import { vaultUpstream } from "../lib/vault-upstream"
 
 // Travel log, live instance (store host only; the Mac forwards /api/trips* to
 // Zettlab). companion.db for the queue / cache / log, Nominatim for places,
-// Jev for the decision, Turso read-only for history + backlog + human flips, the
+// Jev for the decision, notes DB read-only for history + backlog + human flips, the
 // dashboard API for every write. The autofile sweep files the unclassified
 // backlog. Built on first use so importing it has no side effects.
 
@@ -83,7 +83,7 @@ export function startTrips(): () => void {
     void service.retryDue().catch((e) => companionLog(`[trips] retry failed: ${(e as Error)?.message ?? e}`))
     if (Date.now() - lastPrune > 86_400_000) { lastPrune = Date.now(); store.prune(Date.now()) }
   }, RETRY_TICK_MS)
-  // sweep() never rejects: a Turso read failure pauses it with one log line.
+  // sweep() never rejects: a notes DB read failure pauses it with one log line.
   const sweepTick = setInterval(() => { void autofile.sweep() }, AUTOFILE_TICK_MS)
   for (const t of [tick, sweepTick]) (t as unknown as { unref?: () => void }).unref?.()
   void service.retryDue().catch(() => {})

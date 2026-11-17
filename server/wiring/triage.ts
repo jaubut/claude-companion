@@ -32,7 +32,7 @@ import { type OutboundSender, type OutboundStore, createOutboundStore, currentOu
 import { gmailSender, outboundStore } from "./outbound"
 
 // Brain triage, live instance (docs/orchestrator-triage-api.md): collectors
-// over the poller snapshot, local proposals, Turso PR rows and the Body
+// over the poller snapshot, local proposals, notes DB PR rows and the Body
 // investigation store; one lean sonnet call per new/changed item; Jev for
 // severity; every option executed through the existing guarded paths.
 
@@ -357,7 +357,7 @@ export function createLiveTriage(opts: LiveTriageOpts = {}): TriageEngine {
     liveResolver = createLiveResolver({ dispatch, gh, execute, onChange })
     resolver = liveResolver.engine
   }
-  /** The agent_activity row for a TTL-dismissed card (lib/triage-engine.ts expireIdle); Turso down → throws, card kept. */
+  /** The agent_activity row for a TTL-dismissed card (lib/triage-engine.ts expireIdle); Notes DB down → throws, card kept. */
   async function expire(src: SourceItem, idleMs: number): Promise<void> {
     const kind = src.ref.source === "proposal" ? "proposal" : "task"
     const targetId = src.ref.source === "task" || src.ref.source === "proposal" ? src.ref.taskId : src.refId

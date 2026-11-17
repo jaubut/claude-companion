@@ -1,6 +1,6 @@
 # Body API (living-system nervous system)
 
-Server: `server/routes/body.ts` (HTTP), `server/lib/body.ts` (Turso read model,
+Server: `server/routes/body.ts` (HTTP), `server/lib/body.ts` (notes DB read model,
 30 s cache, brain digest, health-intent predicate), `server/lib/body-alert.ts`
 (validation, push ownership, payload, push gate), `server/wiring/body.ts` (live
 snapshot + alert sink). Auto-investigation: `server/lib/body-investigate.ts`
@@ -9,7 +9,7 @@ runner, prompt, parser), `server/lib/body-investigate-engine.ts` (engine, peer,
 report effects), `server/wiring/body-investigate.ts` (live instance + sweeps).
 Auth: the standard `/api/*` bearer gate.
 
-The collectors (separate repo/builder) write three Turso tables; this server
+The collectors (separate repo/builder) write three notes DB tables; this server
 only **reads** them:
 
 ```
@@ -22,7 +22,7 @@ body_events(id, component_id, at, kind, from_state, to_state, detail)
 `warning` (e.g. a token-burn spike on `zettlab:tokens:burn`) is shown amber and
 never counts as a failure: not in `problems`, not auto-investigated; its alerts
 arrive at `warning` severity. A component with no vitals row, or a state outside that list, reads `unknown`.
-Timestamps and other cells are passed through as Turso returns them (string,
+Timestamps and other cells are passed through as notes DB returns them (string,
 number or `null`) — the server does not reformat them.
 
 ## `GET /api/body`
@@ -104,7 +104,7 @@ went to Zettlab, which holds the card). `rootCause`/`confidence`/`severity` are
 ## `GET /api/body/tokens`
 
 Fleet token usage for the Body "Token burn" card. Server: `server/lib/body-tokens.ts`
-(read model + cache). Reads the token-burn collector's Turso table (claude-config
+(read model + cache). Reads the token-burn collector's notes DB table (claude-config
 `tools/body/`, every 5 min per host); this server never writes them:
 
 ```
@@ -180,7 +180,7 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   `null` when companion.db is unreadable (hide the line). Not cached: always
   current, even on a cached token view.
 - No `token_usage` table yet (collector not deployed) → the same shape with zero
-  totals and empty lists, not an error. Turso down → 503 `turso_unreachable`.
+  totals and empty lists, not an error. Notes DB down → 503 `turso_unreachable`.
 
 ## `POST /api/body/alert`
 
@@ -260,7 +260,7 @@ POST /api/body/investigate
 ```
 
 `status` ∈ `started | forwarded | pending_host | duplicate | skipped | not_owner | disabled`
-(+ `id`, `reason`). `state` is optional (read from Turso when absent). A request
+(+ `id`, `reason`). `state` is optional (read from the notes DB when absent). A request
 with header `x-companion-body-hop: 1` is never forwarded again (`not_owner`).
 
 ```json
@@ -289,7 +289,7 @@ and reports locally). Unset on the Mac → reports go to the Mac's own #Body.
 
 **The investigator.** `claude -p` (model `COMPANION_INVESTIGATE_MODEL`, default
 `sonnet`; 10 min timeout) in the empty dir `~/.claude-companion/investigate`, prompt on stdin, allowlisted env
-(no Turso / Companion / broker tokens), with `--setting-sources project,local`
+(no notes DB / Companion / broker tokens), with `--setting-sources project,local`
 (user settings — auto mode, broad allows, hooks — never load),
 `--settings {"disableAllHooks":true}`, `--strict-mcp-config`,
 `--permission-mode dontAsk`, `--tools Read,Grep,Glob,Bash`, `--add-dir /`,
@@ -317,13 +317,13 @@ text is passed through the secret redactor before it is stored or posted.
    `No fix proposed.` A failure posts `🔍 <component> — investigation failed: <error>`.
 2. A non-null fix → the existing proposal card in #Body (`orchestrator_task`
    frame). For `zettlab:*` / `cloud:*` components, approve files it like any
-   proposal (one `pending` Turso row, released on the dashboard). For `mac:*`
+   proposal (one `pending` notes DB row, released on the dashboard). For `mac:*`
    components the row is tagged `requires_host='mac'`. See "Mac fixes" below.
    Agent `builder` when a git repo is known for the component, else `claude`;
    cwd = that repo / unit working dir, else `~/.claude`; project note =
    `COMPANION_BODY_NOTE_ID` (default `projects/2026-06-22-companion-orchestrator`).
    The task text names the host the fix must run on.
-3. Turso `body_events` row: `kind='investigation'`, `from_state` null,
+3. Notes DB `body_events` row: `kind='investigation'`, `from_state` null,
    `to_state` = the state, `detail` = `investigation <id>: <rootCause> (N%, severity) · fix proposed [<card>]`.
 4. Push (same sender gate as alerts) only for severity `high`/`critical`, or a
    second consecutive failed investigation.
@@ -332,7 +332,7 @@ text is passed through the secret redactor before it is stored or posted.
 
 A `mac:*` fix card is recorded in companion.db `body_fix_cards` (card id → host, component, cwd,
 note, agent). Approving it (`POST /api/orchestrator/proposal/<id>/approve`, or the triage approve)
-files ONE `pending` Turso row like any proposal, tagged `requires_host='mac'` when the column exists.
+files ONE `pending` notes DB row like any proposal, tagged `requires_host='mac'` when the column exists.
 Only the Mac's dispatch-run claims it (plan slice G). There is no peer forward and no live run
 (`POST /api/body/fix` is gone). Response:
 `{ok, taskId, dispatchTaskId, status:"pending_approval", approveUrl, replay}`.
@@ -343,7 +343,7 @@ Server: `server/lib/body-agent.ts` (agent table, prompt, body, run store),
 `server/wiring/body-agent.ts`. For a component whose investigation found no code
 fix (the condition is real — e.g. `cloud:turso-table:inbox_entries` failing on
 `inbox backlog 47 > 40`), the phone files an agent task directly: no card. The
-tap files ONE `pending` Turso row (released on the dashboard), tagged
+tap files ONE `pending` notes DB row (released on the dashboard), tagged
 `requires_host=<owning host>`.
 
 ```json
@@ -385,7 +385,7 @@ or silence the probe — and report what changed.
 
 | status | error | when |
 |---|---|---|
-| 409 | `already_running` (+`taskId`, `dispatchTaskId`, `host`, `agent`) | this component's last agent run (companion.db `body_agent_runs`) is still `queued`/`running`/`blocked` in Turso, or a start for it is in flight (`taskId: null`) |
+| 409 | `already_running` (+`taskId`, `dispatchTaskId`, `host`, `agent`) | this component's last agent run (companion.db `body_agent_runs`) is still `queued`/`running`/`blocked` in the notes DB, or a start for it is in flight (`taskId: null`) |
 | 409 | `component_ok` | state `ok` and no `instruction` |
 | 404 | `no such component` | |
 | 422 | `unknown_host` | the id carries no `mac`/`zettlab`/`cloud` prefix and the component has no known host |
@@ -393,7 +393,7 @@ or silence the probe — and report what changed.
 | 503 | `turso_unreachable` | |
 | — | the live path's errors (`429 live_cap`, `422 no_cwd`, `400 unknown_agent`, …) | the local row is then `cancelled` (no stray card) |
 
-Every start writes Turso `agent_activity`: `agent_slug` = the agent, `action`
+Every start writes the notes DB `agent_activity`: `agent_slug` = the agent, `action`
 `body:agent`, `target_kind` `body_component`, `target_id` = the component id,
 `meta` `{source, host, owner, taskId, dispatchTaskId, instruction}`.
 
@@ -406,7 +406,7 @@ status", "status of the servers", "is everything ok/up/running", "health check",
 "est-ce que tout roule", "qu'est-ce qui est brisé", "état du système"; a bare
 "status" / "status of project X" does not match),
 a ≤ 800-char digest from the cached `GET /api/body` snapshot is added to the
-gate and compose prompts as "Live system context". Turso down → a one-line
+gate and compose prompts as "Live system context". Notes DB down → a one-line
 "unreachable" note instead. The same messages also get a ≤ 700-char
 investigations digest (open ones + the last 48 h, latest per component: root
 cause, confidence, proposed card), so "what's dead and why?" answers from them.

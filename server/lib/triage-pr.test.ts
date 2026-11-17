@@ -309,7 +309,7 @@ describe("merge intent", () => {
   })
 
   // A throw past the gate would reach iOS as a 503, which it queues and re-sends with the card hidden.
-  const unverified = { kind: "error" as const, status: 409, error: "merge_unverified", extra: { detail: "gh or Turso failed after the gate" } }
+  const unverified = { kind: "error" as const, status: 409, error: "merge_unverified", extra: { detail: "gh or notes DB failed after the gate" } }
   test("gh pr merge can't start: 409, it never escapes as a throw", async () => {
     const down: GhFn = async (args) => { if (args[1] === "merge") throw new GhUnreachable("ENOENT"); return gh(args) }
     readiness = green
@@ -327,7 +327,7 @@ describe("merge intent", () => {
     expect(await mergePr({ ...deps, gh: down }, target)).toEqual(unverified)
   })
 
-  test("Turso down while recording the approval: 409, no row, never a throw", async () => {
+  test("Notes DB down while recording the approval: 409, no row, never a throw", async () => {
     const down: ExecFn = async () => { throw new Error("turso down") }
     readiness = { ...green, mergeable: "CONFLICTING" }
     expect(await mergePr({ ...deps, exec: down }, target)).toEqual(unverified)

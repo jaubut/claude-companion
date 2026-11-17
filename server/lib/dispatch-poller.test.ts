@@ -7,7 +7,7 @@ import type { Turn } from "./orchestrator-chat"
 import type { QueryFn, Row } from "./turso"
 import { TursoUnreachable } from "./turso"
 
-// Poller policy against a fake Turso (QueryFn seam) and an in-memory cursor
+// Poller policy against a fake notes DB (QueryFn seam) and an in-memory cursor
 // with the production key/phase functions: diff per value, silent seed,
 // restart safety, channel routing, push gating. No sqlite here — the real
 // cursor + routes are covered in routes/orchestrator-dispatch.test.ts.
@@ -23,7 +23,7 @@ let turns: Turn[]
 const fakeQuery: QueryFn = async (sql) => {
   if (failing) throw new TursoUnreachable("network")
   if (sql.includes("pragma_table_info")) return columns.map((name) => ({ name }))
-  // Like Turso: an optional column comes back only when the SELECT names it.
+  // Like notes DB: an optional column comes back only when the SELECT names it.
   if (sql.includes("FROM tasks t")) {
     return rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !/^dispatch_(pr|result)/.test(k) || sql.includes(k))))
   }
@@ -244,7 +244,7 @@ describe("dispatch poller", () => {
     expect(on.pushes[3]!.collapseId).toBe("dispatch-overflow")
   })
 
-  test("Turso failure: poll false, one log line per streak, cache kept, columns re-probed", async () => {
+  test("Notes DB failure: poll false, one log line per streak, cache kept, columns re-probed", async () => {
     rows = [task(10)]
     const r = rig()
     await r.w.poll()

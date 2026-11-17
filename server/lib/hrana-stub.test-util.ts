@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite"
 
-// Test-only: a stub of Turso's Hrana-over-HTTP pipeline (POST /v2/pipeline) in front of ONE in-memory SQLite, installed
+// Test-only: a stub of the notes DB's Hrana-over-HTTP pipeline (POST /v2/pipeline) in front of ONE in-memory SQLite, installed
 // as globalThis.fetch. It implements the batch step conditions (`ok`, `not`, `and`, `or`) the way the server does
 // (a step whose condition is false is skipped: null result, null error; a failed step: null result + step_error),
 // so turso.ts's real request building and response parsing run end to end, with real SQL underneath.

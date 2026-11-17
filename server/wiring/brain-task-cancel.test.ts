@@ -291,13 +291,13 @@ describe("bin/task-cancel gate", () => {
     }
   })
 
-  test.skipIf(!!REAL)("Turso down: 503 turso_unreachable", async () => {
+  test.skipIf(!!REAL)("Notes DB down: 503 turso_unreachable", async () => {
     await brainTask(ID(1))
     hooks.failOn = () => true
     expect(await cancel(ID(1))).toEqual({ status: 503, body: { ok: false, error: "turso_unreachable" } })
   })
 
-  test("the cancel passes all three Turso guards, even for a tainted row with no stamp", async () => {
+  test("the cancel passes all three notes DB guards, even for a tainted row with no stamp", async () => {
     await brainTask(ID(1), { origin: "unknown" })
     expect((await cancel(ID(1))).status).toBe(200)
     expect((await row(ID(1))).origin).toBe("unknown")

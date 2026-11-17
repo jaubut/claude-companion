@@ -10,10 +10,10 @@ import { deviceTranscript, transcriptOf, VOICE_HINT } from "./voice-memo"
 // next to its Phase 1 text. A note has no attachment schema: an attachment is a link in the
 // note's text to a store this server owns —
 //   /api/media/<id>          → the media store's JPEG (≤1024px)               → image block
-//   /api/note/image/<id>     → a Turso note_images blob                       → image block
+//   /api/note/image/<id>     → a notes DB note_images blob                       → image block
 //   /api/files/<id>/<name>   → a SendUserFile copy, image extensions only,
 //                              downscaled through the media store              → image block
-//   /api/inbox/audio/<file>  → a voice memo; its Deepgram transcript (Turso
+//   /api/inbox/audio/<file>  → a voice memo; its Deepgram transcript (notes DB
 //                              inbox_entries.raw_text, written by the dashboard) → text block
 // Any other path or URL is never followed: no file read outside the stores.
 

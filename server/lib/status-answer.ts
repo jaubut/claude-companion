@@ -9,7 +9,7 @@ export interface StatusInput {
   /** The poller's cache; null when it has not polled yet. */
   tasks: DispatchTask[] | null
   local: { cap: number; live: number; queued: number }
-  /** null = Body unavailable (Turso read failed or timed out). */
+  /** null = Body unavailable (notes DB read failed or timed out). */
   body: BodyResponse | null
   /** "all projects" or one project's title. */
   scope: string
@@ -45,7 +45,7 @@ function section(label: string, list: DispatchTask[], line: (t: DispatchTask) =>
 }
 
 function bodyLines(body: BodyResponse | null): string[] {
-  if (!body) return ["Body: unavailable right now (Turso read failed)."]
+  if (!body) return ["Body: unavailable right now (notes DB read failed)."]
   const s = body.summary
   const bad = body.components.filter((c: BodyComponent) => PROBLEM.includes(c.state))
   if (!bad.length) return [`Body: ${s.total} components, nothing dead, crash-looping or failing.`]
@@ -58,7 +58,7 @@ function bodyLines(body: BodyResponse | null): string[] {
 export function buildStatusAnswer(input: StatusInput): string {
   const lines: string[] = []
   if (!input.tasks) {
-    lines.push(`Queue (${input.scope}): not read yet — the dispatch poller has not reached Turso since the restart.`)
+    lines.push(`Queue (${input.scope}): not read yet — the dispatch poller has not reached the notes DB since the restart.`)
   } else {
     const open = input.tasks.filter((t) => !t.done)
     const by = (s: string) => open.filter((t) => effectiveStatus(t) === s)

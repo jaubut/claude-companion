@@ -6,10 +6,10 @@ import { emitTask, fileProposal, orchEmit, writeCtx } from "./orchestrator"
 
 // Proposal approve / reject: the one path behind POST .../proposal/<id>/{approve|reject}
 // (routes/orchestrator.ts) and the triage `approve` / `reject` options
-// (wiring/triage.ts). Approve files ONE Turso row and nothing else
+// (wiring/triage.ts). Approve files ONE notes DB row and nothing else
 // (docs/one-stream-plan.md). The tap is Jeremie's approval (2026-10-25: "the
 // approval on the app need to be valid, no back and forth"), so it files
-// origin `jeremie` → `queued`, #Body and Opus rescopes included; only a Turso
+// origin `jeremie` → `queued`, #Body and Opus rescopes included; only a notes DB
 // without the origin column leaves it `pending` for the dashboard stamp.
 // dispatch-run runs it. A #Body fix card for a Mac component is tagged requires_host=mac so
 // only the Mac's dispatch-run claims it. Revise (Opus's rescope: the resolver
@@ -34,13 +34,13 @@ export async function approveProposal(task: Task, opts: ApproveOpts = {}, dispat
   })
 }
 
-/** proposed → rejected; a Turso row an interrupted approve left behind is withdrawn (best effort). */
+/** proposed → rejected; a notes DB row an interrupted approve left behind is withdrawn (best effort). */
 export function rejectProposal(task: Task, dispatch: DispatchWiring = dispatchWiring): Response {
   if (task.status !== "proposed") return Response.json({ ok: false, error: `not proposable (status ${task.status})` }, { status: 409 })
   setTaskStatus(task.taskId, "rejected")
   emitTask(task.taskId)
   orchEmit(appendTurn("orchestrator", `rejected [${task.taskId}] — not dispatched`, task.taskId, task.threadId))
-  // An approve that died after the Turso insert but before markFiled left a
+  // An approve that died after the notes DB insert but before markFiled left a
   // pending row behind: withdraw it (guarded pending → cancelled).
   if (task.dispatchTaskId) {
     void writeCtx(dispatch, task.threadId).then((ctx) => cancelDispatchTask(ctx, task.dispatchTaskId!)).catch(() => {})

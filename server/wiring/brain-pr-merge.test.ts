@@ -9,7 +9,7 @@ import type { GhFn, GhResult } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
 // bin/pr-merge gate (wiring/brain-pr-merge.ts): every refusal and the merge,
-// gh faked at the process boundary, Turso a real sqlite with the prod columns.
+// gh faked at the process boundary, notes DB a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
 const { mergeAgentPr, hasRecentUserMergeApproval, hasRecentUserTaskCancelApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")

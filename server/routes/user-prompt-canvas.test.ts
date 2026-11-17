@@ -56,7 +56,7 @@ test("a linked agent gets its references on every prompt, live; a new session id
   expect(res.status).toBe(200)
   const text = await context(res)
   expect(text).toStartWith("Canvas references:")
-  expect(text).toContain('Turso note RES-CV01 "Plan"')
+  expect(text).toContain('Note RES-CV01 "Plan"')
   expect(text).toContain("«ship friday»")
 
   canvas.canvasStore.patchNode("cv-sticky", { data: { text: "ship monday" } }, 5)

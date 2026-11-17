@@ -53,7 +53,7 @@ export const bodyAlertSink: BodyAlertSink = createBodyAlertSink({
 })
 
 // Brain context: the digest rides along for every message in #Body and for a
-// health question anywhere else. Never throws — an unreachable Turso becomes a
+// health question anywhere else. Never throws — an unreachable notes DB becomes a
 // one-line note so the brain can say so instead of guessing.
 export function wantsBodyDigest(channelId: string, text: string): boolean {
   return channelId === BODY_CHANNEL || isHealthIntent(text)
@@ -65,6 +65,6 @@ export async function bodyDigestFor(channelId: string, text: string, snapshot: B
     return buildBodyDigest(await snapshot.get())
   } catch (err) {
     companionLog(`[body] digest unavailable (${(err as Error)?.message ?? "error"})`)
-    return "Body monitor: unreachable right now (Turso read failed) — no live health data."
+    return "Body monitor: unreachable right now (notes DB read failed) — no live health data."
   }
 }

@@ -667,7 +667,7 @@ describe("AutoCompactor.test (on-demand trigger)", () => {
 // ── task boundaries + state-aware keep (lib/auto-compact-keep.ts) ──────────
 // Fixtures are trimmed copies of real Zettlab transcript tails (2026-10):
 // a squash merge of chantalmasse-website#14, a dispatch.sh completion, a
-// Turso note INSERT through the pipeline API, a file-dev-task.sh filing.
+// note INSERT through the pipeline API, a file-dev-task.sh filing.
 
 const SID = "c447e8b2-062c-4655-b74a-8eef0d18e0bc"
 let toolSeq = 0
@@ -800,7 +800,7 @@ describe("buildKeep", () => {
       human: ["Approve the vault PR"],
     })
     expect(k).toBe("/compact keep: current task, decisions made; PRs: jaubut/claude-companion#140 OPEN, jaubut/chantalmasse-website#14 MERGED; "
-      + "Turso note projects/2026-06-22-companion-orchestrator (PRJ-OR1T) open tasks: iOS token card shows compactions; "
+      + "Note projects/2026-06-22-companion-orchestrator (PRJ-OR1T) open tasks: iOS token card shows compactions; "
       + "STATE.md next: Ship v0.7; pending human steps: Approve the vault PR")
   })
   test("capped at KEEP_MAX", () => {

@@ -10,10 +10,10 @@ import type { ResolverConfig } from "../lib/resolver"
 
 // The Opus resolver end to end through the REAL wiring: triage collectors →
 // resolver (mock model only) → the guarded unblock / gh merge / gh close →
-// Turso rows (task, dispatch ledger, resolver:* activity), orchestrator turns,
+// Notes DB rows (task, dispatch ledger, resolver:* activity), orchestrator turns,
 // GET /api/orchestrator/triage (`resolving[]`, `resolver`, ask_opus) and
 // POST …/choose ask_opus. Same harness as triage.test.ts: isolated
-// COMPANION_DB_PATH, "Turso" = in-memory bun:sqlite, a fake gh.
+// COMPANION_DB_PATH, "notes DB" = in-memory bun:sqlite, a fake gh.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-resolver-")), "companion.db")
 

@@ -2,7 +2,7 @@ import { type DispatchTask, parseTs } from "./dispatch-tasks"
 import { APPROVAL_TTL_MS, APPROVED_MERGE, NEEDS_HUMAN, approvalTime, parkPrefix, parsePrUrl } from "./triage-sources"
 import type { QueryFn, Row, SqlArg } from "./turso"
 
-// Pipeline stage of a Turso agent task (brain-tab-queue-graph F1): the graph
+// Pipeline stage of a notes DB agent task (brain-tab-queue-graph F1): the graph
 // Queue → Dispatch → Builder → Shepherd → Merged (+ Blocked, Failed, Cancelled),
 // derived server-side from the task row and the PR shepherd's agent_activity
 // ledger. Pure over what it is given; the poller reads the ledger once per poll.
@@ -119,7 +119,7 @@ export function stageFields(t: DispatchTask, rows: Row[], now: number): StageFie
   }
 }
 
-/** Ledger rows per task id (newest first) for the tasks that carry a PR. One query; the ids come from Turso, never input. */
+/** Ledger rows per task id (newest first) for the tasks that carry a PR. One query; the ids come from the notes DB, never input. */
 export async function listPrLedger(query: QueryFn, tasks: DispatchTask[]): Promise<Map<string, Row[]>> {
   const out = new Map<string, Row[]>()
   const ids: SqlArg[] = tasks.filter((t) => t.prUrl && t.status === "completed").map((t) => t.id)

@@ -12,7 +12,7 @@ import { receiptPushPayload, wireReceiptQa } from "../wiring/receipt-qa"
 // Receipt QA worker: Jev pass (code checks + fake System One over HTTP),
 // Sonnet pass (fake runner + one fake `claude` binary), restart resume, kill
 // switch, audit, WS frame + push. Never touches the real dashboard, Jev,
-// claude, Turso or the real Companion db.
+// claude, notes DB or the real Companion db.
 
 const DASH_KEY = "dash-SECRET-key-123456"
 const JEV_KEY = "jev-SECRET-key-654321"
