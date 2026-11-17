@@ -23,9 +23,9 @@ const BOT = "jaubut"
 const TASK = "abcd1234-0000"
 
 interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string; retarget?: "during-gate" | "after-gate" | "blind"; leaves?: boolean }
-const review = (who: "claude" | "codex") => ({
+const review = (who: "claude" | "gemini") => ({
   author: { login: BOT },
-  body: `${who === "claude" ? "🤖 **Auto-review**" : "🧠 **Codex review**"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
+  body: `${who === "claude" ? "🤖 **Auto-review**" : "♊ **Gemini review** (agy"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
 })
 
 function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoDown?: boolean; ghThrows?: boolean } = {}) {
@@ -81,7 +81,7 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
     return out({
       state, isDraft: shape.draft ?? false, headRefName: "dispatch/abcd1234", headRefOid: head, baseRefName: base, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "",
       url: URL, title: "t", author: { login: BOT }, labels: (shape.labels ?? []).map((name) => ({ name })), statusCheckRollup: rollup,
-      comments: [review("claude"), review("codex")], files: files.map(([path]) => ({ path })),
+      comments: [review("claude"), review("gemini")], files: files.map(([path]) => ({ path })),
     })
   }
   return { db, gh, exec, calls, signal: client.signal, approvals: () => db.query("SELECT target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Array<{ meta: string }> }
