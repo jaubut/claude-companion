@@ -6516,7 +6516,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 309,
+          "lines": 318,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6533,6 +6533,7 @@
             "buildWorkerEnv",
             "defaultLoadAgentSecrets",
             "resolveWorkerFamily",
+            "modelFitsFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
             "normalizeAgyCliModelFlag",
@@ -6652,7 +6653,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 590,
+          "lines": 598,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6687,7 +6688,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 42,
+          "lines": 44,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -6710,7 +6711,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 592,
+          "lines": 594,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -15273,6 +15274,12 @@
           ]
         },
         "resolveWorkerFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "modelFitsFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"

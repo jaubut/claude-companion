@@ -15,9 +15,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/agy-feed.ts` | 1250 ⚠ 1250 > cap 600 | lib | 36 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/worker-supervisor.ts` | 598 | lib | 10 |  |
+| `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `routes/api.ts` | 592 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
-| `lib/worker-supervisor.ts` | 590 | lib | 10 |  |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -61,9 +61,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/outbound.ts` | 335 | lib | 27 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
+| `lib/worker-invocation.ts` | 318 | lib | 22 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `routes/model.ts` | 310 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `lib/worker-invocation.ts` | 309 | lib | 21 |  |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
@@ -258,8 +258,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
+| `lib/worker-task-store.ts` | 44 | lib | 4 |  |
 | `routes/auto-compact.ts` | 43 | route-host | 1 | routes: 3 |
-| `lib/worker-task-store.ts` | 42 | lib | 4 |  |
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |

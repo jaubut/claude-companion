@@ -14,6 +14,8 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   prLinkBound?: boolean | null
   /** The claim it was bound with (or a pending one): never in a snapshot, so no tool result or callback carries it. */
   handoffClaim?: string | null
+  /** The model was chosen (dispatch `model` or the picker via setTaskModel), not routed: later turns keep it, no retry escalation. */
+  modelPinned?: boolean
 }
 
 /** Best effort: a failed write keeps the previous file. */

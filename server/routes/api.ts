@@ -439,7 +439,8 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
   let target = lookup ? (resolveSession(lookup) ?? ensureHeadlessAgySession(lookup, cwd)) : null
   const explicit = target
   if (!lookup) {
-    const recent = listSessions().find(s => !!s.tty || s.herdrPane?.startsWith("headless:"))
+    // Never a headless worker: a just-finished one is the most recent session, and an untargeted inject would resume it.
+    const recent = listSessions().find(s => !!s.tty || (s.herdrPane?.startsWith("headless:") && !s.herdrPane.startsWith("headless:worker:")))
     if (recent) target = recent
   }
 
@@ -468,8 +469,9 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
       const existing = workerSupervisor.getTask(taskId)
       const dispatched = await workerSupervisor.dispatchTask({
         taskId, repo: existing?.repo || basename(target.cwd), title: existing?.title || target.title || taskId,
-        prompt: text, mode: "auto", family: existing?.family ?? (target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude"),
-        model: (target.model || existing?.model) ?? undefined,
+        // A known task keeps its recorded family+model (a picked one stays pinned past retry escalation); the session's model is a display value (picker changes go through setTaskModel).
+        prompt: text, mode: "auto",
+        ...(existing ? {} : { family: target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude", model: target.model || undefined }),
         inheritClaim: true, // Jeremie's own channel (Bearer): his follow-up resumes a bound task with its stored claim
       })
       return dispatched.ok
