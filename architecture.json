@@ -4738,6 +4738,27 @@
           "externals": []
         },
         {
+          "path": "lib/session-prune-gone.ts",
+          "lines": 34,
+          "kind": "lib",
+          "exports": [
+            "pruneGoneSessions",
+            "startGoneSessionPrune"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agent-pid.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-removal-log.ts",
           "lines": 24,
           "kind": "lib",
@@ -9513,11 +9534,12 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 149,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
             "workerSupervisor",
+            "startWorkerSessionPrune",
             "replayWorkerPrLinks",
             "workerMcp"
           ],
@@ -9534,6 +9556,7 @@
             "lib/live-repo.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/session-prune-gone.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/triage-pr.ts",
@@ -9785,6 +9808,7 @@
             "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/discover.ts",
+            "lib/session-prune-gone.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/shell/close",
@@ -14050,6 +14074,21 @@
             "routes/api.ts#POST /api/sessions/resume"
           ]
         },
+        "isAgentPidAlive": {
+          "module": "lib/agent-pid.ts",
+          "callers": [
+            "lib/session-prune-gone.ts",
+            "lib/sessions.ts"
+          ]
+        },
+        "removeSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/session-prune-gone.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
         "WaitingKind": {
           "module": "lib/waiting.ts",
           "callers": [
@@ -14077,12 +14116,6 @@
         },
         "upsertReason": {
           "module": "lib/waiting.ts",
-          "callers": [
-            "lib/sessions.ts"
-          ]
-        },
-        "isAgentPidAlive": {
-          "module": "lib/agent-pid.ts",
           "callers": [
             "lib/sessions.ts"
           ]
@@ -16437,13 +16470,6 @@
           "module": "lib/github-webhook.ts",
           "callers": [
             "routes/github-webhook.ts"
-          ]
-        },
-        "removeSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
         "setSessionTitle": {
@@ -19792,6 +19818,12 @@
         },
         "linkWorkerPr": {
           "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "startGoneSessionPrune": {
+          "module": "lib/session-prune-gone.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

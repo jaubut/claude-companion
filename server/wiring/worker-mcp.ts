@@ -5,6 +5,7 @@ import { DISPATCH_ID } from "../lib/dispatch-tasks"
 import { realSh } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
+import { startGoneSessionPrune } from "../lib/session-prune-gone"
 import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
@@ -113,6 +114,11 @@ export const workerSupervisor = createWorkerSupervisor({
     notifyBrain(task)
   },
 })
+
+/** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
+export function startWorkerSessionPrune(): void {
+  startGoneSessionPrune((id) => workerSupervisor.getTask(id)?.status === "running")
+}
 
 /** A link lost to a restart or past the retries: once at server start, tasks whose claim verifies and row is still unlinked. */
 export function replayWorkerPrLinks(): void {

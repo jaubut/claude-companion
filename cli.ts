@@ -202,6 +202,7 @@ import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
 import { startTrips } from "./server/wiring/trips"
 import { startMyTasksWatch } from "./server/routes/my-tasks"
+import { startWorkerSessionPrune } from "./server/wiring/worker-mcp"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -226,6 +227,8 @@ startBodyInvestigate()
 startTriage()
 startTrips()
 startMyTasksWatch()
+// Finished workers whose worktree is gone leave the live session list (boot pass + every 5 s).
+startWorkerSessionPrune()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"
