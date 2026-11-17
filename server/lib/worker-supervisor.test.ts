@@ -529,11 +529,12 @@ describe("createWorkerSupervisor", () => {
     const codexResume = buildHeadlessCodexArgs({ prompt: "add test", sessionId: "sid-cx", resume: true, mode: "auto", model: "gpt-5.4" })
     expect(codexResume).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.4", "--", "sid-cx", "add test"])
 
-    const geminiFresh = buildHeadlessGeminiArgs({ prompt: "build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "gemini-3.1-pro-preview" })
-    expect(geminiFresh).toEqual(["--output-format", "stream-json", "--approval-mode", "yolo", "--session-id", "sid-gm", "--model", "gemini-3.1-pro-preview", "-p", "build ui"])
-    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "sid-gm", resume: true, mode: "acceptEdits", model: "gemini-3.1-pro-preview" })
-    expect(geminiinv.cmd).toBe("gemini")
-    expect(geminiinv.args).toContain("--resume")
+    const geminiFresh = buildHeadlessGeminiArgs({ prompt: "-build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "Gemini 4 Argon (High)" })
+    expect(geminiFresh).toEqual(["--print=-build ui", "--output-format", "stream-json", "--model", "gemini-4-argon-high", "--dangerously-skip-permissions"])
+    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "agy-cid", resume: true, mode: "acceptEdits" })
+    expect(geminiinv.cmd).toMatch(/(^|\/)agy$/)
+    expect(geminiinv.args).toEqual(["--print=build ui", "--output-format", "stream-json", "--conversation", "agy-cid", "--mode", "accept-edits"])
+    expect(resolveWorkerFamily({ model: "Gemini 4 Argon (Medium)" })).toBe("gemini")
 
     // Codex stream events
     expect(parseStreamJsonLine(JSON.stringify({ type: "thread.started", thread_id: "cx-thread-1" }))).toEqual({ sessionId: "cx-thread-1" })
@@ -545,17 +546,19 @@ describe("createWorkerSupervisor", () => {
       prUrl: "https://github.com/jaubut/claude-companion/pull/500",
     })
 
-    // Gemini stream events
-    expect(parseStreamJsonLine(JSON.stringify({ type: "init", session_id: "gm-sid-1" }))).toEqual({ sessionId: "gm-sid-1" })
-    expect(parseStreamJsonLine(JSON.stringify({ type: "tool_use", tool_name: "write_file", parameters: { path: "/tmp/index.ts" } }))).toEqual({ step: "Editing index.ts" })
-    expect(parseStreamJsonLine(JSON.stringify({
-      type: "message",
-      role: "assistant",
-      content: "PR ready at https://github.com/jaubut/claude-companion/pull/501",
-    }))).toEqual({
-      assistantText: "PR ready at https://github.com/jaubut/claude-companion/pull/501",
+    // Antigravity (agy) stream events
+    expect(parseStreamJsonLine(JSON.stringify({ event: "init", conversation_id: "agy-1", init: { cwd: "/w" } }))).toEqual({ sessionId: "agy-1" })
+    expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "bun test" } } } })))
+      .toEqual({ sessionId: "agy-1", step: "Running bun test" })
+    expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "write_to_file", tool_info: { parameters: { TargetFile: "/w/index.ts" } } } })))
+      .toEqual({ sessionId: "agy-1", step: "Editing index.ts" })
+    expect(parseStreamJsonLine(JSON.stringify({ event: "result", result: { conversation_id: "agy-1", status: "SUCCESS", response: "PR ready at https://github.com/jaubut/claude-companion/pull/501\n" } }))).toEqual({
+      sessionId: "agy-1", done: true, isError: false,
+      resultText: "PR ready at https://github.com/jaubut/claude-companion/pull/501",
       prUrl: "https://github.com/jaubut/claude-companion/pull/501",
     })
+    expect(parseStreamJsonLine(JSON.stringify({ event: "result", result: { conversation_id: "agy-1", status: "ERROR", error: { message: "quota" } } })))
+      .toEqual({ sessionId: "agy-1", done: true, isError: true, resultText: "quota" })
   })
 
   test("invokes onTaskTerminal when a turn completes or fails so the Brain wakes immediately", async () => {

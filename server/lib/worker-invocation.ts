@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { redactSecrets } from "./secret-redact"
@@ -25,15 +26,17 @@ function shortPath(raw: unknown, prefix: string): string {
   return base ? `${prefix} ${base}` : prefix
 }
 function toolStep(name: string, input: Record<string, unknown>): string {
-  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit" || name === "write_file" || name === "edit_file" || name === "replace") return shortPath(input.file_path ?? input.path, "Editing")
-  if (name === "Read" || name === "read_file") return shortPath(input.file_path ?? input.path, "Reading")
-  if (name === "Grep" || name === "search_file_content") return typeof input.pattern === "string" && input.pattern.trim() ? `Searching ${redactSecrets(input.pattern.trim()).slice(0, 48)}` : "Searching codebase"
-  if (name === "Glob" || name === "glob") return typeof input.pattern === "string" && input.pattern.trim() ? `Listing ${input.pattern.trim().slice(0, 48)}` : "Listing files"
-  if (name === "Bash" || name === "run_shell_command") return shortCmd(input.command)
+  const path = input.file_path ?? input.path ?? input.Path ?? input.TargetFile ?? input.AbsolutePath
+  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit" || name === "write_file" || name === "edit_file" || name === "replace" || name === "write_to_file" || name === "replace_file_content" || name === "multi_replace_file_content") return shortPath(path, "Editing")
+  if (name === "Read" || name === "read_file" || name === "view_file") return shortPath(path, "Reading")
+  const pattern = input.pattern ?? input.Query ?? input.Pattern
+  if (name === "Grep" || name === "search_file_content" || name === "grep_search") return typeof pattern === "string" && pattern.trim() ? `Searching ${redactSecrets(pattern.trim()).slice(0, 48)}` : "Searching codebase"
+  if (name === "Glob" || name === "glob" || name === "find_by_name" || name === "list_dir") return typeof pattern === "string" && pattern.trim() ? `Listing ${pattern.trim().slice(0, 48)}` : "Listing files"
+  if (name === "Bash" || name === "run_shell_command" || name === "run_command") return shortCmd(input.command ?? input.CommandLine)
   return `Tool: ${name.slice(0, 48)}`
 }
 
-/** Parse one NDJSON line from headless `claude`, `codex`, or `gemini`. Pure & never throws. */
+/** Parse one NDJSON line from headless `claude`, `codex`, or `agy` (family gemini). Pure & never throws. */
 export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith("{")) return null
@@ -47,6 +50,31 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   const out: StreamJsonEvent = {}
   if (typeof obj.session_id === "string" && obj.session_id.trim()) out.sessionId = obj.session_id.trim()
   if (typeof obj.thread_id === "string" && obj.thread_id.trim()) out.sessionId = obj.thread_id.trim()
+
+  if (obj.event === "init" || obj.event === "step_update" || obj.event === "result" || obj.event === "error") {
+    const body = [obj.init, obj.step_update, obj.result].find((v) => v && typeof v === "object" && !Array.isArray(v)) as Record<string, unknown> | undefined
+    const cid = obj.conversation_id ?? body?.conversation_id
+    if (typeof cid === "string" && cid.trim()) out.sessionId = cid.trim()
+    if (obj.event === "step_update" && body?.step_type === "tool" && body.state === "ACTIVE") {
+      const info = body.tool_info && typeof body.tool_info === "object" ? (body.tool_info as Record<string, unknown>) : {}
+      const params = info.parameters && typeof info.parameters === "object" && !Array.isArray(info.parameters) ? (info.parameters as Record<string, unknown>) : {}
+      out.step = toolStep(String(body.tool_name ?? info.name ?? "tool"), params)
+    }
+    if (obj.event === "result" || obj.event === "error") {
+      out.done = true
+      out.isError = obj.event === "error" || body?.status !== "SUCCESS"
+      const errObj = (obj.error ?? body?.error) as unknown
+      const msg = typeof body?.response === "string" && body.response.trim() ? body.response
+        : typeof errObj === "string" ? errObj : errObj && typeof errObj === "object" && typeof (errObj as Record<string, unknown>).message === "string" ? String((errObj as Record<string, unknown>).message)
+        : typeof obj.message === "string" ? obj.message : ""
+      if (msg.trim()) {
+        out.resultText = msg.trim()
+        const pr = out.resultText.match(PR_URL_RE)?.[0]
+        if (pr) out.prUrl = pr
+      }
+    }
+    return Object.keys(out).length > 0 ? out : null
+  }
 
   if (obj.type === "assistant") {
     const msg = obj.message && typeof obj.message === "object" ? (obj.message as Record<string, unknown>) : null
@@ -194,7 +222,7 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   if (rawAgent === "gemini") return "gemini"
   const rawModel = opts.model?.trim().toLowerCase() ?? ""
   if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
-  if (/^gemini-/.test(rawModel)) return "gemini"
+  if (/^(gemini[- ]|orchestrator)/.test(rawModel)) return "gemini"
   return "claude"
 }
 
@@ -225,22 +253,56 @@ export function buildHeadlessCodexArgs(opts: { prompt: string; sessionId: string
   return args
 }
 
-/** Build the headless `gemini -p --output-format stream-json` argv for fresh or resumed turns. */
+export function normalizeAgyCliModelFlag(raw: string): string {
+  const trimmed = raw.trim()
+  const lower = trimmed.toLowerCase()
+  const map: Record<string, string> = {
+    "orchestrator (carbon)": "gemini-pro-orchestrator",
+    "orchestrator": "gemini-pro-orchestrator",
+    "gemini-pro-orchestrator": "gemini-pro-orchestrator",
+    "orchestrator (argon)": "gemini-pro-orchestrator-argon",
+    "gemini-pro-orchestrator-argon": "gemini-pro-orchestrator-argon",
+    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high",
+    "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
+    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium",
+    "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
+    "gemini 4 carbon (high)": "gemini-4-carbon-high",
+    "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
+    "gemini 4 carbon (low)": "gemini-4-carbon-low",
+    "gemini 4 argon (high)": "gemini-4-argon-high",
+    "gemini 4 argon (medium)": "gemini-4-argon-medium",
+    "gemini 4 argon (low)": "gemini-4-argon-low",
+    "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
+    "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
+    "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
+  }
+  return map[lower] ?? trimmed
+}
+
+/** Antigravity CLI. Absolute path first: the server's launchd/systemd PATH has no ~/.local/bin. */
+export function agyBin(home = homedir()): string {
+  const bin = join(home, ".local/bin/agy")
+  return existsSync(bin) ? bin : "agy"
+}
+
+/** Build the headless `agy -p --output-format stream-json` argv; agy mints the conversation id, so resume only. */
 export function buildHeadlessGeminiArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string }): string[] {
-  const approvalMode = opts.mode === "auto" || opts.mode === "dontAsk" ? "yolo" : opts.mode === "acceptEdits" ? "auto_edit" : opts.mode === "plan" ? "plan" : "default"
-  const args = ["--output-format", "stream-json", "--approval-mode", approvalMode, ...(opts.resume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId])]
-  if (opts.model) args.push("--model", opts.model)
-  args.push("-p", opts.prompt)
+  const args = [`--print=${opts.prompt}`, "--output-format", "stream-json"]
+  if (opts.resume) args.push("--conversation", opts.sessionId)
+  if (opts.model?.trim()) args.push("--model", normalizeAgyCliModelFlag(opts.model))
+  if (opts.mode === "plan") args.push("--mode", "plan")
+  else if (opts.mode === "acceptEdits") args.push("--mode", "accept-edits")
+  else args.push("--dangerously-skip-permissions")
   return args
 }
 
 /** Hosts a Claude worker's sandboxed Bash may reach on top of ~/.claude/settings.json: GCP (Cloud Run, Artifact Registry, Gmail API), Cloudflare Workers, Resend, Brevo. */
 export const WORKER_SANDBOX_HOSTS: readonly string[] = ["*.googleapis.com", "*.pkg.dev", "*.run.app", "*.workers.dev", "api.resend.com", "api.brevo.com"]
 
-/** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini`). */
-export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: WorkerFamily; args: string[] } {
+/** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini` → agy). */
+export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: string; args: string[] } {
   if (opts.family === "codex") return { cmd: "codex", args: buildHeadlessCodexArgs(opts) }
-  if (opts.family === "gemini") return { cmd: "gemini", args: buildHeadlessGeminiArgs(opts) }
+  if (opts.family === "gemini") return { cmd: agyBin(), args: buildHeadlessGeminiArgs(opts) }
   // Worker-only sandbox network additions (lists merge with the user settings): the production jobs Codex already does.
   return { cmd: "claude", args: ["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } }), ...buildHeadlessClaudeArgs(opts)] }
 }

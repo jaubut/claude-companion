@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-16",
+  "generatedAt": "2026-11-17",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1275,
+          "lines": 1250,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -222,7 +222,6 @@
             "setAgyBrainModel",
             "getAgyBrainBoost",
             "setAgyBrainBoost",
-            "normalizeAgyCliModelFlag",
             "extractAgyUserPrompt",
             "formatAgyQuestionsMarkdown",
             "formatAgyQuestionAnswers",
@@ -4739,6 +4738,27 @@
           "externals": []
         },
         {
+          "path": "lib/session-prune-gone.ts",
+          "lines": 34,
+          "kind": "lib",
+          "exports": [
+            "pruneGoneSessions",
+            "startGoneSessionPrune"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agent-pid.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-removal-log.ts",
           "lines": 24,
           "kind": "lib",
@@ -6468,7 +6488,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 247,
+          "lines": 309,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6487,6 +6507,8 @@
             "resolveWorkerFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
+            "normalizeAgyCliModelFlag",
+            "agyBin",
             "buildHeadlessGeminiArgs",
             "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation"
@@ -9515,11 +9537,12 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 149,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
             "workerSupervisor",
+            "startWorkerSessionPrune",
             "replayWorkerPrLinks",
             "workerMcp"
           ],
@@ -9536,6 +9559,7 @@
             "lib/live-repo.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/session-prune-gone.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/triage-pr.ts",
@@ -9787,6 +9811,7 @@
             "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/discover.ts",
+            "lib/session-prune-gone.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/shell/close",
@@ -10378,6 +10403,12 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/activity.ts"
+          ]
+        },
+        "normalizeAgyCliModelFlag": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/agy-feed.ts"
           ]
         },
         "readTailLines": {
@@ -14046,6 +14077,21 @@
             "routes/api.ts#POST /api/sessions/resume"
           ]
         },
+        "isAgentPidAlive": {
+          "module": "lib/agent-pid.ts",
+          "callers": [
+            "lib/session-prune-gone.ts",
+            "lib/sessions.ts"
+          ]
+        },
+        "removeSessionByKey": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/session-prune-gone.ts",
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/session-end"
+          ]
+        },
         "WaitingKind": {
           "module": "lib/waiting.ts",
           "callers": [
@@ -14073,12 +14119,6 @@
         },
         "upsertReason": {
           "module": "lib/waiting.ts",
-          "callers": [
-            "lib/sessions.ts"
-          ]
-        },
-        "isAgentPidAlive": {
-          "module": "lib/agent-pid.ts",
           "callers": [
             "lib/sessions.ts"
           ]
@@ -16439,13 +16479,6 @@
           "module": "lib/github-webhook.ts",
           "callers": [
             "routes/github-webhook.ts"
-          ]
-        },
-        "removeSessionByKey": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end"
           ]
         },
         "setSessionTitle": {
@@ -19794,6 +19827,12 @@
         },
         "linkWorkerPr": {
           "module": "lib/worker-pr-link.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "startGoneSessionPrune": {
+          "module": "lib/session-prune-gone.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

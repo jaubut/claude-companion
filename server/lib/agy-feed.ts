@@ -13,7 +13,8 @@ import { THINKING_MAX } from "./transcript"
 import { readTailLines } from "./transcript-cursor"
 import type { HistorySession } from "./transcript-backfill"
 import { withActiveDesignStatePrompt } from "./design-state"
-import { scrubAgentEnv } from "./worker-invocation"
+import { normalizeAgyCliModelFlag, scrubAgentEnv } from "./worker-invocation"
+export { normalizeAgyCliModelFlag }
 
 export const AGY_BRAIN_KEY = "gemini:brain"
 export const AGY_BRAIN_PANE = "headless:agy-brain"
@@ -190,32 +191,6 @@ export function getAgyBrainBoost(home = homedir()): boolean {
 
 export function setAgyBrainBoost(boost: boolean, home = homedir()): void {
   writeAgyBrainState({ boost }, home)
-}
-
-export function normalizeAgyCliModelFlag(raw: string): string {
-  const trimmed = raw.trim()
-  const lower = trimmed.toLowerCase()
-  const map: Record<string, string> = {
-    "orchestrator (carbon)": "gemini-pro-orchestrator",
-    "orchestrator": "gemini-pro-orchestrator",
-    "gemini-pro-orchestrator": "gemini-pro-orchestrator",
-    "orchestrator (argon)": "gemini-pro-orchestrator-argon",
-    "gemini-pro-orchestrator-argon": "gemini-pro-orchestrator-argon",
-    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high",
-    "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
-    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium",
-    "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
-    "gemini 4 carbon (high)": "gemini-4-carbon-high",
-    "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
-    "gemini 4 carbon (low)": "gemini-4-carbon-low",
-    "gemini 4 argon (high)": "gemini-4-argon-high",
-    "gemini 4 argon (medium)": "gemini-4-argon-medium",
-    "gemini 4 argon (low)": "gemini-4-argon-low",
-    "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
-    "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
-    "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
-  }
-  return map[lower] ?? trimmed
 }
 
 export function extractAgyUserPrompt(rawContent: unknown): string | null {
