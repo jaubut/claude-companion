@@ -8,14 +8,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 279 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1250)
+⚠ over cap: `lib/agy-feed.ts` (1250), `lib/worker-supervisor.ts` (610)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1250 ⚠ 1250 > cap 600 | lib | 36 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
+| `lib/worker-supervisor.ts` | 610 ⚠ 610 > cap 600 | lib | 10 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `lib/worker-supervisor.ts` | 598 | lib | 10 |  |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
@@ -61,7 +61,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/outbound.ts` | 335 | lib | 27 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
-| `lib/worker-invocation.ts` | 318 | lib | 22 |  |
+| `lib/worker-invocation.ts` | 320 | lib | 22 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `routes/model.ts` | 310 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
@@ -256,9 +256,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
+| `lib/worker-pid.ts` | 47 | lib | 4 |  |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
-| `lib/worker-task-store.ts` | 44 | lib | 4 |  |
+| `lib/worker-task-store.ts` | 46 | lib | 4 |  |
 | `routes/auto-compact.ts` | 43 | route-host | 1 | routes: 3 |
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
@@ -274,7 +275,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dotenv.ts` | 34 | lib | 2 |  |
 | `lib/session-prune-gone.ts` | 34 | lib | 2 |  |
 | `wiring/gauge.ts` | 34 | lib | 2 | emits: gauge |
-| `lib/worker-pid.ts` | 32 | lib | 3 |  |
 | `lib/json-body.ts` | 31 | lib | 4 |  |
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |
