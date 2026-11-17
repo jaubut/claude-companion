@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import type { GaugeAccount } from "./gauge"
-import { claudePlan, claudeSubscription, parseCodexRollout, resetSubscriptionsCache, subscriptions, type Subscription } from "./subscriptions"
+import { chatgptSubscription, claudePlan, claudeSubscription, parseCodexRollout, resetSubscriptionsCache, subscriptions, type Subscription } from "./subscriptions"
 
 // Parsers run on captured fixtures (docs/fixtures/subscriptions/); the
 // assembled shape is checked against the iOS contract fixture.
@@ -41,28 +41,69 @@ describe("claude", () => {
     expect(s.status).toBe("ok")
   })
 
+  test("out-of-range gauge `at` → updatedAt null, no throw", () => {
+    const s = claudeSubscription(account([{ kind: "five_hour", percentUsed: 10, resetsAt: null }], 1e17), null, NOW)
+    expect(s.updatedAt).toBeNull()
+    expect(s.status).toBe("ok")
+  })
+
   test("no gauge report → unknown, plan kept", () => {
     expect(claudeSubscription(null, "Max 20x", NOW)).toEqual({ provider: "claude", plan: "Max 20x", windows: [], status: "unknown", updatedAt: null })
   })
 })
 
 describe("chatgpt (codex rollout)", () => {
+  const chatgpt = (text: string, now = NOW): Subscription => chatgptSubscription(parseCodexRollout(text), now)
+  const event = (rl: Record<string, unknown>): string =>
+    JSON.stringify({ timestamp: "2026-11-17T09:00:00.000Z", payload: { type: "token_count", rate_limits: rl } })
+
   test("captured tail: last rate_limits wins, partial first line skipped", () => {
-    expect(parseCodexRollout(fixture("codex-rollout-tail.jsonl"), NOW)).toEqual({
+    expect(chatgpt(fixture("codex-rollout-tail.jsonl"))).toEqual({
       provider: "chatgpt", plan: "Pro Lite", status: "ok", updatedAt: "2026-11-17T10:20:26.343Z",
       windows: [{ label: "weekly", usedPct: 55, resetsAt: "2026-11-18T15:30:13.000Z" }],
     })
   })
 
   test("5h + weekly, limit reached → limited", () => {
-    const s = parseCodexRollout(fixture("codex-rollout-limited.jsonl"), NOW)!
+    const s = chatgpt(fixture("codex-rollout-limited.jsonl"))
     expect(s.plan).toBe("Plus")
     expect(s.status).toBe("limited")
     expect(s.windows.map((w) => [w.label, w.usedPct])).toEqual([["5h", 91.5], ["weekly", 100]])
   })
 
-  test("no rate_limits → null", () => {
-    expect(parseCodexRollout('{"type":"event_msg","payload":{"type":"agent_message"}}\n', NOW)).toBeNull()
+  test("limit reached ends when its window resets, not another's", () => {
+    const text = fixture("codex-rollout-limited.jsonl") // reached: secondary (weekly, resets 2026-11-18T15:30:13Z)
+    const afterPrimary = chatgpt(text, Date.parse("2026-11-18T14:30:00Z"))
+    expect(afterPrimary.windows.map((w) => [w.label, w.usedPct])).toEqual([["5h", 0], ["weekly", 100]])
+    expect(afterPrimary.status).toBe("limited")
+    const afterAll = chatgpt(text, Date.parse("2026-11-26T00:00:00Z"))
+    expect(afterAll.windows).toEqual([{ label: "5h", usedPct: 0, resetsAt: null }, { label: "weekly", usedPct: 0, resetsAt: null }])
+    expect(afterAll.status).toBe("ok")
+  })
+
+  test("unnamed limit reached ends when any window resets", () => {
+    const text = event({ primary: { used_percent: 40, window_minutes: 300, resets_at: 1795010400 }, rate_limit_reached_type: "workspace" })
+    expect(chatgpt(text).status).toBe("limited")
+    expect(chatgpt(text, Date.parse("2026-11-18T14:30:00Z")).status).toBe("ok")
+  })
+
+  test("model sub-limits and empty rate_limits don't shadow the plan's", () => {
+    const text = [
+      fixture("codex-rollout-limited.jsonl").trim(),
+      event({ limit_id: "codex_spark", primary: { used_percent: 5, window_minutes: 300 }, plan_type: "plus" }),
+      event({ limit_id: "codex", primary: null, secondary: null, plan_type: "plus", rate_limit_reached_type: null }),
+    ].join("\n")
+    expect(chatgpt(text).windows.map((w) => w.usedPct)).toEqual([91.5, 100])
+  })
+
+  test("out-of-range resets_at → resetsAt null, no throw", () => {
+    const s = chatgpt(event({ primary: { used_percent: 10, window_minutes: 300, resets_at: 1e17 } }))
+    expect(s.windows).toEqual([{ label: "5h", usedPct: 10, resetsAt: null }])
+  })
+
+  test("no rate_limits → null / unknown", () => {
+    expect(parseCodexRollout('{"type":"event_msg","payload":{"type":"agent_message"}}\n')).toBeNull()
+    expect(chatgptSubscription(null, NOW)).toEqual({ provider: "chatgpt", plan: null, windows: [], status: "unknown", updatedAt: null })
   })
 })
 

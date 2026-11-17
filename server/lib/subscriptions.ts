@@ -33,7 +33,11 @@ const NEAR_PCT = 80
 const TAIL_BYTES = 512 * 1024
 const ROLLOUTS_MAX = 8
 
-const iso = (ms: number): string => new Date(ms).toISOString()
+// null for NaN or a ms value outside Date's range (toISOString would throw).
+function iso(ms: number): string | null {
+  const d = new Date(ms)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
 
 // A window whose reset already passed has rolled over: nothing used in it yet
 // as far as this host knows.
@@ -91,9 +95,21 @@ export function claudeSubscription(account: GaugeAccount | null, plan: string | 
 
 const CODEX_PLANS: Record<string, string> = { free: "Free", go: "Go", plus: "Plus", pro: "Pro", prolite: "Pro Lite", team: "Team", business: "Business", enterprise: "Enterprise", edu: "Edu" }
 
-// The last `token_count` event carrying `rate_limits` in a rollout JSONL chunk
-// (a partial first line from a tail read is skipped). null = none in it.
-export function parseCodexRollout(text: string, now: number): Subscription | null {
+const CODEX_SLOTS = ["primary", "secondary"] as const
+type CodexSlot = (typeof CODEX_SLOTS)[number]
+
+// One rollout event's rate limits as logged: windows not rolled over yet, so
+// the "limit reached" flag can be judged against the current time on each read.
+export interface CodexRead {
+  plan: string | null
+  slots: Partial<Record<CodexSlot, SubWindow>>
+  reached: string | null // rate_limit_reached_type
+  updatedAt: string | null
+}
+
+// The last `token_count` event carrying the account-wide `rate_limits` in a
+// rollout JSONL chunk (a partial first line from a tail read is skipped). null = none in it.
+export function parseCodexRollout(text: string): CodexRead | null {
   const lines = text.split("\n")
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]!
@@ -103,26 +119,41 @@ export function parseCodexRollout(text: string, now: number): Subscription | nul
     const p = ev.payload as Record<string, unknown> | undefined
     const rl = p?.rate_limits as Record<string, unknown> | null | undefined
     if (!rl || typeof rl !== "object") continue
-    const windows: SubWindow[] = []
-    for (const slot of [rl.primary, rl.secondary]) {
-      if (!slot || typeof slot !== "object") continue
-      const s = slot as Record<string, unknown>
+    // Model-specific sub-limits (e.g. Spark buckets) aren't the plan's usage.
+    if (typeof rl.limit_id === "string" && rl.limit_id !== "codex") continue
+    const slots: CodexRead["slots"] = {}
+    for (const k of CODEX_SLOTS) {
+      const s = rl[k] as Record<string, unknown> | null | undefined
+      if (!s || typeof s !== "object") continue
       const label = typeof s.window_minutes === "number" ? labelForMinutes(s.window_minutes) : null
       if (!label || typeof s.used_percent !== "number") continue
       const resetsAt = typeof s.resets_at === "number" ? iso(s.resets_at * 1000) : null
-      windows.push(rolled({ label, usedPct: s.used_percent, resetsAt }, now))
+      slots[k] = { label, usedPct: s.used_percent, resetsAt }
     }
+    const reached = typeof rl.rate_limit_reached_type === "string" ? rl.rate_limit_reached_type : null
+    if (!slots.primary && !slots.secondary && reached === null) continue
     const planType = typeof rl.plan_type === "string" ? rl.plan_type : null
     const ts = typeof ev.timestamp === "string" && Number.isFinite(Date.parse(ev.timestamp)) ? new Date(ev.timestamp).toISOString() : null
-    return {
-      provider: "chatgpt",
-      plan: planType ? CODEX_PLANS[planType] ?? planType : null,
-      windows,
-      status: statusOf(windows, rl.rate_limit_reached_type != null),
-      updatedAt: ts,
-    }
+    return { plan: planType ? CODEX_PLANS[planType] ?? planType : null, slots, reached, updatedAt: ts }
   }
   return null
+}
+
+// Windows rolled over at `now`. A "limit reached" flag ends once its window
+// resets: the named slot's ("primary" / "secondary"), else any window's.
+export function chatgptSubscription(r: CodexRead | null, now: number): Subscription {
+  if (!r) return { provider: "chatgpt", plan: null, windows: [], status: "unknown", updatedAt: null }
+  const named = (r.reached === "primary" || r.reached === "secondary") && r.slots[r.reached] ? r.reached : null
+  const windows: SubWindow[] = []
+  let limited = r.reached !== null
+  for (const k of CODEX_SLOTS) {
+    const w = r.slots[k]
+    if (!w) continue
+    const cur = rolled(w, now)
+    if (cur !== w && (named === null || named === k)) limited = false
+    windows.push(cur)
+  }
+  return { provider: "chatgpt", plan: r.plan, windows, status: statusOf(windows, limited), updatedAt: r.updatedAt }
 }
 
 function tail(path: string): string {
@@ -138,10 +169,9 @@ function tail(path: string): string {
   }
 }
 
-function codexSubscription(home: string, now: number): Subscription {
-  const unknown: Subscription = { provider: "chatgpt", plan: null, windows: [], status: "unknown", updatedAt: null }
+function readCodex(home: string): CodexRead | null {
   const db = join(home, ".codex", "state_5.sqlite")
-  if (!existsSync(db)) return unknown
+  if (!existsSync(db)) return null
   let paths: string[]
   try {
     const d = new Database(db, { readonly: true })
@@ -149,19 +179,19 @@ function codexSubscription(home: string, now: number): Subscription {
       paths = (d.query(`select rollout_path as p from threads where rollout_path != ''
         order by coalesce(updated_at_ms, updated_at * 1000) desc limit ?`).all(ROLLOUTS_MAX) as Array<{ p: string }>).map((r) => r.p)
     } finally { d.close() }
-  } catch { return unknown }
+  } catch { return null }
   for (const p of paths) {
     try {
-      const sub = parseCodexRollout(tail(p), now)
-      if (sub) return sub
+      const read = parseCodexRollout(tail(p))
+      if (read) return read
     } catch { /* rotated / unreadable: next */ }
   }
-  return unknown
+  return null
 }
 
 // ---- assembly + cache ----
 
-let cache: { at: number; claudePlan: string | null; chatgpt: Subscription } | null = null
+let cache: { at: number; claudePlan: string | null; chatgpt: CodexRead | null } | null = null
 
 function readClaudePlan(home: string): string | null {
   try {
@@ -171,15 +201,11 @@ function readClaudePlan(home: string): string | null {
 
 export function subscriptions(account: GaugeAccount | null, now = Date.now(), home = homedir()): Subscription[] {
   if (!cache || now - cache.at >= CACHE_MS) {
-    cache = { at: now, claudePlan: readClaudePlan(home), chatgpt: codexSubscription(home, now) }
+    cache = { at: now, claudePlan: readClaudePlan(home), chatgpt: readCodex(home) }
   }
-  // Between refreshes a window may roll over; a "limit reached" flag ends with it.
-  const c = cache.chatgpt
-  const windows = c.windows.map((w) => rolled(w, now))
-  const reached = c.status === "limited" && windows.every((w, i) => w === c.windows[i])
   return [
     claudeSubscription(account, cache.claudePlan, now),
-    { ...c, windows, status: statusOf(windows, reached) },
+    chatgptSubscription(cache.chatgpt, now),
     { provider: "gemini", plan: null, windows: [], status: "unknown", updatedAt: null },
   ]
 }
