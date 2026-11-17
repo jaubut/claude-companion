@@ -81,6 +81,10 @@ export interface Session {
   pid: string
   firstSeenAt: number
   lastSeenAt: number
+  // Last real activity (a hook, a busy status, the agent's own transcript or DB
+  // time). lastSeenAt is bumped by every discovery tick, so the archive sweep
+  // (lib/session-archive.ts) reads this instead. Optional so older fixtures still type.
+  lastActiveAt?: number
   // Last answered turn's model id (Phase 14). "" = unknown; render absence.
   model: string
 }
@@ -88,6 +92,9 @@ export interface Session {
 type Listener = (sessions: Session[]) => void
 
 const sessions = new Map<string, Session>()
+// Archived key → its lastActiveAt when archived. A provisional re-record
+// (discovery, the agy poll) with no newer activity stays out of the list.
+const archived = new Map<string, number>()
 const listeners = new Set<Listener>()
 
 // A session can idle for hours without a hook; pruning on last-seen alone
@@ -164,6 +171,11 @@ export function recordSession(
   if (!meta.cwd) return null
   const now = Date.now()
   const key = deriveKey(meta)
+  const archivedAt = archived.get(key)
+  if (archivedAt !== undefined) {
+    if (opts.provisional && meta.agentStatus !== "busy" && (meta.lastActiveAt ?? 0) <= archivedAt) return null
+    archived.delete(key)
+  }
   const prev = sessions.get(key)
 
   const mergedTty = meta.tty || prev?.tty || ""
@@ -222,6 +234,7 @@ export function recordSession(
     // registered the session as "now").
     firstSeenAt: Math.min(prev?.firstSeenAt ?? now, meta.firstSeenAt ?? now),
     lastSeenAt: now,
+    lastActiveAt: Math.max(prev?.lastActiveAt ?? 0, meta.lastActiveAt ?? 0, !opts.provisional || meta.agentStatus === "busy" ? now : 0) || now,
     model: meta.model || prev?.model || "",  // sticky like taskId: discovery carries none
   }
   sessions.set(key, next)
@@ -323,6 +336,7 @@ export function setSessionStatus(key: string, status: string, waitingFor: string
   if (!s || (s.agentStatus === status && s.waitingFor === waitingFor)) return
   s.agentStatus = status
   s.waitingFor = waitingFor
+  if (status === "busy") s.lastActiveAt = Date.now()
   emit()
 }
 
@@ -522,6 +536,17 @@ export function removeSessionByCwd(cwd: string): boolean {
   }
   if (removed) emit()
   return removed
+}
+
+// Out of the live list until real activity brings it back (see recordSession).
+export function archiveSession(key: string, reason: string): boolean {
+  const s = sessions.get(key)
+  if (!s) return false
+  sessions.delete(key)
+  archived.set(key, s.lastActiveAt ?? 0)
+  logRemoval(s, `archive:${reason}`)
+  emit()
+  return true
 }
 
 export function removeSessionByKey(key: string): boolean {

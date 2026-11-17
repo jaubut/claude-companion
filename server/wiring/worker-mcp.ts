@@ -5,6 +5,7 @@ import { DISPATCH_ID } from "../lib/dispatch-tasks"
 import { realSh } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
+import { startSessionArchive } from "../lib/session-archive"
 import { startGoneSessionPrune } from "../lib/session-prune-gone"
 import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
@@ -13,6 +14,7 @@ import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
 import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
+import { workerAgentStatus } from "../lib/worker-invocation"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { emitTrace, getBrainDeliver } from "./brain"
@@ -94,7 +96,7 @@ export const workerSupervisor = createWorkerSupervisor({
       taskId: task.taskId,
       herdrPane: `headless:worker:${task.taskId}`,
       herdrAgent: task.builder,
-      agentStatus: task.status === "running" ? "busy" : "idle",
+      agentStatus: workerAgentStatus(task.status),
       pid: String(pid ?? process.pid),
       model,
     }, { sessionIdConfirmed: true })
@@ -118,6 +120,15 @@ export const workerSupervisor = createWorkerSupervisor({
 /** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
 export function startWorkerSessionPrune(): void {
   startGoneSessionPrune((id) => workerSupervisor.getTask(id)?.status === "running")
+}
+
+/** Boot (cli.ts): idle and done sessions leave the drawer (lib/session-archive.ts); a worker card is done once its task stops running. */
+export function startDrawerArchive(): void {
+  startSessionArchive((id) => {
+    const t = workerSupervisor.getTask(id)
+    if (!t) return 0
+    return t.status === "running" ? null : t.completedAt ?? t.updatedAt
+  })
 }
 
 /** A link lost to a restart or past the retries: once at server start, tasks whose claim verifies and row is still unlinked. */
