@@ -11,7 +11,7 @@ import {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
   type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
@@ -64,6 +64,8 @@ export interface WorkerSupervisorDeps {
   linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
   /** Live active design state summary appended automatically to headless worker prompts. */
   designContext?(): string
+  /** Agent secrets for a Claude worker's env (default: `~/.local/bin/tls-agent-env`). Never rejects; {} on failure. */
+  loadAgentSecrets?(): Promise<Record<string, string>>
 }
 
 export { workerStateFile }
@@ -96,7 +98,7 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
 }
 
 interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null
+  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null; modelPinned: boolean
   activeTurn: number; jobId: string; turnReportedTerminal: boolean
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
@@ -119,6 +121,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const inFlightWorktrees = new Set<string>()
   const resolveRepo = deps.resolveRepoDir ?? defaultResolveRepoDir
   const spawnWorker = deps.spawnWorker ?? defaultSpawnWorker
+  const loadAgentSecrets = deps.loadAgentSecrets ?? (() => defaultLoadAgentSecrets(deps.home))
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
@@ -142,7 +145,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
-      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim,
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned,
     })))
   }
 
@@ -188,6 +191,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         sessionStarted: typeof r.sessionStarted === "boolean" ? r.sessionStarted : r.status === "completed",
         prLinkBound: typeof r.prLinkBound === "boolean" ? r.prLinkBound : null,
         handoffClaim: typeof r.handoffClaim === "string" && r.handoffClaim ? r.handoffClaim : null,
+        modelPinned: r.modelPinned === true,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
       }
@@ -333,8 +337,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const myTurn = (existing?.turnCount ?? 0) + 1
         // Only a model of this family reaches the CLI; when the family changes on resume, drop the previous family's stored model.
         const usable = (m: string | null | undefined) => m && m.toLowerCase() !== "auto" && modelFitsFamily(m, family) ? m : null
-        const explicitModel = usable(model)
         const storedModel = existing && !familyChanged ? usable(existing.model) : null
+        // A chosen model (this dispatch's, or one pinned earlier by a dispatch or the picker) beats the router, retry escalation included.
+        const explicitModel = usable(model) ?? (existing?.modelPinned ? storedModel : null)
         const routedModel = family === "claude"
           ? (await decideWorkerModel({
               repo,
@@ -345,6 +350,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               existingModel: storedModel,
             })).model
           : null
+        // Codex / gemini run outside the Claude sandbox and load their own; only a Claude worker needs them passed in.
+        const secrets = family === "claude" ? await loadAgentSecrets() : {}
         const effectiveModel = explicitModel ?? routedModel ?? storedModel ?? null
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
@@ -355,14 +362,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           taskId, repo, repoDir, title, builder, family, model: effectiveModel, branch: wt.branch, worktree: wt.worktree, sessionId,
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
-          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim,
+          pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim, modelPinned: false,
           activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
         clearTimers(task)
         task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim
-        task.title = title; task.family = family; task.model = effectiveModel; task.sessionId = sessionId
+        task.title = title; task.family = family; task.model = effectiveModel; task.modelPinned = !!explicitModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
@@ -382,7 +389,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let handle: SpawnedWorkerHandle
         try {
           handle = spawnWorker({
-            cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder),
+            cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder, secrets),
             onStdoutLine(line) {
               if (settled || task.activeTurn !== myTurn) return
               const ev = parseStreamJsonLine(line)
@@ -571,7 +578,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const t = tasks.get(taskId.trim())
       if (!t) return null
       const nextFamily = resolveWorkerFamily({ model })
-      t.model = model
+      t.model = model; t.modelPinned = true
       if (nextFamily && nextFamily !== t.family) {
         t.family = nextFamily
         t.sessionStarted = false

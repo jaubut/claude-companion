@@ -469,7 +469,7 @@ export async function deliverInject(text: string, key?: string, cwd?: string, bo
       const existing = workerSupervisor.getTask(taskId)
       const dispatched = await workerSupervisor.dispatchTask({
         taskId, repo: existing?.repo || basename(target.cwd), title: existing?.title || target.title || taskId,
-        // A known task keeps its recorded family+model; the session's model is a display value (picker changes go through setTaskModel).
+        // A known task keeps its recorded family+model (a picked one stays pinned past retry escalation); the session's model is a display value (picker changes go through setTaskModel).
         prompt: text, mode: "auto",
         ...(existing ? {} : { family: target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude", model: target.model || undefined }),
         inheritClaim: true, // Jeremie's own channel (Bearer): his follow-up resumes a bound task with its stored claim

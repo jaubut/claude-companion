@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
@@ -164,17 +165,52 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
 export function scrubAgentEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   for (const key of Object.keys(env)) {
-    if (/^COMPANION_(AUTH_|PEER_|TOKEN)|^COMPANION_.*(TOKEN|SECRET|KEY)|^(TURSO|LIBSQL)_|^(DATABASE_URL|BROKER_TOKEN)$/i.test(key)) delete env[key]
+    if (/^COMPANION_(AUTH_|PEER_|TOKEN)|^COMPANION_.*(TOKEN|SECRET|KEY)|^(TURSO|LIBSQL|PHASE)_|^(DATABASE_URL|BROKER_TOKEN|GITHUB_WEBHOOK_SECRET|OP_SERVICE_ACCOUNT_TOKEN)$/i.test(key)) delete env[key]
   }
   env.CLAUDE_NO_AGENT_ENV = "1"
   return env
 }
 
-/** The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. */
-export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string): NodeJS.ProcessEnv {
-  const env = scrubAgentEnv(baseEnv)
+/**
+ * `export NAME=value` lines from `tls-agent-env` (tls-secrets.py env: shlex-quoted). Values in any other quoting
+ * (the legacy bash %q fallback with spaces or escapes) are skipped, never guessed.
+ */
+export function parseAgentEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of text.split("\n")) {
+    const m = /^export ([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line.trim())
+    if (!m) continue
+    const raw = m[2]!
+    if (/^'.*'$/s.test(raw) && raw.length >= 2) out[m[1]!] = raw.slice(1, -1).replaceAll(`'"'"'`, "'")
+    else if (/^[\w@%+=:,./-]*$/.test(raw)) out[m[1]!] = raw
+  }
+  return out
+}
+
+/**
+ * The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. `secrets` (Claude workers: the agent
+ * secrets from tls-agent-env) are merged BEFORE the scrub, so a Turso / Companion / Phase key in them never gets through.
+ */
+export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string, secrets: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env = scrubAgentEnv({ ...baseEnv, ...secrets })
   env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
   return env
+}
+
+/**
+ * What an interactive `claude` gets from the launch shim, read by the supervisor instead: the shim stays off
+ * (CLAUDE_NO_AGENT_ENV=1) so buildWorkerEnv can scrub the result. No TLS_AGENT_PATHS → never the scripts-only keys
+ * (ANTHROPIC_API_KEY would switch the worker to API billing). stdout is only parsed, never logged.
+ */
+export function defaultLoadAgentSecrets(home = homedir()): Promise<Record<string, string>> {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  delete env.TLS_AGENT_PATHS; delete env.TLS_AGENT_SCRIPTS
+  return new Promise((resolve) => {
+    execFile(join(home, ".local", "bin", "tls-agent-env"), [], { env, timeout: 30_000, maxBuffer: 1 << 20 }, (err, stdout) => {
+      if (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") console.error(`[worker] tls-agent-env failed (${(err as NodeJS.ErrnoException).code ?? "error"}): Claude worker starts without agent secrets`); resolve({}); return }
+      resolve(parseAgentEnv(String(stdout)))
+    })
+  })
 }
 
 /** Resolve the target agent family (`claude` | `codex` | `gemini`) from explicit `family`, `agent`, or `model`. */
@@ -269,9 +305,13 @@ export function buildHeadlessGeminiArgs(opts: { prompt: string; sessionId: strin
   return args
 }
 
+/** Hosts a Claude worker's sandboxed Bash may reach on top of ~/.claude/settings.json: GCP (Cloud Run, Artifact Registry, Gmail API), Cloudflare Workers, Resend, Brevo. */
+export const WORKER_SANDBOX_HOSTS: readonly string[] = ["*.googleapis.com", "*.pkg.dev", "*.run.app", "*.workers.dev", "api.resend.com", "api.brevo.com"]
+
 /** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini` → agy). */
 export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: string; args: string[] } {
   if (opts.family === "codex") return { cmd: "codex", args: buildHeadlessCodexArgs(opts) }
   if (opts.family === "gemini") return { cmd: agyBin(), args: buildHeadlessGeminiArgs(opts) }
-  return { cmd: "claude", args: buildHeadlessClaudeArgs(opts) }
+  // Worker-only sandbox network additions (lists merge with the user settings): the production jobs Codex already does.
+  return { cmd: "claude", args: ["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } }), ...buildHeadlessClaudeArgs(opts)] }
 }

@@ -88,3 +88,9 @@ checks the live frame carries exactly these keys. Full contract: `docs/builder-p
 Item: `id`, `title`, `builder` (nullable), `pct` (0-100, null = indeterminate), `step`
 (nullable), `startedAt` / `updatedAt` (server ms epoch), `stale` (no update for 10 min; the
 job drops after 2 h). Every key always present.
+
+## `subscriptions/` — AI plan usage (`server/lib/subscriptions.ts`)
+
+Not part of `contracts:sync`; the iOS decoder mirrors it by hand. `api.json` is a
+`GET /api/subscriptions` answer; the full contract is `docs/subscriptions-api.md`.
+`server/lib/subscriptions.test.ts` checks the live shape carries exactly these keys.

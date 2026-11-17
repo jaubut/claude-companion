@@ -5084,6 +5084,34 @@
           "externals": []
         },
         {
+          "path": "lib/subscriptions.ts",
+          "lines": 214,
+          "kind": "lib",
+          "exports": [
+            "Subscription",
+            "claudePlan",
+            "claudeSubscription",
+            "CodexRead",
+            "parseCodexRollout",
+            "chatgptSubscription",
+            "subscriptions",
+            "resetSubscriptionsCache"
+          ],
+          "state": [
+            "let cache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/gauge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/suggest-cleanup.ts",
           "lines": 76,
           "kind": "lib",
@@ -6488,7 +6516,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 278,
+          "lines": 318,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6501,7 +6529,9 @@
             "StreamJsonEvent",
             "parseStreamJsonLine",
             "scrubAgentEnv",
+            "parseAgentEnv",
             "buildWorkerEnv",
+            "defaultLoadAgentSecrets",
             "resolveWorkerFamily",
             "modelFitsFamily",
             "buildHeadlessClaudeArgs",
@@ -6509,6 +6539,7 @@
             "normalizeAgyCliModelFlag",
             "agyBin",
             "buildHeadlessGeminiArgs",
+            "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation"
           ],
           "state": [],
@@ -6622,7 +6653,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 591,
+          "lines": 598,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6657,7 +6688,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 42,
+          "lines": 44,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -7275,7 +7306,7 @@
         },
         {
           "path": "routes/gauge.ts",
-          "lines": 31,
+          "lines": 37,
           "kind": "route-host",
           "exports": [
             "handleGaugeRoute"
@@ -7293,12 +7324,18 @@
               "method": "GET",
               "path": "/api/gauge",
               "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/subscriptions",
+              "prefix": false
             }
           ],
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
             "lib/gauge.ts",
+            "lib/subscriptions.ts",
             "lib/vault-guard.ts",
             "wiring/gauge.ts"
           ],
@@ -8289,7 +8326,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 270,
+          "lines": 274,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -14308,6 +14345,12 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "GaugeAccount": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "lib/subscriptions.ts"
+          ]
+        },
         "mayClearLine": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -15219,6 +15262,12 @@
           ]
         },
         "buildWorkerEnv": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultLoadAgentSecrets": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -16445,6 +16494,7 @@
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/gauge.ts#GET /api/gauge",
+            "routes/gauge.ts#GET /api/subscriptions",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/brain.ts"
           ]
@@ -16453,6 +16503,12 @@
           "module": "lib/gauge.ts",
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
+        "subscriptions": {
+          "module": "lib/subscriptions.ts",
+          "callers": [
+            "routes/gauge.ts#GET /api/subscriptions"
           ]
         },
         "GithubWebhookDispatcher": {
