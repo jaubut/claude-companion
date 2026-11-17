@@ -14,6 +14,21 @@ export function defaultKillPid(pid: number, sig: NodeJS.Signals): void {
   try { process.kill(-pid, sig) } catch { /* gone */ }
 }
 
+/** The parent pid (a worker still parented to the Companion that spawned it has not been orphaned by a restart). */
+export function defaultGetParentPid(pid: number): number | null {
+  if (!Number.isInteger(pid) || pid <= 1) return null
+  try {
+    if (existsSync(`/proc/${pid}/stat`)) {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/)[1])
+      return Number.isInteger(ppid) ? ppid : null
+    }
+    const ps = spawnSync("ps", ["-p", String(pid), "-o", "ppid="], { encoding: "utf8", timeout: 1_000 })
+    const ppid = Number((ps.stdout ?? "").trim())
+    return ps.status === 0 && Number.isInteger(ppid) && ppid > 0 ? ppid : null
+  } catch { return null }
+}
+
 export function defaultGetPidIdentity(pid: number): string | null {
   if (!Number.isInteger(pid) || pid <= 1) return null
   try {

@@ -16,6 +16,8 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   handoffClaim?: string | null
   /** The model was chosen (dispatch `model` or the picker via setTaskModel), not routed: later turns keep it, no retry escalation. */
   modelPinned?: boolean
+  /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
+  ownerPid?: number | null
 }
 
 /** Best effort: a failed write keeps the previous file. */

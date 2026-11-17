@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -12,6 +12,7 @@ import {
   buildWorkerEnv,
   createWorkerSupervisor,
   defaultResolveRepoDir,
+  defaultSpawnWorker,
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
@@ -559,6 +560,45 @@ describe("createWorkerSupervisor", () => {
     })
     expect(parseStreamJsonLine(JSON.stringify({ event: "result", result: { conversation_id: "agy-1", status: "ERROR", error: { message: "quota" } } })))
       .toEqual({ sessionId: "agy-1", done: true, isError: true, resultText: "quota" })
+  })
+
+  test("gemini: another Companion instance loading the state file leaves a live agy alone; a timeout reads as one, not agy's 'interrupted'", async () => {
+    const home = join(tmpdir(), `worker-sup-agy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    // Real agy 1.5.x: idles while a background task runs; on SIGTERM prints an ERROR result "interrupted" and exits 1.
+    const fakeAgy = join(home, "agy")
+    writeFileSync(fakeAgy, `#!/bin/sh
+trap 'printf "%s\\n" "{\\"event\\":\\"result\\",\\"result\\":{\\"conversation_id\\":\\"agy-conv-1\\",\\"status\\":\\"ERROR\\",\\"response\\":\\"\\",\\"error\\":\\"interrupted\\"}}"; echo "error: interrupted" >&2; exit 1' TERM
+printf "%s\\n" "{\\"event\\":\\"init\\",\\"conversation_id\\":\\"agy-conv-1\\",\\"init\\":{}}"
+echo "root agent idle; waiting for 1 background task(s) to finish" >&2
+sleep 30 & wait $!
+`)
+    chmodSync(fakeAgy, 0o755)
+    const makeSup = (selfPid?: number) => createWorkerSupervisor({
+      host: "zettlab", home, selfPid, now: () => Date.now(), uuid: () => "dddd1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => defaultSpawnWorker({ ...opts, cmd: fakeAgy }),
+    })
+    try {
+      const sup = makeSup()
+      expect((await sup.dispatchTask({ taskId: "gm-1", repo: "claude-companion", prompt: "inventory", family: "gemini", timeoutS: 3 })).ok).toBe(true)
+      for (let i = 0; i < 100 && sup.getTask("gm-1")?.sessionId !== "agy-conv-1"; i++) await Bun.sleep(20)
+      const pid = JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8"))[0].pid as number
+
+      // A `bun test` or dev server importing wiring/worker-mcp on the same host: it must not reap the live server's worker.
+      const other = makeSup(process.pid + 100_000)
+      expect(other.getTask("gm-1")).toBeNull()
+      expect(() => process.kill(pid, 0)).not.toThrow()
+
+      const done = await sup.awaitTask("gm-1", 10_000)
+      expect(done.ok && done.task.status).toBe("failed")
+      expect(done.ok && done.task.error).toBe("timed out after 3s: root agent idle; waiting for 1 background task(s) to finish")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   test("codex: no default model flag, never a claude-* id, and a resume keeps the task's family + model", async () => {
