@@ -65,7 +65,7 @@ Don't ask Jeremie to merge routine agent PRs: merge them with
 - 403 `not_agent_branch`: the head is not `dispatch/*`.
 - 403 `parked`: a do-not-merge/wip label, or a shepherd park (`pr:hold`, or `pr:needs-human` without Jeremie's explicit approval in this thread). Money, MFA, auth, schema and the task origin no longer block a merge. When a green PR is parked with `pr:needs-human` (such as reviewer disagreement after 2 review rounds or a `— needs your review` size/dependency/external-url park), summarize what it flagged for Jeremie and ask if he wants to merge it; once Jeremie replies `"Merge it"` or `"Merge <n>"` in the Brain thread, the server's `bin/pr-merge` gate verifies his user message in `orchestrator_turns` and lifts the `pr:needs-human` review park + `not_approved` check automatically. Never recommend merging a PR before checking that its CI is green (`MERGEABLE` + `CLEAN`).
 - 409 `not_green`: CI is not green or not CLEAN.
-- 409 `not_approved`: the current head lacks what its review tier needs (high or unmarked: Claude and Codex APPROVE; normal: Claude; while `~/.claude/state/claude-review-paused` exists, Codex instead, or both if the PR is client-origin; low: none on docs, tests and generated maps), or has a CHANGES.
+- 409 `not_approved`: the current head lacks what its review tier needs (high or unmarked: Claude and Gemini APPROVE (a Codex APPROVE still counts as the second reviewer during the cutover); normal: Claude; while `~/.claude/state/claude-review-paused` exists, Gemini instead, or both if the PR is client-origin; low: none on docs, tests and generated maps), or has a CHANGES.
 - 429 `merge_cap`.
 
 A refusal is final: tell Jeremie the `error` and `reasons`, don't retry or work around it. `not_green` or `not_approved` may clear by itself later; try again only when the PR has changed.
@@ -103,7 +103,7 @@ claude-companion and claude-config deploy themselves on this host once a merge t
 
 ## Repo leads (the repo managers)
 
-Every jaubut repo with a checkout on the brain host is managed by its repo lead (`lead-<repo>`). **`lead-<repo>` is the repo manager** — it owns that repo's builders, watches CI and Codex/Claude reviews, runs fix rounds, and enforces the 3-PR cap:
+Every jaubut repo with a checkout on the brain host is managed by its repo lead (`lead-<repo>`). **`lead-<repo>` is the repo manager** — it owns that repo's builders, watches CI and Gemini/Claude reviews (Codex still counts as the second reviewer during the cutover), runs fix rounds, and enforces the 3-PR cap:
 1. File the task first, while the turn is open, with `bin/propose --handoff --repo <repo>`, and keep the `claim` it answers with the task id.
 2. Ensure the repo lead is running with `bin/lead <repo>`, then send `lead-<repo>` the complete brief with that task id and its claim (`TASK <id> CLAIM <claim>`) via `bin/sessions send lead-<repo> "Read ~/claude-companion/brain/LEAD.md. <brief>"` (and answer Jeremie immediately in your own turn — leads do not send ACKs back to you, and `SendMessage`'s `"in that session's inbox, not yet read"` notice simply means queued for immediate delivery on the lead's turn; never report `"not yet read"` to Jeremie as a stall).
 3. Only dispatch `bin/worker dispatch` yourself when a repo has no lead or `lead-<repo>` asks you `builder <repo>: <task-id>`. A 404 `no_lead_for_repo` (no checkout here) → use `bin/propose`.

@@ -78,12 +78,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 277 | lib | 47 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
+| `wiring/brain-pr-merge.ts` | 274 | lib | 5 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/worker-mcp.ts` | 271 | lib | 8 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
-| `wiring/brain-pr-merge.ts` | 270 | lib | 5 |  |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
