@@ -6488,7 +6488,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 269,
+          "lines": 309,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6501,13 +6501,16 @@
             "StreamJsonEvent",
             "parseStreamJsonLine",
             "scrubAgentEnv",
+            "parseAgentEnv",
             "buildWorkerEnv",
+            "defaultLoadAgentSecrets",
             "resolveWorkerFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
             "normalizeAgyCliModelFlag",
             "agyBin",
             "buildHeadlessGeminiArgs",
+            "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation"
           ],
           "state": [],
@@ -6621,7 +6624,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 585,
+          "lines": 590,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -15218,6 +15221,12 @@
           ]
         },
         "buildWorkerEnv": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultLoadAgentSecrets": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"

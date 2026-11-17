@@ -15,6 +15,7 @@ import {
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
+import { WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { workerReceipt } from "./worker-pr-link"
 
 describe("parseStreamJsonLine", () => {
@@ -580,6 +581,62 @@ describe("createWorkerSupervisor", () => {
       spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", result: "Done https://github.com/jaubut/claude-companion/pull/999" }))
       spawned[0]!.onExit(0, null)
       expect(terminalEvents).toEqual([{ taskId: "wake-1", status: "completed", prUrl: "https://github.com/jaubut/claude-companion/pull/999" }])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("a Claude worker gets the agent secrets minus the scrubbed ones; codex / gemini get neither", async () => {
+    expect(parseAgentEnv([
+      "export CLOUDFLARE_API_TOKEN=cf-abc",
+      "export RESEND_API_KEY='re_1 2'",
+      `export QUOTED='a'"'"'b'`,
+      "export WEIRD=a\\ b",
+      "garbage",
+    ].join("\n"))).toEqual({ CLOUDFLARE_API_TOKEN: "cf-abc", RESEND_API_KEY: "re_1 2", QUOTED: "a'b" })
+
+    const home = join(tmpdir(), `worker-sup-secrets-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    let loads = 0
+    let uuidN = 0
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => `ffff1111-2222-4333-8444-55555555555${uuidN++}`,
+      trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 8889, kill() {} } },
+      loadAgentSecrets: async () => {
+        loads++
+        return {
+          RESEND_API_KEY: "re_secret", CLOUDFLARE_API_TOKEN: "cf_secret",
+          TURSO_AUTH_TOKEN: "turso", TURSO_DATABASE_URL: "libsql://x", COMPANION_AUTH_TOKEN: "comp",
+          GITHUB_WEBHOOK_SECRET: "whsec", PHASE_SERVICE_TOKEN: "phase", OP_SERVICE_ACCOUNT_TOKEN: "op", BROKER_TOKEN: "broker",
+        }
+      },
+    })
+    try {
+      await sup.dispatchTask({ taskId: "sec-claude", repo: "claude-companion", prompt: "Deploy" })
+      const env = spawned[0]!.env
+      expect(env.RESEND_API_KEY).toBe("re_secret")
+      expect(env.CLOUDFLARE_API_TOKEN).toBe("cf_secret")
+      for (const k of ["TURSO_AUTH_TOKEN", "TURSO_DATABASE_URL", "COMPANION_AUTH_TOKEN", "GITHUB_WEBHOOK_SECRET", "PHASE_SERVICE_TOKEN", "OP_SERVICE_ACCOUNT_TOKEN", "BROKER_TOKEN"]) {
+        expect(env[k]).toBeUndefined()
+      }
+      expect(env.CLAUDE_NO_AGENT_ENV).toBe("1")
+      expect(spawned[0]!.cmd).toBe("claude")
+      expect(spawned[0]!.args.slice(0, 2)).toEqual(["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } })])
+
+      await sup.dispatchTask({ taskId: "sec-codex", repo: "claude-companion", prompt: "Deploy", family: "codex" })
+      await sup.dispatchTask({ taskId: "sec-gemini", repo: "claude-companion", prompt: "Deploy", family: "gemini" })
+      expect(loads).toBe(1)
+      for (const s of spawned.slice(1)) {
+        expect(s.env.RESEND_API_KEY).toBeUndefined()
+        expect(s.args).not.toContain("--settings")
+      }
+      expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: "Deploy", sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
