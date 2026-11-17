@@ -165,6 +165,18 @@ describe("GET /api/gauge", () => {
   })
 })
 
+describe("GET /api/subscriptions", () => {
+  test("bearer required; claude, chatgpt, gemini in order", async () => {
+    const url = `http://127.0.0.1:${server.port}/api/subscriptions`
+    expect((await fetch(url)).status).toBe(401)
+    const res = await fetch(url, { headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; subscriptions: Array<{ provider: string; windows: Array<{ label: string }> }> }
+    expect(body.ok).toBe(true)
+    expect(body.subscriptions.map((s) => s.provider)).toEqual(["claude", "chatgpt", "gemini"])
+  })
+})
+
 describe("contracts/gauge fixtures", () => {
   const fixture = (f: string) => JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "contracts", "gauge", f), "utf8")) as Record<string, unknown>
   const keysOf = (o: unknown) => Object.keys(o as object).sort()

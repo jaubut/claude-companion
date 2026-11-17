@@ -5084,6 +5084,34 @@
           "externals": []
         },
         {
+          "path": "lib/subscriptions.ts",
+          "lines": 214,
+          "kind": "lib",
+          "exports": [
+            "Subscription",
+            "claudePlan",
+            "claudeSubscription",
+            "CodexRead",
+            "parseCodexRollout",
+            "chatgptSubscription",
+            "subscriptions",
+            "resetSubscriptionsCache"
+          ],
+          "state": [
+            "let cache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/gauge.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/suggest-cleanup.ts",
           "lines": 76,
           "kind": "lib",
@@ -7277,7 +7305,7 @@
         },
         {
           "path": "routes/gauge.ts",
-          "lines": 31,
+          "lines": 37,
           "kind": "route-host",
           "exports": [
             "handleGaugeRoute"
@@ -7295,12 +7323,18 @@
               "method": "GET",
               "path": "/api/gauge",
               "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/subscriptions",
+              "prefix": false
             }
           ],
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
             "lib/gauge.ts",
+            "lib/subscriptions.ts",
             "lib/vault-guard.ts",
             "wiring/gauge.ts"
           ],
@@ -14310,6 +14344,12 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "GaugeAccount": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "lib/subscriptions.ts"
+          ]
+        },
         "mayClearLine": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -16447,6 +16487,7 @@
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/gauge.ts#GET /api/gauge",
+            "routes/gauge.ts#GET /api/subscriptions",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/brain.ts"
           ]
@@ -16455,6 +16496,12 @@
           "module": "lib/gauge.ts",
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
+        "subscriptions": {
+          "module": "lib/subscriptions.ts",
+          "callers": [
+            "routes/gauge.ts#GET /api/subscriptions"
           ]
         },
         "GithubWebhookDispatcher": {
