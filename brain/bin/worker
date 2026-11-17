@@ -5,12 +5,14 @@
 #     --claim: the handoff claim `bin/propose --handoff --repo` answered for this id and repo. Without it the worker's
 #     PR never links to the task row (origin unknown); the result's "claim" says verified, claim_refused:<reason>, pending or absent.
 #   bin/worker await --task <id> [--wait-ms 30000] [--host local|zettlab|mac]
+#     turns[]: every turn ended since the last await, full text. task.result = the latest substantive report.
+#   bin/worker get --task <id> [--host local|zettlab|mac]   the task and ALL its turns (full result text, PR url)
 #   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
 #   bin/worker list [--host local|zettlab|mac]
 set -euo pipefail
 
 SUB="${1:-}"
-[ -n "$SUB" ] || { echo "worker: usage: bin/worker <dispatch|await|interrupt|list> [flags]" >&2; exit 2; }
+[ -n "$SUB" ] || { echo "worker: usage: bin/worker <dispatch|await|get|interrupt|list> [flags]" >&2; exit 2; }
 shift
 
 TASK_ID=""; REPO=""; PROMPT=""; TITLE=""; MODE="auto"; HOST="local"; WAIT_MS="30000"; CLOSE_WT="0"; AGENT=""; MODEL=""; FAMILY=""; CLAIM=""
@@ -66,6 +68,9 @@ if sub == "dispatch":
 elif sub == "await":
     args = {"task_id": os.environ["TASK_ID"], "wait_ms": int(os.environ["WAIT_MS"] or "30000"), "host": host}
     tool = "await_task"
+elif sub == "get":
+    args = {"task_id": os.environ["TASK_ID"], "host": host}
+    tool = "get_task"
 elif sub == "interrupt":
     args = {"task_id": os.environ["TASK_ID"], "close_worktree": os.environ["CLOSE_WT"] == "1", "host": host}
     tool = "interrupt_task"

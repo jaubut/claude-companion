@@ -91,13 +91,20 @@ export function linkWorkerPr(deps: LinkDeps, t: LinkTarget, opts: { write?: bool
 
 /** The brain's terminal message for a worker turn. "PR ready [" stays first (lib/brain.ts receipt match); the step's
  *  link note, e.g. "(PR link still pending)", follows the url so the brain hears when the link hasn't landed. */
-export function workerReceipt(t: { taskId: string; repo: string; title: string; status: string; step: string | null; prUrl: string | null; result: string; error: string | null }): string {
-  const result = t.result ? `\nResult: ${t.result.slice(0, 600)}` : ""
-  if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}`
-  if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}`
+/** `host` (the receipt relay's `--host`) adds the pointer to the full, untruncated turns; `latest` is a notification turn
+ *  that came after the report (shown, never in its place). */
+export function workerReceipt(
+  t: { taskId: string; repo: string; title: string; status: string; step: string | null; prUrl: string | null; result: string; error: string | null },
+  opts: { host?: string; latest?: string | null } = {},
+): string {
+  const result = t.result ? `\nResult: ${t.result.slice(0, 600)}${t.result.length > 600 ? "…" : ""}` : ""
+  const later = opts.latest ? `\nLater turn (kept in history): ${opts.latest.slice(0, 300)}${opts.latest.length > 300 ? "…" : ""}` : ""
+  const full = opts.host ? `\nFull report, every turn: bin/worker get --task ${t.taskId} --host ${opts.host}` : ""
+  if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}${result}${full}`
+  if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}${later}${full}`
   const head = `PR ready: ${t.prUrl}`
   const note = t.step?.startsWith(head) ? t.step.slice(head.length) : ""
-  return `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${note}${result}`
+  return `PR ready [${t.taskId}] ${t.repo} — ${t.prUrl}${note}${result}${later}${full}`
 }
 
 export interface Linked { taskId: string; repo: string; prUrl: string; outcome: LinkOutcome }

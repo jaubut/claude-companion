@@ -10,10 +10,11 @@ import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
-import { createWorkerMcpHandler } from "../lib/worker-mcp"
-import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
+import { createWorkerMcpHandler, defaultResolvePeer, isLocalTarget, relayWorkerReceipts } from "../lib/worker-mcp"
+import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "../lib/worker-pr-link"
 import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
+import { type WorkerReceipt, deliveredReceiptsFile, loadDeliveredKeys, saveDeliveredKeys } from "../lib/worker-task-store"
 import { HOST_INFO } from "../state"
 import { emitTrace, getBrainDeliver } from "./brain"
 import { builderJobs } from "./builder-jobs"
@@ -70,6 +71,13 @@ export async function syncWorkerTaskToTurso(
   }
 }
 
+/** Receipt relay pass interval (brain host): the fallback for peers' outboxes; a local turn end kicks a pass at once. */
+const RECEIPT_POLL_MS = 30_000
+const DELIVERED_MAX = 1_000
+let relayStarted = false
+let relaying = false
+let relayAgain = false
+
 // The live progress card in the brain thread: brain_trace frames only, never a turn, so the brain isn't woken.
 const progressTrace = createWorkerProgressTrace({ host: HOST_INFO.name, now: Date.now, trace: emitTrace })
 
@@ -111,8 +119,9 @@ export const workerSupervisor = createWorkerSupervisor({
   onTaskTerminal: (task, linkBound) => {
     void syncWorkerTaskToTurso(task, linkBound)
     if (brainEnabled()) progressTrace.finish(task)
-    notifyBrain(task)
   },
+  // The receipt itself goes through the outbox, on every host: the brain host's relay posts it (kickReceiptRelay).
+  onReceipt: () => kickReceiptRelay(),
 })
 
 /** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
@@ -126,26 +135,54 @@ export function replayWorkerPrLinks(): void {
   void backfillWorkerPrLinks({ gh: realGh, exec: tursoExec, log: (l) => companionLog(`[worker] pr link replay ${l}`) }, workerStateFile(homedir()), { write: true })
 }
 
-function notifyBrain(task: SupervisedTaskSnapshot): void {
-  if (!brainEnabled()) return
-  const text = workerReceipt(task)
-  const leadTask = `${LEAD_PREFIX}${task.repo}`
+/** Into the repo lead when one is live, else the brain thread. True once written. */
+async function deliverReceipt(text: string, r: WorkerReceipt): Promise<boolean> {
+  const leadTask = `${LEAD_PREFIX}${r.task.repo}`
   const leadSession = listSessions().find((s) => s.taskId === leadTask)
   const deliver = getBrainDeliver()
   if (leadSession && deliver) {
-    void deliver(`[from worker] ${text}\n(Inspect CI/reviews and run any fix rounds; only tell-brain when ready to merge/close or if Jeremie must decide.)`, leadSession.key)
-      .then(async (res) => {
-        const out = await res.json().catch(() => ({})) as { ok?: unknown }
-        if (!res.ok || out.ok !== true) {
-          orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
-        }
-      })
-      .catch(() => {
-        orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
-      })
-    return
+    try {
+      const res = await deliver(`[from worker] ${text}\n(Inspect CI/reviews and run any fix rounds; only tell-brain when ready to merge/close or if Jeremie must decide.)`, leadSession.key)
+      const out = await res.json().catch(() => ({})) as { ok?: unknown }
+      if (res.ok && out.ok === true) return true
+    } catch { /* the thread below */ }
   }
-  orchEmit(appendTurn("orchestrator", text, task.taskId, BRAIN_THREAD))
+  orchEmit(appendTurn("orchestrator", text, r.task.taskId, BRAIN_THREAD))
+  return true
+}
+
+const delivered = (() => {
+  const file = deliveredReceiptsFile(homedir())
+  const keys = loadDeliveredKeys(file)
+  const set = new Set(keys)
+  return {
+    has: (k: string) => set.has(k),
+    add: (k: string) => {
+      set.add(k); keys.push(k)
+      if (keys.length > DELIVERED_MAX) keys.splice(0, keys.length - DELIVERED_MAX)
+      saveDeliveredKeys(file, keys)
+    },
+  }
+})()
+
+/** One relay pass now (or right after the running one). Brain host only, after startWorkerReceiptRelay. */
+function kickReceiptRelay(): void {
+  if (!relayStarted) return
+  if (relaying) { relayAgain = true; return }
+  relaying = true
+  const peers = (["mac", "zettlab"] as const).filter((h) => !isLocalTarget(h, HOST_INFO.name) && defaultResolvePeer(h))
+  void relayWorkerReceipts({ mcp: workerMcp, hosts: ["local", ...peers], delivered, deliver: deliverReceipt })
+    .then((n) => { if (n) companionLog(`[worker] ${n} receipt(s) posted`) })
+    .catch((err: unknown) => companionLog(`[worker] receipt relay: ${(err as Error)?.message ?? String(err)}`))
+    .finally(() => { relaying = false; if (relayAgain) { relayAgain = false; kickReceiptRelay() } })
+}
+
+/** Boot (cli.ts), brain host: post every host's worker receipts into the brain thread until each is acked. */
+export function startWorkerReceiptRelay(): void {
+  if (!brainEnabled() || process.env.NODE_ENV === "test") return
+  relayStarted = true
+  kickReceiptRelay()
+  setInterval(kickReceiptRelay, RECEIPT_POLL_MS).unref?.()
 }
 
 export const workerMcp = createWorkerMcpHandler({

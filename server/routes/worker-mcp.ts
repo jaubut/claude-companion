@@ -2,7 +2,7 @@ import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, LEAD_PREFIX, brainEnabled } from "../lib/brain"
 import { type Session, listSessions } from "../lib/sessions"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
-import type { WorkerMcpHandler } from "../lib/worker-mcp"
+import { RECEIPT_TOOLS, type WorkerMcpHandler } from "../lib/worker-mcp"
 import { type BrainWiring, brainWiring } from "../wiring/brain"
 import { workerMcp } from "../wiring/worker-mcp"
 
@@ -76,6 +76,12 @@ export function createWorkerMcpRoute(deps: WorkerMcpRouteDeps = {}) {
         id: null,
         error: { code: -32700, message: "Parse error" },
       }, { status: 400 })
+    }
+
+    // Only the brain host's receipt relay (Bearer, cross-host or in-process) may drain an outbox, never an agent.
+    const tool = (body.params as { name?: unknown } | undefined)?.name
+    if (url.pathname !== "/api/mcp/workers" && typeof tool === "string" && RECEIPT_TOOLS.has(tool)) {
+      return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
     }
 
     const res = await mcp.handleRpc(body)

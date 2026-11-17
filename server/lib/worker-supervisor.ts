@@ -14,7 +14,10 @@ import {
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
-import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
+import {
+  type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn,
+  loadReceipts, loadTaskRecords, parseTurns, reportTurn, saveReceipts, saveTaskRecords, workerReceiptFile, workerStateFile,
+} from "./worker-task-store"
 
 export {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
@@ -24,6 +27,14 @@ export {
 }
 
 const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
+// ponytail: unacked receipts past this drop oldest first (no brain host polling at all); a real queue if that ever matters.
+const OUTBOX_MAX = 200
+
+/** Footer on every worker brief: a turn ends on finished work, and a background-notification turn restates the report. */
+export const WORKER_TURN_RULE = "Turn rule: end your turn only when the work you report is done. Never end a turn saying you are waiting on " +
+  "background work (a background shell, a long render or run): wait for it in this turn, or stop it and report what you have. " +
+  "If you are woken again after your report (a background-task notification, a resume), your reply must restate your full final " +
+  "report (links, choices, QA) updated with what changed, never a short note in its place."
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
@@ -51,13 +62,15 @@ export interface SpawnWorkerOpts {
 
 export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
-  stateFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
+  stateFile?: string; receiptFile?: string; killGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
   /** `linkBound`: the task holds a verified handoff claim, so it may write its notes DB row (wiring's status sync). */
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
   /** Any state change, plus every new step or summary while running (the brain thread's live card). */
   onTaskProgress?(task: SupervisedTaskSnapshot): void
   onTaskTerminal?(task: SupervisedTaskSnapshot, linkBound: boolean): void
+  /** A finished turn's receipt entered the outbox (pendingReceipts / ackReceipts). */
+  onReceipt?(): void
   /** Does this claim let the worker task link its PR to the notes DB row of its id? Persisted; null (lookup failed) = ask next turn. */
   bindTask?(taskId: string, repo: string, claim: string): Promise<true | string | null>
   /** A bound task's turn reported a PR: link it (the claim checked again) before the turn reads completed. Bounded, never rejects. */
@@ -99,7 +112,7 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
 
 interface InternalTask extends PersistedTaskRecord {
   pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null; modelPinned: boolean
-  activeTurn: number; jobId: string; turnReportedTerminal: boolean
+  activeTurn: number; jobId: string; turnReportedTerminal: boolean; turns: WorkerTurn[]; turnsRead: number
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
   waiters: Set<() => void>; stderrTail: string[]
@@ -110,6 +123,25 @@ function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
 }
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
+}
+/** The open turn, or a new one: output after a `result` event is a turn the harness started on its own. */
+function openTurn(t: InternalTask, now: number): WorkerTurn {
+  const last = t.turns.at(-1)
+  if (last && last.endedAt === null) return last
+  const turn: WorkerTurn = { turn: (last?.turn ?? 0) + 1, startedAt: now, endedAt: null, status: "running", result: "", prUrl: null }
+  t.turns.push(turn)
+  return turn
+}
+function closeTurn(t: InternalTask, status: WorkerTaskStatus, now: number): boolean {
+  const last = t.turns.at(-1)
+  if (!last || last.endedAt !== null) return false
+  last.endedAt = now; last.status = status
+  return true
+}
+/** `result` = the report (reportTurn); while no turn has ended, the open turn's live text. */
+function refreshResult(t: InternalTask): void {
+  const last = t.turns.at(-1)
+  t.result = reportTurn(t.turns)?.result || (last?.endedAt === null ? last.result : "")
 }
 function sameRealPath(a: string, b: string): boolean {
   try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
@@ -127,6 +159,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
+  const receiptFile = deps.receiptFile ?? workerReceiptFile(deps.home)
+  const outbox = loadReceipts(receiptFile)
 
   // No checkout on this host: a full clone of jaubut/<repo> into ~/apps/<repo>, where the resolver finds it next time.
   // Never ~/leads/<repo>: a lead's clone is shallow, lead-writable and wiped on every lead respawn.
@@ -146,7 +180,20 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
       ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned,
+      turns: t.turns, turnsRead: t.turnsRead,
     })))
+  }
+
+  /** Exactly one receipt per finished dispatch turn, on disk until the brain host acks it. */
+  function enqueueReceipt(t: InternalTask): void {
+    const id = `${t.taskId}#${t.turnCount}@${t.completedAt ?? t.updatedAt}`
+    if (outbox.some((r) => r.id === id)) return
+    const report = reportTurn(t.turns)
+    const latest = t.turns.findLast((x) => x.endedAt !== null && !!x.result)
+    outbox.push({ id, at: deps.now(), latest: latest && latest !== report ? latest.result : null, task: toSnapshot(t) })
+    if (outbox.length > OUTBOX_MAX) outbox.splice(0, outbox.length - OUTBOX_MAX)
+    saveReceipts(receiptFile, outbox)
+    try { deps.onReceipt?.() } catch { /* best effort */ }
   }
 
   function loadPersistedTasks(): void {
@@ -169,6 +216,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
       const loadedFamily = resolveWorkerFamily({ family: r.family, model: r.model ?? undefined }) ?? "claude"
+      const legacyResult = typeof r.result === "string" ? r.result : ""
+      const turns = r.turns !== undefined ? parseTurns(r.turns) : legacyResult
+        ? [{ turn: 1, startedAt: r.startedAt ?? now, endedAt: r.completedAt ?? r.updatedAt ?? now, status: wasRunning ? "interrupted" as const : r.status ?? "completed", result: legacyResult, prUrl: r.prUrl ?? null }]
+        : []
+      // The restart killed the process, but a turn that already ended completed (its `result` event came) delivered its report.
+      const lastTurn = turns.at(-1)
+      const reported = wasRunning && lastTurn?.endedAt != null && lastTurn.status === "completed"
+      if (wasRunning && lastTurn?.endedAt === null) { lastTurn.endedAt = now; lastTurn.status = "interrupted" }
       const taskRecord: InternalTask = {
         taskId: r.taskId, repo: r.repo, repoDir: r.repoDir,
         title: typeof r.title === "string" ? r.title : r.taskId,
@@ -177,13 +232,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         model: typeof r.model === "string" && r.model ? r.model : null,
         branch: typeof r.branch === "string" ? r.branch : `dispatch/${r.taskId}`,
         worktree: r.worktree, sessionId: r.sessionId,
-        status: wasRunning ? "interrupted" : (r.status ?? "interrupted"),
+        status: reported ? "completed" : wasRunning ? "interrupted" : (r.status ?? "interrupted"),
         turnCount,
-        step: wasRunning ? "Interrupted (server restarted)" : (typeof r.step === "string" ? r.step : null),
-        pct: typeof r.pct === "number" ? r.pct : null,
-        result: typeof r.result === "string" ? r.result : "",
+        step: reported ? "Turn completed (server restarted before the worker exited)" : wasRunning ? "Interrupted (server restarted)" : (typeof r.step === "string" ? r.step : null),
+        pct: reported ? 100 : typeof r.pct === "number" ? r.pct : null,
+        result: "",
         prUrl: typeof r.prUrl === "string" ? r.prUrl : null,
-        error: wasRunning ? "server restarted while task was running" : (typeof r.error === "string" ? r.error : null),
+        error: reported ? null : wasRunning ? "server restarted while task was running" : (typeof r.error === "string" ? r.error : null),
         startedAt: typeof r.startedAt === "number" ? r.startedAt : now,
         updatedAt: wasRunning ? now : (typeof r.updatedAt === "number" ? r.updatedAt : now),
         completedAt: wasRunning ? now : (typeof r.completedAt === "number" ? r.completedAt : null),
@@ -194,9 +249,12 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         modelPinned: r.modelPinned === true,
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
+        turns, turnsRead: typeof r.turnsRead === "number" ? r.turnsRead : turns.at(-1)?.turn ?? 0,
       }
+      refreshResult(taskRecord)
       tasks.set(r.taskId, taskRecord)
       syncTaskSession(taskRecord)
+      if (wasRunning) enqueueReceipt(taskRecord)
     }
     if (dirty) savePersistedTasks()
   }
@@ -363,7 +421,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
           pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim, modelPinned: false,
-          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false,
+          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false, turns: [], turnsRead: 0,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
@@ -374,12 +432,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
         task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
+        closeTurn(task, "interrupted", now); openTurn(task, now); refreshResult(task)
         tasks.set(taskId, task); savePersistedTasks(); syncTaskSession(task)
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
         const dCtx = deps.designContext?.().trim() ?? ""
-        const effectivePrompt = dCtx && !prompt.startsWith("/") ? `${prompt}\n\n${dCtx}`.slice(0, PROMPT_MAX) : prompt
+        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX)}\n\n${WORKER_TURN_RULE}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let resolveExit!: () => void
@@ -398,8 +457,15 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               const prevSid = task.sessionId; const prevStarted = task.sessionStarted; const prevPrUrl = task.prUrl; const prevResult = task.result
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
-              if (ev.assistantText) { task.result = ev.assistantText; task.sessionStarted = true }
-              if (ev.resultText) { task.result = ev.resultText; task.sessionStarted = true }
+              // Each turn keeps its own text: a later turn (a background-task notification) never overwrites an earlier report.
+              if (ev.assistantText || ev.resultText || ev.step) {
+                const cur = openTurn(task, task.updatedAt)
+                if (ev.assistantText) { cur.result = ev.assistantText; task.sessionStarted = true }
+                if (ev.resultText) { cur.result = ev.resultText; task.sessionStarted = true }
+                if (ev.prUrl) cur.prUrl = ev.prUrl
+              }
+              const turnEnded = !!ev.done && closeTurn(task, ev.isError ? "failed" : "completed", task.updatedAt)
+              refreshResult(task)
               if (ev.step) {
                 task.sessionStarted = true; task.step = ev.step
                 task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
@@ -407,7 +473,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 syncTaskSession(task)
               }
               if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
-              if (task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
+              if (turnEnded || task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
               else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
             onStderrLine(line) {
@@ -423,6 +489,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               clearTimers(task); task.handle = null; task.exitPromise = null
               if (task.pid !== null && !isPidAlive(task.pid)) { task.pid = null; task.pidIdentity = null; task.reloadedFromDisk = false }
               task.updatedAt = deps.now(); task.completedAt = task.updatedAt
+              closeTurn(task, task.status === "interrupted" ? "interrupted" : code === 0 && !sig && !task.error ? "completed" : "failed", task.updatedAt)
+              refreshResult(task)
               if (task.status === "interrupted") {
                 if (!task.turnReportedTerminal) {
                   task.turnReportedTerminal = true
@@ -431,6 +499,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
               const finish = () => {
+                enqueueReceipt(task)
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
                 try { deps.onTaskTerminal?.(toSnapshot(task), task.prLinkBound === true && !!task.handoffClaim) } catch { /* best effort */ }
               }
@@ -474,6 +543,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.error = `spawn failed: ${((err as Error)?.message ?? String(err)).slice(0, 300)}`
           task.step = `Failed: ${task.error.slice(0, 100)}`
           task.updatedAt = deps.now(); task.completedAt = task.updatedAt; task.turnReportedTerminal = true
+          closeTurn(task, "failed", task.updatedAt)
           deps.reportJob({ event: "aborted", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
           savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
           return { ok: false, status: 500, error: task.error }
@@ -502,11 +572,17 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       }
     },
 
-    async awaitTask(taskId: string, waitMs = DEFAULT_WAIT_MS): Promise<{ ok: true; task: SupervisedTaskSnapshot; timedOut: boolean } | { ok: false; status: number; error: string }> {
+    /** `turns`: every turn ended since the last await returned, full text (the brain reads them all, not only `result`). */
+    async awaitTask(taskId: string, waitMs = DEFAULT_WAIT_MS): Promise<{ ok: true; task: SupervisedTaskSnapshot; timedOut: boolean; turns: WorkerTurn[] } | { ok: false; status: number; error: string }> {
       const t = tasks.get(taskId.trim())
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
+      const unread = (): WorkerTurn[] => {
+        const out = t.turns.filter((x) => x.endedAt !== null && x.turn > t.turnsRead)
+        if (out.length) { t.turnsRead = out.at(-1)!.turn; savePersistedTasks() }
+        return out
+      }
       const boundedWait = Math.min(MAX_WAIT_MS, Math.max(0, Math.floor(waitMs)))
-      if (t.status !== "running" || boundedWait === 0) return { ok: true, task: toSnapshot(t), timedOut: false }
+      if (t.status !== "running" || boundedWait === 0) return { ok: true, task: toSnapshot(t), timedOut: false, turns: unread() }
       const timedOut = await new Promise<boolean>((resolve) => {
         let timer: ReturnType<typeof setTimeout> | null = null
         const onDone = () => { if (timer) clearTimeout(timer); t.waiters.delete(onDone); resolve(false) }
@@ -514,7 +590,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         timer = setTimeout(() => { t.waiters.delete(onDone); resolve(true) }, boundedWait)
         timer.unref?.()
       })
-      return { ok: true, task: toSnapshot(t), timedOut: timedOut && t.status === "running" }
+      return { ok: true, task: toSnapshot(t), timedOut: timedOut && t.status === "running", turns: unread() }
     },
 
     async interruptTask(taskId: string, opts: { closeWorktree?: boolean } = {}): Promise<{ ok: true; task: SupervisedTaskSnapshot; worktreeRemoved: boolean; note?: string } | { ok: false; status: number; error: string }> {
@@ -528,6 +604,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (t.status === "running" || t.handle !== null || t.exitPromise !== null) {
           t.status = "interrupted"; t.error = "interrupted by caller"; t.step = "Interrupted"
           t.updatedAt = deps.now(); t.completedAt = t.updatedAt
+          closeTurn(t, "interrupted", t.updatedAt); refreshResult(t)
           const h = t.handle
           clearTimers(t)
           if (!t.turnReportedTerminal) {
@@ -587,6 +664,21 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       t.updatedAt = deps.now()
       savePersistedTasks(); syncTaskSession(t)
       return toSnapshot(t)
+    },
+
+    /** The task and its whole turn history (`bin/worker get`); doesn't move await's read mark. */
+    getTaskTurns(taskId: string): { task: SupervisedTaskSnapshot; turns: WorkerTurn[] } | null {
+      const t = tasks.get(taskId.trim())
+      return t ? { task: toSnapshot(t), turns: t.turns.map((x) => ({ ...x })) } : null
+    },
+
+    pendingReceipts(): WorkerReceipt[] { return [...outbox] },
+    /** The brain host delivered these: drop them from the outbox. */
+    ackReceipts(ids: string[]): number {
+      const before = outbox.length
+      for (let i = outbox.length - 1; i >= 0; i--) if (ids.includes(outbox[i]!.id)) outbox.splice(i, 1)
+      if (outbox.length !== before) saveReceipts(receiptFile, outbox)
+      return before - outbox.length
     },
 
     listTasks(): SupervisedTaskSnapshot[] { return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot) },

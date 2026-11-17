@@ -5,6 +5,7 @@ import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
 import {
   type SpawnWorkerOpts,
+  WORKER_TURN_RULE,
   buildHeadlessClaudeArgs,
   buildHeadlessCodexArgs,
   buildHeadlessGeminiArgs,
@@ -601,7 +602,7 @@ describe("createWorkerSupervisor", () => {
       // Turn after completion: nothing named → recorded family + model.
       const t2 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Follow up" })
       expect(t2.ok && [t2.task.family, t2.task.model]).toEqual(["codex", "gpt-6-astra"])
-      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", "Follow up"])
+      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", `Follow up\n\n${WORKER_TURN_RULE}`])
       finish(3)
       // The turn-8 shape: family codex + a stale claude model → still the task's codex model.
       const t3 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Turn 8", family: "codex", model: "claude-opus-5-5" })
@@ -614,7 +615,7 @@ describe("createWorkerSupervisor", () => {
       const t4 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Switch to agy", family: "gemini" })
       expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", null])
       expect(spawned[5]!.cmd).toMatch(/(^|\/)agy$/)
-      expect(spawned[5]!.args).toEqual(["--print=Switch to agy", "--output-format", "stream-json", "--dangerously-skip-permissions"])
+      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_TURN_RULE}`, "--output-format", "stream-json", "--dangerously-skip-permissions"])
       spawned[5]!.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-conv-1", init: { cwd: "/w" } }))
       spawned[5]!.onExit(0, null)
 
@@ -760,7 +761,7 @@ describe("createWorkerSupervisor", () => {
         expect(s.env.RESEND_API_KEY).toBeUndefined()
         expect(s.args).not.toContain("--settings")
       }
-      expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: "Deploy", sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
+      expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: `Deploy\n\n${WORKER_TURN_RULE}`, sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
@@ -1235,6 +1236,64 @@ describe("createWorkerSupervisor", () => {
       expect(d.ok).toBe(true)
       expect(clones).toEqual([["clone", "-q", "https://github.com/jaubut/no-checkout.git", join(home, "apps", "no-checkout")]])
       expect(defaultResolveRepoDir("no-checkout", home)).toBe(join(home, "apps", "no-checkout"))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("a background-notification turn after the report never replaces it; every turn stays in full history (fd0fea0d)", async () => {
+    const home = join(tmpdir(), `worker-sup-turns-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    let clock = 1700000000000
+    const mk = () => createWorkerSupervisor({
+      host: "mac", home, now: () => ++clock, uuid: () => "eeee1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill() {} } },
+    })
+    const sup = mk()
+    const report = `v8 ready: https://frame.io/v8-granby\nMusic: "Northern Lights" (Artlist), cut to the drop at 0:42.\nQA: ${"checked ".repeat(800)}all green.`
+    const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
+    try {
+      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8 edit" })
+      expect(spawned[0]!.args.at(-1)).toContain(WORKER_TURN_RULE)
+      // Turn 1: the real report. Turn 2, same process: the harness wakes it for a background job.
+      spawned[0]!.onStdoutLine(result(report))
+      spawned[0]!.onStdoutLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Checking the background job." }] } }))
+      spawned[0]!.onStdoutLine(result("The background job hit its time limit; nothing else to do."))
+      spawned[0]!.onExit(0, null)
+
+      const got = sup.getTaskTurns("fd0fea0d")!
+      expect(got.task.status).toBe("completed")
+      expect(got.task.result).toBe(report) // never truncated, never replaced
+      expect(got.turns.map((t) => [t.turn, t.status, t.result.length])).toEqual([[1, "completed", report.length], [2, "completed", 58]])
+      // One receipt for the dispatch turn: the report, with the late turn shown beside it.
+      const [receipt, ...rest] = sup.pendingReceipts()
+      expect(rest).toEqual([])
+      expect(receipt!.task.result).toBe(report)
+      expect(receipt!.latest).toBe("The background job hit its time limit; nothing else to do.")
+      const text = workerReceipt(receipt!.task, { host: "mac", latest: receipt!.latest })
+      expect(text).toContain("Music: \"Northern Lights\"")
+      expect(text).toContain("Later turn (kept in history): The background job hit its time limit")
+      expect(text).toContain("bin/worker get --task fd0fea0d --host mac")
+
+      // await returns every turn since the last read, once.
+      const a1 = await sup.awaitTask("fd0fea0d", 0)
+      expect(a1.ok && a1.turns.map((t) => t.turn)).toEqual([1, 2])
+      const a2 = await sup.awaitTask("fd0fea0d", 0)
+      expect(a2.ok && a2.turns).toEqual([])
+
+      // A resumed turn that brings a new link is the new report; the history survives a restart.
+      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Try v9" })
+      spawned[1]!.onStdoutLine(result("v9: https://frame.io/v9-granby"))
+      spawned[1]!.onExit(0, null)
+      const reloaded = mk().getTaskTurns("fd0fea0d")!
+      expect(reloaded.task.result).toBe("v9: https://frame.io/v9-granby")
+      expect(reloaded.turns.map((t) => t.turn)).toEqual([1, 2, 3])
+      expect(reloaded.turns[0]!.result).toBe(report)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

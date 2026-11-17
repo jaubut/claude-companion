@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { recordPeer } from "../lib/vault-guard"
-import { createWorkerMcpHandler } from "../lib/worker-mcp"
+import { createWorkerMcpHandler, relayWorkerReceipts } from "../lib/worker-mcp"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
 import { syncWorkerTaskToTurso } from "../wiring/worker-mcp"
 import { createWorkerMcpRoute } from "./worker-mcp"
@@ -147,6 +147,7 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
         "dispatch_task",
         "await_task",
         "interrupt_task",
+        "get_task",
         "list_tasks",
       ])
 
@@ -262,5 +263,95 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
       expect(c.sql).not.toContain("dispatch_pr_url")
       expect(c.args).not.toContain(pr)
     }
+  })
+
+
+  test("a Mac worker's receipt survives a Mac restart and a brain outage, and posts exactly once (742990dd, fd0fea0d)", async () => {
+    const macHome = join(tmpdir(), `worker-receipt-mac-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const brainHome = join(tmpdir(), `worker-receipt-brain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(macHome, "claude-companion", ".git"), { recursive: true })
+    mkdirSync(join(brainHome, "claude-companion", ".git"), { recursive: true })
+    const spawned: Array<Parameters<NonNullable<Parameters<typeof createWorkerSupervisor>[0]["spawnWorker"]>>[0]> = []
+    const supOn = (home: string) => createWorkerSupervisor({
+      host: "mac", home, now: () => 1700000000000, uuid: () => "aaaa1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill() {} } },
+    })
+    const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
+    try {
+      // Mac: no brain here. One turn finishes, one has reported but not exited, one is mid-work, then Companion restarts.
+      const mac1 = supOn(macHome)
+      await mac1.dispatchTask({ taskId: "742990dd", repo: "claude-companion", prompt: "Granby v6" })
+      spawned[0]!.onStdoutLine(result("v6 ready: https://frame.io/v6"))
+      spawned[0]!.onExit(0, null)
+      await mac1.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8" })
+      spawned[1]!.onStdoutLine(result("v8 ready: https://frame.io/v8"))
+      await mac1.dispatchTask({ taskId: "256a637a", repo: "claude-companion", prompt: "Cold rounds" })
+      expect(mac1.pendingReceipts().map((r) => r.task.taskId)).toEqual(["742990dd"])
+
+      const mac2 = supOn(macHome) // restart
+      expect(mac2.pendingReceipts().map((r) => [r.task.taskId, r.task.status])).toEqual([
+        ["742990dd", "completed"], ["fd0fea0d", "completed"], ["256a637a", "interrupted"],
+      ])
+      expect(supOn(macHome).pendingReceipts()).toHaveLength(3) // a reload never enqueues twice
+
+      // Brain host (Zettlab) pulls the Mac outbox over the peer link.
+      const macMcp = createWorkerMcpHandler({ supervisor: mac2, localHost: "mac" })
+      let peerDown = true
+      let dropAck = false
+      const brainMcp = createWorkerMcpHandler({
+        supervisor: supOn(brainHome), localHost: "zettlab",
+        resolvePeer: (h) => h === "mac" ? { url: "http://100.64.0.2:4245", token: "t" } : null,
+        fetchPeer: (async (_u: string | URL | Request, init?: RequestInit) => {
+          if (peerDown) throw new Error("connect ECONNREFUSED")
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+          if (dropAck && (body.params as { name: string }).name === "ack_receipts") { dropAck = false; return new Response("", { status: 502 }) }
+          return Response.json(await macMcp.handleRpc(body))
+        }) as typeof fetch,
+      })
+      const thread: string[] = []
+      const keys = new Set<string>()
+      const relay = () => relayWorkerReceipts({
+        mcp: brainMcp, hosts: ["local", "mac"], delivered: { has: (k) => keys.has(k), add: (k) => { keys.add(k) } },
+        deliver: async (text) => { thread.push(text); return true },
+      })
+
+      expect(await relay()).toBe(0) // Mac unreachable: kept
+      expect(mac2.pendingReceipts()).toHaveLength(3)
+      peerDown = false
+      dropAck = true
+      expect(await relay()).toBe(3) // posted, but the ack is lost
+      expect(mac2.pendingReceipts()).toHaveLength(3)
+      expect(await relay()).toBe(0) // no double post; acked now
+      expect(mac2.pendingReceipts()).toEqual([])
+      expect(supOn(macHome).pendingReceipts()).toEqual([]) // the ack is on disk
+      expect(thread).toHaveLength(3)
+      expect(thread[0]).toStartWith("completed [742990dd]")
+      expect(thread[0]).toContain("bin/worker get --task 742990dd --host mac")
+      expect(thread[1]).toContain("v8 ready: https://frame.io/v8")
+      expect(thread[2]).toStartWith("blocked [256a637a]")
+      expect(thread[2]).toContain("server restarted while task was running")
+    } finally {
+      rmSync(macHome, { recursive: true, force: true })
+      rmSync(brainHome, { recursive: true, force: true })
+    }
+  })
+
+  test("the brain/lead hook route refuses the receipt relay's tools", async () => {
+    const route = createWorkerMcpRoute({
+      mcp: { handleRpc: async () => { throw new Error("must not reach the handler") } } as unknown as NonNullable<Parameters<typeof createWorkerMcpRoute>[0]>["mcp"],
+      enabled: () => true,
+      wiring: { status: () => ({ state: "up", sessionKey: "k", since: 1, restarts: 0, host: "zettlab", activity: null }) },
+      sessions: () => [{ key: "k", sessionId: "s", pid: "9001", cwd: "/b", taskId: "brain", startedAt: 1, lastSeenAt: 1 }],
+    })
+    const req = new Request("http://127.0.0.1:4245/hooks/brain/workers-mcp", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Companion-Task-Id": "brain", "X-Companion-Pid": "9001" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ack_receipts", arguments: { ids: ["x"] } } }),
+    })
+    recordPeer(req, "127.0.0.1")
+    expect((await route(req, new URL(req.url)))?.status).toBe(403)
   })
 })
