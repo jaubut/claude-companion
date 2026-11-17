@@ -1294,6 +1294,15 @@ describe("createWorkerSupervisor", () => {
       expect(reloaded.task.result).toBe("v9: https://frame.io/v9-granby")
       expect(reloaded.turns.map((t) => t.turn)).toEqual([1, 2, 3])
       expect(reloaded.turns[0]!.result).toBe(report)
+
+      // A later dispatch's short, link-free answer is its report: an earlier dispatch's longer report never wins.
+      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Fix CI" })
+      spawned[2]!.onStdoutLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Looking at CI." }] } }))
+      expect(sup.getTaskTurns("fd0fea0d")!.task.result).toBe("Looking at CI.") // the live card follows the open turn
+      spawned[2]!.onStdoutLine(result("Couldn't fix CI, blocked by X."))
+      spawned[2]!.onExit(0, null)
+      expect(sup.getTaskTurns("fd0fea0d")!.task.result).toBe("Couldn't fix CI, blocked by X.")
+      expect(sup.pendingReceipts().at(-1)!.task.result).toBe("Couldn't fix CI, blocked by X.")
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

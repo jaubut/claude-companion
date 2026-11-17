@@ -8,8 +8,9 @@ const OUTBOX_MAX = 200
 export function createReceiptOutbox(file: string, now: () => number, onReceipt?: () => void) {
   const outbox = loadReceipts(file)
   return {
+    /** `turns`: the current dispatch's. Its start keys the receipt, so a restart re-enqueuing it keeps the same id. */
     enqueue(task: SupervisedTaskSnapshot, turns: readonly WorkerTurn[]): void {
-      const id = `${task.taskId}#${task.turnCount}@${task.completedAt ?? task.updatedAt}`
+      const id = `${task.taskId}#${task.turnCount}@${turns[0]?.startedAt ?? task.completedAt ?? task.updatedAt}`
       if (outbox.some((r) => r.id === id)) return
       const report = reportTurn(turns)
       const latest = turns.findLast((x) => x.endedAt !== null && !!x.result)

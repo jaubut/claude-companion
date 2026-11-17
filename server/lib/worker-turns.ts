@@ -3,7 +3,10 @@ import { type PersistedTaskRecord, type WorkerTurn, parseTurns, reportTurn } fro
 
 // A worker task's append-only turn history: each turn keeps its own text, so a later turn never overwrites a report.
 
-interface TurnHolder { turns: WorkerTurn[]; result: string }
+interface TurnHolder { turns: WorkerTurn[]; result: string; dispatchTurn?: number }
+
+// ponytail: oldest turns drop past this (the state file is rewritten whole on each save); archive them if old reports matter.
+const TURNS_MAX = 50
 
 /** The open turn, or a new one: output after a `result` event is a turn the harness started on its own. */
 export function openTurn(t: TurnHolder, now: number): WorkerTurn {
@@ -11,7 +14,13 @@ export function openTurn(t: TurnHolder, now: number): WorkerTurn {
   if (last && last.endedAt === null) return last
   const turn: WorkerTurn = { turn: (last?.turn ?? 0) + 1, startedAt: now, endedAt: null, status: "running", result: "", prUrl: null }
   t.turns.push(turn)
+  if (t.turns.length > TURNS_MAX) t.turns.splice(0, t.turns.length - TURNS_MAX)
   return turn
+}
+
+/** The current dispatch's turns: an earlier dispatch's report never stands in for this one's answer. */
+export function dispatchTurns(t: TurnHolder): WorkerTurn[] {
+  return t.turns.filter((x) => x.turn >= (t.dispatchTurn ?? 0))
 }
 
 export function closeTurn(t: TurnHolder, status: WorkerTaskStatus, now: number): boolean {
@@ -21,10 +30,10 @@ export function closeTurn(t: TurnHolder, status: WorkerTaskStatus, now: number):
   return true
 }
 
-/** `result` = the report (reportTurn); while no turn has ended, the open turn's live text. */
+/** `result` = the current dispatch's report (reportTurn); while none of its turns has ended, the open turn's live text. */
 export function refreshResult(t: TurnHolder): void {
   const last = t.turns.at(-1)
-  t.result = reportTurn(t.turns)?.result || (last?.endedAt === null ? last.result : "")
+  t.result = reportTurn(dispatchTurns(t))?.result || (last?.endedAt === null ? last.result : "")
 }
 
 /** A persisted record's turns (a pre-history record's `result` becomes turn 1). `reported`: the restart found the

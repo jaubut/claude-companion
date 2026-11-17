@@ -45,6 +45,8 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   turns?: WorkerTurn[]
   /** The last turn `await_task` already returned. */
   turnsRead?: number
+  /** The turn the current dispatch opened: the report is picked from it onward, never from an earlier dispatch. */
+  dispatchTurn?: number
 }
 
 /** Best effort: a failed write keeps the previous file. */
@@ -83,7 +85,7 @@ export function loadTaskRecords(file: string): Array<Partial<PersistedTaskRecord
 export const workerReceiptFile = (home: string): string => join(home, ".claude", "state", "companion-worker-receipts.json")
 
 export interface WorkerReceipt {
-  /** `<taskId>#<turnCount>@<completedAt>`: unique per finished dispatch turn. */
+  /** `<taskId>#<turnCount>@<dispatch start>`: unique per finished dispatch turn, stable across restarts. */
   id: string; at: number
   /** The newest ended turn's text when it isn't the one `task.result` reports (a notification turn after the report). */
   latest: string | null
@@ -96,8 +98,11 @@ export function saveReceipts(file: string, receipts: WorkerReceipt[]): void { sa
 export function isWorkerReceipt(r: unknown): r is WorkerReceipt {
   if (!r || typeof r !== "object") return false
   const x = r as Partial<WorkerReceipt>
-  return typeof x.id === "string" && typeof x.at === "number" && (x.latest === null || typeof x.latest === "string") && !!x.task && typeof x.task === "object" &&
-    typeof x.task.taskId === "string" && TASK_ID_RE.test(x.task.taskId) && typeof x.task.repo === "string" && REPO_NAME_RE.test(x.task.repo)
+  const str = (v: unknown): boolean => typeof v === "string"
+  const opt = (v: unknown): boolean => v === null || typeof v === "string"
+  return typeof x.id === "string" && typeof x.at === "number" && opt(x.latest) && !!x.task && typeof x.task === "object" &&
+    typeof x.task.taskId === "string" && TASK_ID_RE.test(x.task.taskId) && typeof x.task.repo === "string" && REPO_NAME_RE.test(x.task.repo) &&
+    str(x.task.title) && str(x.task.status) && str(x.task.result) && opt(x.task.step) && opt(x.task.prUrl) && opt(x.task.error)
 }
 
 export function loadReceipts(file: string): WorkerReceipt[] { return loadJsonArray(file).filter(isWorkerReceipt) }

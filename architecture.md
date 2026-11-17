@@ -17,7 +17,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `lib/worker-supervisor.ts` | 590 | lib | 10 |  |
+| `lib/worker-supervisor.ts` | 591 | lib | 10 |  |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -189,11 +189,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
+| `lib/worker-task-store.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
-| `lib/worker-task-store.ts` | 109 | lib | 15 |  |
 | `routes/design-state.ts` | 109 | lib | 3 |  |
 | `lib/brain-store.ts` | 105 | lib | 14 |  |
 | `routes/dialogs.ts` | 104 | route-host | 1 | routes: 2 |
@@ -255,13 +255,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-worker.ts` | 55 | lib | 5 | state: cache: Map |
 | `lib/last-assistant.ts` | 53 | lib | 1 |  |
 | `wiring/outbound.ts` | 53 | lib | 4 | state: let live |
+| `lib/worker-turns.ts` | 51 | lib | 5 |  |
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
 | `routes/auto-compact.ts` | 43 | route-host | 1 | routes: 3 |
-| `lib/worker-turns.ts` | 42 | lib | 4 |  |
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
@@ -277,9 +277,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/session-prune-gone.ts` | 34 | lib | 2 |  |
 | `wiring/gauge.ts` | 34 | lib | 2 | emits: gauge |
 | `lib/worker-pid.ts` | 32 | lib | 3 |  |
+| `lib/worker-receipt-outbox.ts` | 32 | lib | 1 |  |
 | `lib/json-body.ts` | 31 | lib | 4 |  |
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
-| `lib/worker-receipt-outbox.ts` | 31 | lib | 1 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |
 | `lib/turso-test-guard.test-util.ts` | 30 | lib | 3 |  |
 | `lib/herdr-fake.test-util.ts` | 28 | lib | 1 |  |

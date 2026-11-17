@@ -340,6 +340,19 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
     }
   })
 
+  test("a peer receipt with a non-string field is skipped, never stalls the relay", async () => {
+    const good = { id: "ok#1@1", at: 1, latest: null, task: { taskId: "aaaa1111", repo: "claude-companion", title: "T", status: "completed", step: null, prUrl: null, result: "done", error: null } }
+    const bad = { ...good, id: "bad#1@1", task: { ...good.task, result: 42 } }
+    const mcp = { callTool: async (_t: unknown, name: string) => ({ result: name === "pending_receipts" ? { structuredContent: { ok: true, receipts: [bad, good] } } : {} }) }
+    const thread: string[] = []
+    const posted = await relayWorkerReceipts({
+      mcp: mcp as unknown as Parameters<typeof relayWorkerReceipts>[0]["mcp"], hosts: ["mac"],
+      delivered: { has: () => false, add: () => {} }, deliver: async (text) => { thread.push(text); return true },
+    })
+    expect(posted).toBe(1)
+    expect(thread[0]).toStartWith("completed [aaaa1111]")
+  })
+
   test("the brain/lead hook route refuses the receipt relay's tools", async () => {
     const route = createWorkerMcpRoute({
       mcp: { handleRpc: async () => { throw new Error("must not reach the handler") } } as unknown as NonNullable<Parameters<typeof createWorkerMcpRoute>[0]>["mcp"],

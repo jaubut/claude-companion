@@ -6659,7 +6659,7 @@
         },
         {
           "path": "lib/worker-receipt-outbox.ts",
-          "lines": 31,
+          "lines": 32,
           "kind": "lib",
           "exports": [
             "createReceiptOutbox"
@@ -6679,7 +6679,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 590,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "WORKER_TURN_RULE",
@@ -6717,7 +6717,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 109,
+          "lines": 114,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -6751,10 +6751,11 @@
         },
         {
           "path": "lib/worker-turns.ts",
-          "lines": 42,
+          "lines": 51,
           "kind": "lib",
           "exports": [
             "openTurn",
+            "dispatchTurns",
             "closeTurn",
             "refreshResult",
             "restoreTurns"
@@ -15497,6 +15498,12 @@
         },
         "saveTaskRecords": {
           "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "dispatchTurns": {
+          "module": "lib/worker-turns.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]

@@ -15,7 +15,7 @@ import {
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
-import { closeTurn, openTurn, refreshResult, restoreTurns } from "./worker-turns"
+import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
 import { cloneRepo, defaultResolveRepoDir, ensureWorktree } from "./worker-worktree"
 
 export {
@@ -102,7 +102,7 @@ export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
 
 interface InternalTask extends PersistedTaskRecord {
   pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null; modelPinned: boolean
-  activeTurn: number; jobId: string; turnReportedTerminal: boolean; turns: WorkerTurn[]; turnsRead: number
+  activeTurn: number; jobId: string; turnReportedTerminal: boolean; turns: WorkerTurn[]; turnsRead: number; dispatchTurn: number
   handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
   timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
   waiters: Set<() => void>; stderrTail: string[]
@@ -136,11 +136,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
       ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned,
-      turns: t.turns, turnsRead: t.turnsRead,
+      turns: t.turns, turnsRead: t.turnsRead, dispatchTurn: t.dispatchTurn,
     })))
   }
 
-  function enqueueReceipt(t: InternalTask): void { outbox.enqueue(toSnapshot(t), t.turns) }
+  function enqueueReceipt(t: InternalTask): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t)) }
 
   function loadPersistedTasks(): void {
     const now = deps.now()
@@ -190,6 +190,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         activeTurn: turnCount, jobId: turnCount <= 1 ? r.taskId : `${r.taskId}:t${turnCount}`,
         turnReportedTerminal: true, handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         turns, turnsRead: typeof r.turnsRead === "number" ? r.turnsRead : turns.at(-1)?.turn ?? 0,
+        dispatchTurn: typeof r.dispatchTurn === "number" ? r.dispatchTurn : 0,
       }
       refreshResult(taskRecord)
       tasks.set(r.taskId, taskRecord)
@@ -326,7 +327,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           status: "running", turnCount: 0, step: `Starting headless ${family} builder`, pct: 5,
           result: "", prUrl: null, error: null, startedAt: now, updatedAt: now, completedAt: null,
           pid: null, pidIdentity: null, reloadedFromDisk: false, sessionStarted: false, prLinkBound, handoffClaim, modelPinned: false,
-          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false, turns: [], turnsRead: 0,
+          activeTurn: myTurn, jobId: myJobId, turnReportedTerminal: false, turns: [], turnsRead: 0, dispatchTurn: 0,
           handle: null, exitPromise: null, timeoutTimer: null, killTimer: null, waiters: new Set(), stderrTail: [],
         }
 
@@ -337,13 +338,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
         task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []
-        closeTurn(task, "interrupted", now); openTurn(task, now); refreshResult(task)
+        closeTurn(task, "interrupted", now); task.dispatchTurn = openTurn(task, now).turn; refreshResult(task)
         tasks.set(taskId, task); savePersistedTasks(); syncTaskSession(task)
 
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
 
         const dCtx = deps.designContext?.().trim() ?? ""
-        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX)}\n\n${WORKER_TURN_RULE}`
+        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_TURN_RULE.length - 2)}\n\n${WORKER_TURN_RULE}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let resolveExit!: () => void
