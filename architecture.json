@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-16",
+  "generatedAt": "2026-11-17",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1275,
+          "lines": 1250,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -222,7 +222,6 @@
             "setAgyBrainModel",
             "getAgyBrainBoost",
             "setAgyBrainBoost",
-            "normalizeAgyCliModelFlag",
             "extractAgyUserPrompt",
             "formatAgyQuestionsMarkdown",
             "formatAgyQuestionAnswers",
@@ -6468,7 +6467,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 206,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6485,6 +6484,8 @@
             "resolveWorkerFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
+            "normalizeAgyCliModelFlag",
+            "agyBin",
             "buildHeadlessGeminiArgs",
             "buildHeadlessWorkerInvocation"
           ],
@@ -10375,6 +10376,12 @@
           "module": "lib/feed.ts",
           "callers": [
             "lib/activity.ts"
+          ]
+        },
+        "normalizeAgyCliModelFlag": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/agy-feed.ts"
           ]
         },
         "readTailLines": {
