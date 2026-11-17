@@ -15,10 +15,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/agy-feed.ts` | 1250 ⚠ 1250 > cap 600 | lib | 36 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/worker-supervisor.ts` | 599 | lib | 6 |  |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
-| `lib/worker-supervisor.ts` | 587 | lib | 6 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
@@ -53,8 +53,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/design-state.ts` | 382 | lib | 9 | state: ALLOWED_SCALES: Set, let activePromptProvider |
 | `lib/herdr.ts` | 367 | lib | 34 | state: let clientMod, spawnedAgents: Map |
+| `lib/worker-invocation.ts` | 364 | lib | 29 |  |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
-| `lib/worker-invocation.ts` | 362 | lib | 29 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/orchestrator-chat.ts` | 346 | lib | 27 | state: appendedListeners: Set |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
@@ -185,9 +185,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/note-media.ts` | 120 | lib | 4 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
+| `lib/worker-task-store.ts` | 118 | lib | 16 |  |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
-| `lib/worker-task-store.ts` | 116 | lib | 16 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
@@ -259,6 +259,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
+| `lib/worker-pid.ts` | 47 | lib | 4 |  |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
 | `routes/auto-compact.ts` | 43 | route-host | 1 | routes: 3 |
@@ -277,7 +278,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dotenv.ts` | 34 | lib | 2 |  |
 | `wiring/gauge.ts` | 34 | lib | 2 | emits: gauge |
 | `lib/worker-receipt-outbox.ts` | 33 | lib | 1 |  |
-| `lib/worker-pid.ts` | 32 | lib | 3 |  |
 | `lib/json-body.ts` | 31 | lib | 4 |  |
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |

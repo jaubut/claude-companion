@@ -11,7 +11,7 @@ import {
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
-import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
+import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
 import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
@@ -47,6 +47,8 @@ export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
   stateFile?: string; receiptFile?: string; killGraceMs?: number; reapGraceMs?: number; resolveRepoDir?(repo: string, home: string): string | null; spawnWorker?(opts: SpawnWorkerOpts): SpawnedWorkerHandle
   isPidAlive?(pid: number): boolean; killPid?(pid: number, sig: NodeJS.Signals): void; getPidIdentity?(pid: number): string | null
+  /** This supervisor's process (default process.pid) and a pid's parent: a worker still parented to another live Companion is its, never reaped here. */
+  selfPid?: number; getParentPid?(pid: number): number | null
   /** `linkBound`: the task holds a verified handoff claim, so it may write its notes DB row (wiring's status sync). */
   syncSession?(task: SupervisedTaskSnapshot, pid: number | null, linkBound: boolean): void
   /** Any state change, plus every new step or summary while running (the brain thread's live card). */
@@ -92,7 +94,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
+  const getParentPid = deps.getParentPid ?? (deps.isPidAlive ? () => null : defaultGetParentPid)
+  const selfPid = deps.selfPid ?? process.pid
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
+  // Records of workers another live Companion (prod, while a test or dev instance loads the same file) still runs: kept as-is.
+  const foreignRecords: PersistedTaskRecord[] = []
   const killGraceMs = Math.max(50, deps.killGraceMs ?? 3_000)
   const reapGraceMs = Math.max(1, deps.reapGraceMs ?? DEFAULT_REAP_GRACE_MS)
   const outbox = createReceiptOutbox(deps.receiptFile ?? workerReceiptFile(deps.home), deps.now, deps.onReceipt)
@@ -103,10 +109,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   }
 
   function savePersistedTasks(): void {
-    saveTaskRecords(stateFile, [...tasks.values()].map((t) => ({
-      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned,
+    saveTaskRecords(stateFile, [...tasks.values()].map((t): PersistedTaskRecord => ({
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid,
       turns: t.turns, turnsRead: t.turnsRead, dispatchTurn: t.dispatchTurn,
-    })))
+    })).concat(foreignRecords.filter((r) => !tasks.has(r.taskId))))
   }
 
   function enqueueReceipt(t: InternalTask, note: string | null = null): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t), note) }
@@ -123,6 +129,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       let survivingIdentity: string | null = null
       if (rawPid !== null && isPidAlive(rawPid)) {
         const currentIdentity = getPidIdentity(rawPid)
+        const ownerPid = typeof r.ownerPid === "number" ? r.ownerPid : null
+        if (ownerPid !== null && ownerPid !== selfPid && getParentPid(rawPid) === ownerPid) { foreignRecords.push(r as PersistedTaskRecord); continue }
         if (savedIdentity && currentIdentity !== null && currentIdentity === savedIdentity) {
           killPid(rawPid, "SIGTERM")
           if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
@@ -370,7 +378,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
                 syncTaskSession(task)
               }
-              if (ev.done && ev.isError) task.error = (ev.resultText || `${family} turn reported an error`).slice(0, 400)
+              // A reason the supervisor already set (the turn timeout) beats agy's generic "interrupted", which it prints on any SIGTERM.
+              if (ev.done && ev.isError) task.error ??= (family === "gemini" && ev.resultText === "interrupted"
+                ? "agy got a stop signal the supervisor did not send (Companion restart, another Companion or test instance, or a manual kill)"
+                : ev.resultText || `${family} turn reported an error`).slice(0, 400)
               if (turnEnded || task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
               else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
@@ -467,7 +478,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
           task.timeoutTimer = setTimeout(() => {
             if (settled || task.activeTurn !== myTurn || task.status !== "running") return
-            task.error = `timed out after ${Math.round(timeoutMs / 1000)}s`
+            const last = task.stderrTail.at(-1)
+            task.error = `timed out after ${Math.round(timeoutMs / 1000)}s${last ? `: ${last}` : ""}`.slice(0, 400)
             task.handle?.kill("SIGTERM")
             task.killTimer = setTimeout(() => { if (!settled && task.activeTurn === myTurn) task.handle?.kill("SIGKILL") }, 5_000)
             task.killTimer.unref?.()

@@ -47,6 +47,8 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   turnsRead?: number
   /** The turn the current dispatch opened: the report is picked from it onward, never from an earlier dispatch. */
   dispatchTurn?: number
+  /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
+  ownerPid?: number | null
 }
 
 /** Best effort: a failed write keeps the previous file. */
