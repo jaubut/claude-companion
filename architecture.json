@@ -6516,7 +6516,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 318,
+          "lines": 320,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6582,11 +6582,12 @@
         },
         {
           "path": "lib/worker-pid.ts",
-          "lines": 32,
+          "lines": 47,
           "kind": "lib",
           "exports": [
             "defaultIsPidAlive",
             "defaultKillPid",
+            "defaultGetParentPid",
             "defaultGetPidIdentity"
           ],
           "state": [],
@@ -6653,7 +6654,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 598,
+          "lines": 610,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6688,7 +6689,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 44,
+          "lines": 46,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -15331,6 +15332,12 @@
           ]
         },
         "defaultGetPidIdentity": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetParentPid": {
           "module": "lib/worker-pid.ts",
           "callers": [
             "lib/worker-supervisor.ts"
