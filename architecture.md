@@ -115,6 +115,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
+| `lib/subscriptions.ts` | 214 | lib | 8 | state: let cache |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
 | `lib/brain-trace.ts` | 212 | lib | 14 | state: TERMINAL: Set |
@@ -138,7 +139,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
-| `lib/subscriptions.ts` | 188 | lib | 6 | state: let cache |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
 | `lib/scrape-registry.ts` | 175 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |

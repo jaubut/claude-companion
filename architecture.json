@@ -5085,13 +5085,15 @@
         },
         {
           "path": "lib/subscriptions.ts",
-          "lines": 188,
+          "lines": 214,
           "kind": "lib",
           "exports": [
             "Subscription",
             "claudePlan",
             "claudeSubscription",
+            "CodexRead",
             "parseCodexRollout",
+            "chatgptSubscription",
             "subscriptions",
             "resetSubscriptionsCache"
           ],
