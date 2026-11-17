@@ -17,9 +17,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `routes/api.ts` | 592 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
+| `lib/worker-supervisor.ts` | 590 | lib | 10 |  |
 | `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/worker-supervisor.ts` | 585 | lib | 10 |  |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `routes/hooks.ts` | 567 | route-host | 1 | emits: user_prompt · routes: 9 |
@@ -63,6 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `routes/model.ts` | 310 | route-host | 1 | state: inFlight: Set · routes: 3 |
+| `lib/worker-invocation.ts` | 309 | lib | 21 |  |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
@@ -77,13 +78,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 277 | lib | 47 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
+| `wiring/brain-pr-merge.ts` | 274 | lib | 5 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
-| `wiring/brain-pr-merge.ts` | 273 | lib | 5 |  |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/worker-mcp.ts` | 271 | lib | 8 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
-| `lib/worker-invocation.ts` | 269 | lib | 18 |  |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/question-hook.ts` | 268 | lib | 7 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |

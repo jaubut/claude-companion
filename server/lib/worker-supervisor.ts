@@ -11,7 +11,7 @@ import {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE,
   type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
   buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { type PersistedTaskRecord, loadTaskRecords, saveTaskRecords, workerStateFile } from "./worker-task-store"
@@ -64,6 +64,8 @@ export interface WorkerSupervisorDeps {
   linkPr?(task: SupervisedTaskSnapshot, claim: string): Promise<string>
   /** Live active design state summary appended automatically to headless worker prompts. */
   designContext?(): string
+  /** Agent secrets for a Claude worker's env (default: `~/.local/bin/tls-agent-env`). Never rejects; {} on failure. */
+  loadAgentSecrets?(): Promise<Record<string, string>>
 }
 
 export { workerStateFile }
@@ -119,6 +121,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const inFlightWorktrees = new Set<string>()
   const resolveRepo = deps.resolveRepoDir ?? defaultResolveRepoDir
   const spawnWorker = deps.spawnWorker ?? defaultSpawnWorker
+  const loadAgentSecrets = deps.loadAgentSecrets ?? (() => defaultLoadAgentSecrets(deps.home))
   const isPidAlive = deps.isPidAlive ?? defaultIsPidAlive
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
@@ -338,6 +341,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               existingModel: existing?.model ?? null,
             })).model
           : null
+        // Codex / gemini run outside the Claude sandbox and load their own; only a Claude worker needs them passed in.
+        const secrets = family === "claude" ? await loadAgentSecrets() : {}
         const explicitNonAuto = model && model.toLowerCase() !== "auto" ? model : null
         const effectiveModel = explicitNonAuto ?? routedModel ?? existing?.model ?? null
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
@@ -376,7 +381,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         let handle: SpawnedWorkerHandle
         try {
           handle = spawnWorker({
-            cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder),
+            cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder, secrets),
             onStdoutLine(line) {
               if (settled || task.activeTurn !== myTurn) return
               const ev = parseStreamJsonLine(line)
