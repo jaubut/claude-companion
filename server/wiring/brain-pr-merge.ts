@@ -45,7 +45,8 @@ const REASON_MAX = 300
 export const MERGE_CAP = 10
 
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
-const GEMINI_HEADING = /^\s*[^\w\s]*\s*(?:\*\*)?Gemini review(?:\*\*)?\s*\(agy\b/u
+// Pinned, from the first character: a quote (`>`) or code indent never counts as the heading.
+const GEMINI_HEADING = /^♊️? \*\*Gemini review\*\* \(agy\b/u
 // TODO(gemini-cutover): drop once no open PR is waiting on a Codex review; until then a Codex
 // verdict on the current head stands in for the second reviewer.
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
@@ -201,7 +202,7 @@ function notApproved(v: PrView, claudePaused = false, clientOrigin = false): str
   // Paused: a normal tier needs the second reviewer (Gemini); a client-origin one keeps Claude too (both).
   const secondOnly = claudePaused && tier === "normal" && !clientOrigin
   if (!secondOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if ((tier !== "normal" || claudePaused) && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Gemini APPROVE on this head")
+  if ((tier !== "normal" || claudePaused) && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Gemini (or Codex) APPROVE on this head")
   return out
 }
 
