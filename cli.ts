@@ -202,7 +202,7 @@ import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
 import { startTrips } from "./server/wiring/trips"
 import { startMyTasksWatch } from "./server/routes/my-tasks"
-import { startDrawerArchive, startWorkerSessionPrune } from "./server/wiring/worker-mcp"
+import { startDrawerArchive, startWorkerReceiptRelay, startWorkerSessionPrune } from "./server/wiring/worker-mcp"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -272,6 +272,9 @@ reapScrapeSessions().catch(() => []).then(() => discoverLiveClaudes()).then(({ r
   // after discovery gives live Codex TTY rows their real thread ids first, so
   // replayed feed events land in the same rows the user can inject into.
   ensureCodexFeedMonitor()
+  // Brain host: every host's worker turn receipts (the outbox replayed at boot first) to their repo lead or the brain
+  // thread, retried until acked. After discovery: a lead not yet listed would send its receipt to the thread instead.
+  startWorkerReceiptRelay()
 })
 
 const codexFeedFallback = setTimeout(ensureCodexFeedMonitor, 3000)

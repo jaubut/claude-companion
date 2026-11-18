@@ -1,4 +1,6 @@
+import { workerReceipt } from "./worker-pr-link"
 import type { WorkerSupervisor } from "./worker-supervisor"
+import { type WorkerReceipt, isWorkerReceipt } from "./worker-task-store"
 
 // Inverted MCP Control Plane (BKM-Q24R Phase 3):
 // Exposes JSON-RPC 2.0 MCP tools (`dispatch_task`, `await_task`,
@@ -30,7 +32,7 @@ export const WORKER_MCP_TOOLS = [
   },
   {
     name: "await_task",
-    description: "Wait event-driven (up to `wait_ms`, or `0` for an immediate status snapshot) for a dispatched builder task to finish its current turn.",
+    description: "Wait event-driven (up to `wait_ms`, or `0` for an immediate status snapshot) for a dispatched builder task to finish its current turn. `turns` holds every turn ended since the last await, full text.",
     inputSchema: {
       type: "object",
       required: ["task_id"],
@@ -50,6 +52,18 @@ export const WORKER_MCP_TOOLS = [
       properties: {
         task_id: { type: "string", description: "Task identifier to interrupt." },
         close_worktree: { type: "boolean", description: "When true, removes the task's git worktree and local `dispatch/<task_id>` branch iff clean and pushed." },
+        host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
+      },
+    },
+  },
+  {
+    name: "get_task",
+    description: "A task and its whole turn history (`turns[]`: turn, startedAt, endedAt, status, full result text, prUrl). `task.result` is the latest substantive report.",
+    inputSchema: {
+      type: "object",
+      required: ["task_id"],
+      properties: {
+        task_id: { type: "string", description: "Task identifier." },
         host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
       },
     },
@@ -108,7 +122,7 @@ function toolResult(payload: Record<string, unknown>, isError = false): { conten
   }
 }
 
-function isLocalTarget(targetHost: string | undefined, localHost: string, env: NodeJS.ProcessEnv = process.env): boolean {
+export function isLocalTarget(targetHost: string | undefined, localHost: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const h = (targetHost ?? "").trim().toLowerCase()
   if (!h || h === "local") return true
   const loc = localHost.trim().toLowerCase()
@@ -212,7 +226,22 @@ export function createWorkerMcpHandler(deps: WorkerMcpDeps) {
       const waitMs = typeof args.wait_ms === "number" && Number.isFinite(args.wait_ms) ? args.wait_ms : undefined
       const out = await deps.supervisor.awaitTask(taskId, waitMs)
       if (!out.ok) return rpcOk(id, toolResult({ ok: false, error: out.error, status: out.status }, true))
-      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, timedOut: out.timedOut, task: out.task }))
+      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, timedOut: out.timedOut, task: out.task, turns: out.turns }))
+    }
+
+    if (name === "get_task") {
+      const out = deps.supervisor.getTaskTurns(typeof args.task_id === "string" ? args.task_id : String(args.taskId ?? ""))
+      if (!out) return rpcOk(id, toolResult({ ok: false, error: "task_not_found", status: 404 }, true))
+      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, ...out }))
+    }
+
+    // The receipt relay's own tools (relayWorkerReceipts): not listed, refused on the brain/lead hook route.
+    if (name === "pending_receipts") {
+      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, receipts: deps.supervisor.pendingReceipts() }))
+    }
+    if (name === "ack_receipts") {
+      const ids = Array.isArray(args.ids) ? args.ids.filter((x): x is string => typeof x === "string") : []
+      return rpcOk(id, toolResult({ ok: true, host: deps.localHost, acked: deps.supervisor.ackReceipts(ids) }))
     }
 
     if (name === "interrupt_task") {
@@ -268,3 +297,39 @@ export function createWorkerMcpHandler(deps: WorkerMcpDeps) {
 }
 
 export type WorkerMcpHandler = ReturnType<typeof createWorkerMcpHandler>
+
+export const RECEIPT_TOOLS: ReadonlySet<string> = new Set(["pending_receipts", "ack_receipts"])
+
+export interface ReceiptRelayDeps {
+  mcp: Pick<WorkerMcpHandler, "callTool">
+  /** `local` plus every configured peer role (`mac`, `zettlab`). */
+  hosts: string[]
+  /** Keys (`<host>|<receipt id>`) already in the brain thread: a lost ack never posts a receipt twice. */
+  delivered: { has(key: string): boolean; add(key: string): void }
+  /** Post into the brain thread (or the repo lead); true once it is written. */
+  deliver(text: string, receipt: WorkerReceipt): Promise<boolean>
+}
+
+/**
+ * Brain host: pull every host's receipt outbox, post each receipt once, then ack it so the host drops it. An unreachable
+ * host or a failed post leaves the receipt in its outbox for the next pass.
+ */
+export async function relayWorkerReceipts(deps: ReceiptRelayDeps): Promise<number> {
+  let posted = 0
+  for (const host of deps.hosts) {
+    const res = await deps.mcp.callTool(null, "pending_receipts", { host })
+    const out = (res.result as { structuredContent?: { ok?: unknown; receipts?: unknown } } | undefined)?.structuredContent
+    if (out?.ok !== true || !Array.isArray(out.receipts)) continue
+    const acks: string[] = []
+    for (const r of out.receipts.filter(isWorkerReceipt)) {
+      const key = `${host}|${r.id}`
+      if (!deps.delivered.has(key)) {
+        if (!(await deps.deliver(workerReceipt(r.task, { host, latest: r.latest, note: r.note }), r).catch(() => false))) continue
+        deps.delivered.add(key); posted++
+      }
+      acks.push(r.id)
+    }
+    if (acks.length) await deps.mcp.callTool(null, "ack_receipts", { host, ids: acks })
+  }
+  return posted
+}

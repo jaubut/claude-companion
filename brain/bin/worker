@@ -5,12 +5,15 @@
 #     --claim: the handoff claim `bin/propose --handoff --repo` answered for this id and repo. Without it the worker's
 #     PR never links to the task row (origin unknown); the result's "claim" says verified, claim_refused:<reason>, pending or absent.
 #   bin/worker await --task <id> [--wait-ms 30000] [--host local|zettlab|mac]
+#     turns[]: every turn ended since the last await, full text. task.result = the latest substantive report.
+#   bin/worker get --task <id> [--host local|zettlab|mac]   the task and ALL its turns (full result text, PR url)
 #   bin/worker interrupt --task <id> [--close-worktree] [--host local|zettlab|mac]
+#     --close-worktree never removes a dirty or unpushed worktree; a refusal prints "worker: worktree NOT removed: <why>" on stderr.
 #   bin/worker list [--host local|zettlab|mac]
 set -euo pipefail
 
 SUB="${1:-}"
-[ -n "$SUB" ] || { echo "worker: usage: bin/worker <dispatch|await|interrupt|list> [flags]" >&2; exit 2; }
+[ -n "$SUB" ] || { echo "worker: usage: bin/worker <dispatch|await|get|interrupt|list> [flags]" >&2; exit 2; }
 shift
 
 TASK_ID=""; REPO=""; PROMPT=""; TITLE=""; MODE="auto"; HOST="local"; WAIT_MS="30000"; CLOSE_WT="0"; AGENT=""; MODEL=""; FAMILY=""; CLAIM=""
@@ -66,6 +69,9 @@ if sub == "dispatch":
 elif sub == "await":
     args = {"task_id": os.environ["TASK_ID"], "wait_ms": int(os.environ["WAIT_MS"] or "30000"), "host": host}
     tool = "await_task"
+elif sub == "get":
+    args = {"task_id": os.environ["TASK_ID"], "host": host}
+    tool = "get_task"
 elif sub == "interrupt":
     args = {"task_id": os.environ["TASK_ID"], "close_worktree": os.environ["CLOSE_WT"] == "1", "host": host}
     tool = "interrupt_task"
@@ -83,9 +89,19 @@ CURL_SANDBOX_ARGS=()
 if [ "${SANDBOX_RUNTIME:-}" = "1" ]; then
   CURL_SANDBOX_ARGS=(--noproxy "" -H "X-Companion-Sandbox: 1")
 fi
-curl -sS --max-time 140 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/workers-mcp" \
+OUT=$(curl -sS --max-time 140 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/workers-mcp" \
   -H "Content-Type: application/json" \
   -H "X-Companion-Task-Id: ${CALLER_TASK}" \
   -H "X-Companion-Pid: $(claude_pid)" \
-  --data-binary "$BODY"
-echo
+  --data-binary "$BODY")
+printf '%s\n' "$OUT"
+# --close-worktree that kept the worktree (dirty, unpushed, worker alive): say so plainly, never only inside the JSON.
+if [ "$SUB" = "interrupt" ] && [ "$CLOSE_WT" = "1" ]; then
+  printf '%s' "$OUT" | python3 -c '
+import json, sys
+try: r = json.load(sys.stdin)["result"]["structuredContent"]
+except Exception: sys.exit(0)
+if r.get("ok") and not r.get("worktreeRemoved"):
+    print("worker: worktree NOT removed: " + (r.get("note") or "worktree already gone"), file=sys.stderr)
+' || true
+fi

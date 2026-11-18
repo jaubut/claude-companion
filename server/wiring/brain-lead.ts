@@ -8,7 +8,7 @@ import { appendTurn } from "../lib/orchestrator-chat"
 import { type SpawnResult, ensureFolderTrusted, folderTrusted, spawnInTmuxDetached } from "../lib/spawn-session"
 import { spawnServerFlags, tmuxArgv } from "../lib/tmux-pane"
 import { realDetachedDeps } from "../lib/tmux-spawn-confirm"
-import { defaultResolveRepoDir } from "../lib/worker-supervisor"
+import { defaultResolveRepoDir } from "../lib/worker-worktree"
 import type { AgentLookup } from "./takeover-liveness"
 
 // Repo leads (docs/brain-api.md § Repo leads): one persistent `lead-<repo>` herdr
