@@ -24,7 +24,10 @@ export {
   buildHeadlessWorkerInvocation, buildWorkerEnv, parseStreamJsonLine, resolveWorkerFamily,
 }
 
-const PROMPT_MAX = 100_000, DEFAULT_TIMEOUT_S = 3600, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
+const PROMPT_MAX = 100_000, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
+/** A running turn checks in with the brain every CHECKIN_MS; it is stopped only after IDLE_KILL_MS with no output (or past an explicit timeoutS). */
+export const CHECKIN_MS = 3_600_000, IDLE_KILL_MS = 30 * 60_000
+const fmtMin = (ms: number): string => { const m = Math.floor(ms / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min` }
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
@@ -115,7 +118,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     })).concat(foreignRecords.filter((r) => !tasks.has(r.taskId))))
   }
 
-  function enqueueReceipt(t: InternalTask, note: string | null = null): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t), note) }
+  function enqueueReceipt(t: InternalTask, note: string | null = null, tag = ""): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t), note, tag) }
   const cleanups = new Map<string, Promise<unknown>>() // a worktree close in flight: a follow-up dispatch / interrupt waits, no 409
 
   function loadPersistedTasks(): void {
@@ -336,6 +339,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
+        let lastOutputAt = deps.now()
         let resolveExit!: () => void
         const exitPromise = new Promise<void>((resolve) => { resolveExit = resolve })
         task.exitPromise = exitPromise
@@ -345,6 +349,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           handle = spawnWorker({
             cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder, secrets),
             onStdoutLine(line) {
+              lastOutputAt = deps.now()
               if (settled || task.lingered || task.activeTurn !== myTurn) return // after the reaper's SIGTERM: shutdown noise (agy's is_error "interrupted")
               const ev = parseStreamJsonLine(line)
               if (!ev) return
@@ -389,6 +394,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
             onStderrLine(line) {
+              lastOutputAt = deps.now()
               if (settled || task.activeTurn !== myTurn) return
               const clean = redactSecrets(line.trim()).slice(0, 300)
               if (clean) { task.stderrTail.push(clean); if (task.stderrTail.length > 10) task.stderrTail.shift() }
@@ -480,16 +486,33 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.pidIdentity = task.pid ? getPidIdentity(task.pid) : null
           task.reloadedFromDisk = false
           savePersistedTasks(); syncTaskSession(task)
-          const timeoutMs = Math.max(1, input.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
-          task.timeoutTimer = setTimeout(() => {
-            if (settled || task.activeTurn !== myTurn || task.status !== "running") return
-            const last = task.stderrTail.at(-1)
-            task.error = `timed out after ${Math.round(timeoutMs / 1000)}s${last ? `: ${last}` : ""}`.slice(0, 400)
+          // No hard stop by default: the brain hears from a long turn every hour; only silence (or an explicit timeoutS) stops it.
+          const turnStart = deps.now()
+          const timeoutMs = input.timeoutS ? Math.max(1, input.timeoutS) * 1000 : Infinity
+          let nextCheckIn = turnStart + CHECKIN_MS
+          const stop = (error: string) => {
+            task.error = error.slice(0, 400)
             task.handle?.kill("SIGTERM")
             task.killTimer = setTimeout(() => { if (!settled && task.activeTurn === myTurn) task.handle?.kill("SIGKILL") }, 5_000)
             task.killTimer.unref?.()
-          }, timeoutMs)
-          task.timeoutTimer.unref?.()
+          }
+          const arm = (t: number) => {
+            task.timeoutTimer = setTimeout(watch, Math.max(1_000, Math.min(turnStart + timeoutMs, nextCheckIn, lastOutputAt + IDLE_KILL_MS) - t))
+            task.timeoutTimer.unref?.()
+          }
+          const watch = () => {
+            task.timeoutTimer = null
+            if (settled || task.activeTurn !== myTurn || task.status !== "running") return
+            const t = deps.now(), idle = t - lastOutputAt
+            if (t - turnStart >= timeoutMs) { const last = task.stderrTail.at(-1); return stop(`timed out after ${Math.round(timeoutMs / 1000)}s${last ? `: ${last}` : ""}`) }
+            if (idle >= IDLE_KILL_MS) return stop(`stopped: no output for ${fmtMin(idle)}; worktree kept at ${task.worktree}`)
+            if (t >= nextCheckIn) {
+              if (task.turns.at(-1)?.endedAt === null) enqueueReceipt(task, `${fmtMin(t - turnStart)}, step: ${task.step ?? "none"}, last output ${fmtMin(idle)} ago`, `~running@${t}`)
+              nextCheckIn = t + CHECKIN_MS
+            }
+            arm(t)
+          }
+          arm(turnStart)
         }
 
         return { ok: true, task: toSnapshot(task), claim: claimStatus }

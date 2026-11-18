@@ -108,6 +108,7 @@ export function workerReceipt(
   const later = opts.latest ? `\nLater turn (kept in history): ${opts.latest.slice(0, 300)}${opts.latest.length > 300 ? "…" : ""}` : ""
   const hostNote = opts.note ? `\n${opts.note}` : ""
   const full = opts.host ? `\nFull report, every turn: bin/worker get --task ${t.taskId} --host ${opts.host}` : ""
+  if (t.status === "running") return `still running [${t.taskId}] ${t.title} — ${opts.note ?? ""}${full}`
   if (t.status !== "completed") return `blocked [${t.taskId}] ${t.repo} — ${t.title}\nError: ${(t.error || "worker failed").slice(0, 400)}${result}${hostNote}${full}`
   if (!t.prUrl) return `completed [${t.taskId}] ${t.repo} — ${t.title}${result}${later}${hostNote}${full}`
   const head = `PR ready: ${t.prUrl}`

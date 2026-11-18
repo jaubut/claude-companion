@@ -174,7 +174,7 @@ const MEMORY_DUTY = (memoryRef: string | null): string =>
 export const QUIET_REPLY = "noted"
 
 const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
-const INTERNAL_WORKER_RECEIPT_RE = /^(?:PR ready|completed|blocked|done|filed|cancelled)\s+\[/i
+const INTERNAL_WORKER_RECEIPT_RE = /^(?:PR ready|completed|blocked|still running|done|filed|cancelled)\s+\[/i
 
 /**
  * Internal system/agent wake events in the brain thread: delivered to the brain as `[event <id>]`,
