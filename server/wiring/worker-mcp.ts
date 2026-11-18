@@ -1,18 +1,22 @@
 import { randomUUID } from "node:crypto"
-import { homedir } from "node:os"
+import { mkdtempSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { join } from "node:path"
 import { BRAIN_THREAD, LEAD_PREFIX, brainEnabled } from "../lib/brain"
 import { DISPATCH_ID } from "../lib/dispatch-tasks"
 import { realSh } from "../lib/live-repo"
 import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
+import { startSessionArchive } from "../lib/session-archive"
 import { startGoneSessionPrune } from "../lib/session-prune-gone"
-import { listSessions, recordSession, setSessionModel } from "../lib/sessions"
+import { listSessions, markHeadlessSession, recordSession, setSessionModel } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
 import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
+import { workerAgentStatus } from "../lib/worker-invocation"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { emitTrace, getBrainDeliver } from "./brain"
@@ -73,10 +77,21 @@ export async function syncWorkerTaskToTurso(
 // The live progress card in the brain thread: brain_trace frames only, never a turn, so the brain isn't woken.
 const progressTrace = createWorkerProgressTrace({ host: HOST_INFO.name, now: Date.now, trace: emitTrace })
 
+/**
+ * Only the live server owns the real state file. Anything else that loads this module — `bun test` (a route test
+ * imports it), or any run from inside a worker — would reload the file at import, SIGTERM every running worker's
+ * process group (the one it runs in included: that is how a resumed worker kept dying with code 143) and rewrite it.
+ */
+export function supervisorStateFile(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  if (env.NODE_ENV === "test" || env.DISPATCH_WORKER === "1") return join(mkdtempSync(join(tmpdir(), "cc-worker-state-")), "tasks.json")
+  return workerStateFile(home)
+}
+
 // Live Inverted MCP worker supervisor & handler wired to Companion's BuilderJobStore and Session registry.
 export const workerSupervisor = createWorkerSupervisor({
   host: HOST_INFO.name,
   home: homedir(),
+  stateFile: supervisorStateFile(),
   now: Date.now,
   uuid: randomUUID,
   sh: realSh,
@@ -85,6 +100,7 @@ export const workerSupervisor = createWorkerSupervisor({
   designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
     const model = task.model || DEFAULT_FAMILY_MODELS[task.family]
+    markHeadlessSession(task.sessionId)
     const recorded = recordSession({
       cwd: task.worktree,
       agent: task.family,
@@ -94,7 +110,7 @@ export const workerSupervisor = createWorkerSupervisor({
       taskId: task.taskId,
       herdrPane: `headless:worker:${task.taskId}`,
       herdrAgent: task.builder,
-      agentStatus: task.status === "running" ? "busy" : "idle",
+      agentStatus: workerAgentStatus(task.status),
       pid: String(pid ?? process.pid),
       model,
     }, { sessionIdConfirmed: true })
@@ -118,6 +134,15 @@ export const workerSupervisor = createWorkerSupervisor({
 /** Boot (cli.ts): drop finished workers whose worktree is gone, now and every few seconds. */
 export function startWorkerSessionPrune(): void {
   startGoneSessionPrune((id) => workerSupervisor.getTask(id)?.status === "running")
+}
+
+/** Boot (cli.ts): idle and done sessions leave the drawer (lib/session-archive.ts); a worker card is done once its task stops running. */
+export function startDrawerArchive(): void {
+  startSessionArchive((id) => {
+    const t = workerSupervisor.getTask(id)
+    if (!t) return 0
+    return t.status === "running" ? null : t.completedAt ?? t.updatedAt
+  })
 }
 
 /** A link lost to a restart or past the retries: once at server start, tasks whose claim verifies and row is still unlinked. */

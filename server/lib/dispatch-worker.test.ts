@@ -7,6 +7,8 @@ test("envHasDispatchWorker: exact DISPATCH_WORKER=1 entry only", () => {
   expect(envHasDispatchWorker(["PATH=/bin", "DISPATCH_WORKER=1", "DISPATCH_TASK_ID=abc"])).toBe(true)
   expect(envHasDispatchWorker(["DISPATCH_WORKER=", "DISPATCH_WORKER=0", "MY_DISPATCH_WORKER=1", "X=DISPATCH_WORKER=1", "DISPATCH_TASK_ID=abc"])).toBe(false)
   expect(envHasDispatchWorker([])).toBe(false)
+  expect(envHasDispatchWorker(["COMPANION_HEADLESS=1", "COMPANION_ORIGIN=weft"])).toBe(true)
+  expect(envHasDispatchWorker(["COMPANION_HEADLESS=0", "COMPANION_ORIGIN=weft"])).toBe(false)
 })
 
 test("isDispatchWorkerPid: reads the env once per pid, never caches an unreadable env, ignores junk pids", async () => {

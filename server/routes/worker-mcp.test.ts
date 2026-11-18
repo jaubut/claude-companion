@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { recordPeer } from "../lib/vault-guard"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { createWorkerSupervisor } from "../lib/worker-supervisor"
-import { syncWorkerTaskToTurso } from "../wiring/worker-mcp"
+import { supervisorStateFile, syncWorkerTaskToTurso } from "../wiring/worker-mcp"
 import { createWorkerMcpRoute } from "./worker-mcp"
 
 describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
@@ -263,4 +263,11 @@ describe("worker-mcp route and JSON-RPC 2.0 handler", () => {
       expect(c.args).not.toContain(pr)
     }
   })
+})
+
+test("only the live server loads the real worker state file (a worker's own test run must not SIGTERM workers)", () => {
+  const real = join("/h", ".claude", "state", "companion-worker-tasks.json")
+  expect(supervisorStateFile({}, "/h")).toBe(real)
+  expect(supervisorStateFile({ NODE_ENV: "test" }, "/h")).not.toBe(real)
+  expect(supervisorStateFile({ DISPATCH_WORKER: "1" }, "/h")).not.toBe(real)
 })
