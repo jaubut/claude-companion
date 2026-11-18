@@ -4700,10 +4700,11 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 416,
+          "lines": 502,
           "kind": "lib",
           "exports": [
             "SyncFn",
+            "OpFn",
             "VaultAction",
             "AuditOrigin",
             "VaultEntry",
@@ -4712,6 +4713,7 @@
             "storePath",
             "syncToolPath",
             "vaultWritable",
+            "opTokenPath",
             "auditPath",
             "validName",
             "validValue",

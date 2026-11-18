@@ -30,6 +30,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
 | `routes/api.ts` | 507 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved · routes: 26 |
+| `lib/secret-store.ts` | 502 | lib | 30 | state: FLAGS: Set, let lock |
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
@@ -43,7 +44,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/desk-runner.ts` | 417 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
-| `lib/secret-store.ts` | 416 | lib | 28 | state: FLAGS: Set, let lock |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `routes/brain.ts` | 405 | lib | 3 |  |

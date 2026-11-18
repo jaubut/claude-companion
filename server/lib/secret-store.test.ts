@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import {
-  type SyncFn, deleteSecret, editLine, handleKeyCommand, isKeyCommand, listNames, listSecrets,
+  type OpFn, type SyncFn, deleteSecret, editLine, handleKeyCommand, isKeyCommand, listNames, listSecrets,
   parseKeyCommand, setSecretHosts, upsertSecret, validHosts, validValue, vaultDeps,
 } from "./secret-store"
 import { clock, resetVaultLimits } from "./vault-guard"
@@ -26,7 +26,20 @@ beforeEach(() => {
   syncCalls = 0
   vaultDeps.sync = ok
 })
-afterEach(() => { vaultDeps.sync = realSync })
+const realOp = vaultDeps.op
+afterEach(() => { vaultDeps.sync = realSync; vaultDeps.op = realOp })
+
+// Fake `op`: never the real CLI or token. Records argv + stdin.
+let opCalls: { args: string[]; stdin?: string }[] = []
+function fakeOp(items: { id: string; title: string; tags?: string[] }[], failWith?: string): OpFn {
+  opCalls = []
+  return async (args, stdin) => {
+    opCalls.push({ args, stdin })
+    if (failWith) return { ok: false, out: failWith }
+    return { ok: true, out: args[1] === "list" ? JSON.stringify(items) : args[1] === "create" ? '{"id":"new-id"}' : "{}" }
+  }
+}
+const withOpToken = (): void => writeFileSync(join(dirname(store), "op-token"), "fake-token\n", { mode: 0o600 })
 
 const FILE = "# c\nA_KEY='1'  # a.io\n\nFAL_KEY='old'  # scripts\nexport B_KEY=2 # b.io\n"
 
@@ -174,4 +187,141 @@ test("tls-secrets.py absent → every mutation is 501 vault_unavailable, store u
   expect(syncCalls).toBe(0)
   expect(existsSync(auditFile)).toBe(false)
   expect(listSecrets().map((e) => e.name)).toEqual(["A_KEY", "FAL_KEY", "B_KEY"])
+})
+
+test("1Password up: create goes to the vault, value only on op's stdin, message names 1Password", async () => {
+  withOpToken()
+  vaultDeps.op = fakeOp([])
+  const r = await upsertSecret({ name: "FAL_KEY", value: "sekret123", hosts: ["*.fal.run"] }, "iphone")
+  expect(r).toMatchObject({ ok: true, action: "created" })
+  expect(opCalls.map((c) => c.args)).toEqual([
+    ["item", "list", "--vault", "Agents-Zettlab", "--format", "json"],
+    ["item", "create", "--vault", "Agents-Zettlab", "--format", "json", "-"],
+  ])
+  expect(JSON.stringify(opCalls.map((c) => c.args))).not.toContain("sekret")
+  expect(JSON.parse(opCalls[1]!.stdin!)).toEqual({ title: "FAL_KEY", category: "API_CREDENTIAL", tags: ["host:*.fal.run"],
+    fields: [{ id: "credential", label: "credential", type: "CONCEALED", value: "sekret123" }] })
+  expect(r.message).toBe("🔑 FAL_KEY enregistré (*.fal.run) dans 1Password (coffre Agents-Zettlab). Les nouvelles sessions l'auront; les sessions ouvertes gardent l'ancienne valeur jusqu'au redémarrage.")
+  expect(readFileSync(store, "utf8")).toContain("FAL_KEY='sekret123'  # *.fal.run\n") // fallback kept in step
+  expect(existsSync(join(dirname(store), ".env"))).toBe(false)
+  expect(JSON.parse(readFileSync(auditFile, "utf8")).store).toBe("1password")
+  expect(syncCalls).toBe(1)
+})
+
+test("1Password up: rotate edits the item and keeps non-host tags; retag and delete hit the same item", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([{ id: "abc", title: "FAL_KEY", tags: ["host:old.io", "scripts"] }])
+  await upsertSecret({ name: "FAL_KEY", value: "sekret456", hosts: ["*.fal.run"] })
+  expect(opCalls[1]!.args).toEqual(["item", "edit", "abc", "--vault", "Agents-Zettlab"])
+  expect(JSON.parse(opCalls[1]!.stdin!).tags).toEqual(["host:*.fal.run", "scripts"])
+  vaultDeps.op = fakeOp([{ id: "abc", title: "FAL_KEY", tags: ["host:old.io", "scripts"] }])
+  await setSecretHosts("FAL_KEY", ["*.fal.ai"])
+  expect(opCalls[1]).toEqual({ args: ["item", "edit", "abc", "--vault", "Agents-Zettlab", "--tags", "host:*.fal.ai,scripts"], stdin: undefined })
+  vaultDeps.op = fakeOp([{ id: "abc", title: "FAL_KEY" }])
+  expect((await deleteSecret("FAL_KEY")).message).toStartWith("FAL_KEY supprimé de 1Password (coffre Agents-Zettlab).")
+  expect(opCalls[1]!.args).toEqual(["item", "delete", "abc", "--vault", "Agents-Zettlab"])
+})
+
+test("1Password down (bad token): secrets.env fallback written + synced, reply says so, no .env, value never echoed", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([], "[ERROR] DecodeSACredentials: illegal base64 data at input byte 4")
+  const r = await upsertSecret({ name: "NEW_KEY", value: "sekret777", hosts: ["api.x.io"] })
+  expect(r).toMatchObject({ ok: true, status: 200, action: "created" })
+  expect(opCalls).toHaveLength(1)
+  expect(readFileSync(store, "utf8")).toBe(FILE + "NEW_KEY='sekret777'  # api.x.io\n")
+  expect(syncCalls).toBe(1)
+  expect(r.message).toContain(`🔑 NEW_KEY enregistré (api.x.io) dans ${store}.`)
+  expect(r.message).toContain("⚠️ 1Password injoignable ([ERROR] DecodeSACredentials: illegal base64 data at input byte 4)")
+  expect(r.message).toContain("réenregistre NEW_KEY")
+  expect(r.message).not.toContain("sekret777")
+  expect(existsSync(join(dirname(store), ".env"))).toBe(false)
+  expect(JSON.parse(readFileSync(auditFile, "utf8")).store).toBe("secrets.env")
+})
+
+test("op throws (missing binary): same fallback; no op-token → op never called", async () => {
+  withOpToken()
+  vaultDeps.op = async () => { throw new Error("spawn op ENOENT") }
+  const r = await upsertSecret({ name: "A_KEY", value: "v1" })
+  expect(r.ok).toBe(true)
+  expect(r.message).toContain("1Password injoignable (spawn op ENOENT)")
+  rmSync(join(dirname(store), "op-token"))
+  vaultDeps.op = fakeOp([])
+  const plain = await upsertSecret({ name: "A_KEY", value: "v2" })
+  expect(opCalls).toHaveLength(0)
+  expect(plain.message).toBe(`🔑 A_KEY enregistré (aucun hôte: jamais envoyé) dans ${store}. Les nouvelles sessions l'auront; les sessions ouvertes gardent l'ancienne valeur jusqu'au redémarrage.`)
+})
+
+test("sync failure after a 1Password create → the new item is deleted, file rolled back", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([])
+  vaultDeps.sync = fail
+  const r = await upsertSecret({ name: "NEW_KEY", value: "sekret" })
+  expect(r).toMatchObject({ ok: false, error: "sync_failed" })
+  expect(opCalls.at(-1)!.args).toEqual(["item", "delete", "new-id", "--vault", "Agents-Zettlab"])
+  expect(r.message).toContain("Rien n'a changé.")
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+})
+
+test("sync failure + the create's undo fails → reply says the item stays in 1Password unmasked", async () => {
+  withOpToken()
+  const base = fakeOp([])
+  vaultDeps.op = async (args, stdin) => args[1] === "delete" ? { ok: false, out: "network down" } : base(args, stdin)
+  vaultDeps.sync = fail
+  const r = await upsertSecret({ name: "NEW_KEY", value: "sekret" })
+  expect(r).toMatchObject({ ok: false, error: "sync_failed" })
+  expect(r.message).toContain("reste dans 1Password SANS masque (suppression échouée: network down)")
+  expect(r.message).not.toContain("Rien n'a changé")
+})
+
+test("sync failure after a 1Password rotate → kept, but audited and mirrored", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([{ id: "abc", title: "FAL_KEY" }])
+  vaultDeps.sync = fail
+  const r = await upsertSecret({ name: "FAL_KEY", value: "sekret" })
+  expect(r).toMatchObject({ ok: false, status: 500, error: "sync_failed" })
+  expect(JSON.parse(readFileSync(auditFile, "utf8"))).toMatchObject({ action: "updated", name: "FAL_KEY", store: "1password" })
+})
+
+test("1Password down: rotate / retag / delete fail closed — nothing written, no sync, no audit", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([], "connection refused")
+  for (const r of [
+    await upsertSecret({ name: "FAL_KEY", value: "sekret" }),
+    await setSecretHosts("FAL_KEY", ["x.io"]),
+    await deleteSecret("FAL_KEY"),
+  ]) expect(r).toMatchObject({ ok: false, status: 503, error: "op_unavailable" })
+  expect(readFileSync(store, "utf8")).toBe(FILE)
+  expect(syncCalls).toBe(0)
+  expect(existsSync(auditFile)).toBe(false)
+})
+
+test("1Password up but the key only in secrets.env: retag / delete recorded as secrets.env", async () => {
+  withOpToken()
+  writeFileSync(store, FILE)
+  vaultDeps.op = fakeOp([])
+  const r = await deleteSecret("FAL_KEY")
+  expect(r.message).toStartWith(`FAL_KEY supprimé de ${store}.`)
+  expect(opCalls).toHaveLength(1)
+  expect(JSON.parse(readFileSync(auditFile, "utf8")).store).toBe("secrets.env")
+})
+
+test("empty op-token → op not run, treated as 1Password down", async () => {
+  writeFileSync(join(dirname(store), "op-token"), "  \n")
+  const r = await upsertSecret({ name: "NEW_KEY", value: "v1" })
+  expect(r.ok).toBe(true)
+  expect(r.message).toContain("1Password injoignable (op-token vide)")
+})
+
+test("legacy env present → stale .env copy removed", async () => {
+  const dir = dirname(store)
+  writeFileSync(join(dir, "env"), "A_KEY='1'\n")
+  writeFileSync(join(dir, ".env"), "OLD_KEY='leaked'\n")
+  await upsertSecret({ name: "A_KEY", value: "2" })
+  expect(existsSync(join(dir, ".env"))).toBe(false)
+  expect(readFileSync(join(dir, "env"), "utf8")).toBe("A_KEY='2'\n")
 })
