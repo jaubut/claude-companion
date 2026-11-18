@@ -7493,23 +7493,19 @@
         },
         {
           "path": "routes/design-state.ts",
-          "lines": 109,
+          "lines": 14,
           "kind": "lib",
           "exports": [
-            "DesignStateRouteDeps",
-            "createDesignStateRoute",
             "handleDesignStateRoute"
           ],
-          "state": [],
+          "state": [
+            "RETIRED: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [
-            "lib/design-state.ts",
-            "lib/json-body.ts",
-            "wiring/design-state.ts"
-          ],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -8982,35 +8978,23 @@
         },
         {
           "path": "wiring/design-state.ts",
-          "lines": 101,
+          "lines": 27,
           "kind": "lib",
           "exports": [
             "startDesignStateWatcher",
             "stopDesignStateWatcher",
-            "getDesignStateSnapshot",
             "designStateSnapshotFrame",
-            "refreshDesignState",
-            "updateDesignState",
             "syncDesignStateFromCanvasPick",
             "designStateHookContext",
-            "appendDesignStatePrompt",
-            "renderFigcraftNodePreview",
-            "exportDesignTokens"
+            "appendDesignStatePrompt"
           ],
-          "state": [
-            "let service",
-            "let activeForHooks",
-            "let unsub"
-          ],
-          "emits": [
-            "design_state"
-          ],
+          "state": [],
+          "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/design-state.ts",
-            "state.ts"
+            "lib/design-state.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10021,7 +10005,6 @@
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
-            "wiring/design-state.ts",
             "wiring/desk-deliver.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
@@ -16065,7 +16048,6 @@
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
-            "routes/design-state.ts",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
@@ -16962,50 +16944,6 @@
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
             "routes/copy-jobs.ts#GET /api/copy-jobs",
             "ws.ts"
-          ]
-        },
-        "exportDesignTokens": {
-          "module": "wiring/design-state.ts",
-          "callers": [
-            "routes/design-state.ts"
-          ]
-        },
-        "getDesignStateSnapshot": {
-          "module": "wiring/design-state.ts",
-          "callers": [
-            "routes/design-state.ts"
-          ]
-        },
-        "refreshDesignState": {
-          "module": "wiring/design-state.ts",
-          "callers": [
-            "routes/design-state.ts"
-          ]
-        },
-        "renderFigcraftNodePreview": {
-          "module": "wiring/design-state.ts",
-          "callers": [
-            "routes/design-state.ts"
-          ]
-        },
-        "updateDesignState": {
-          "module": "wiring/design-state.ts",
-          "callers": [
-            "routes/design-state.ts"
-          ]
-        },
-        "DesignStateSnapshot": {
-          "module": "lib/design-state.ts",
-          "callers": [
-            "routes/design-state.ts",
-            "wiring/design-state.ts"
-          ]
-        },
-        "DesignStatePatch": {
-          "module": "lib/design-state.ts",
-          "callers": [
-            "routes/design-state.ts",
-            "wiring/design-state.ts"
           ]
         },
         "getPendingQuestions": {
@@ -19046,25 +18984,7 @@
             "wiring/gauge.ts"
           ]
         },
-        "DesignStateService": {
-          "module": "lib/design-state.ts",
-          "callers": [
-            "wiring/design-state.ts"
-          ]
-        },
-        "createDesignStateService": {
-          "module": "lib/design-state.ts",
-          "callers": [
-            "wiring/design-state.ts"
-          ]
-        },
         "registerActiveDesignPromptProvider": {
-          "module": "lib/design-state.ts",
-          "callers": [
-            "wiring/design-state.ts"
-          ]
-        },
-        "withDesignStatePrompt": {
           "module": "lib/design-state.ts",
           "callers": [
             "wiring/design-state.ts"
