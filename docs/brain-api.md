@@ -165,7 +165,6 @@ Any bare jaubut repo name (`leadSlug` in `lib/brain.ts`) with a checkout on this
 6. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Gemini (`♊ **Gemini review** (agy …`, at the very start of the comment) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. During the Gemini cutover a Codex (`🧠 **Codex review**`) APPROVE still counts as the second reviewer. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED. The newest `<!-- review-tier: x -->` comment by the PR's author lowers the bar: `normal` needs only the Claude APPROVE; `low` needs no review when every file is `docs/*.md`, `README.md`, `*.test.ts` or `architecture.{json,md}`, checked here because anyone can post the marker. `high`, no marker, or `low` on other files needs both.
 
    Temporary, `rm` the file to restore: while `~/.claude/state/claude-review-paused` exists (checked on every call), a `normal`-tier PR with no `client` task origin or `client-origin` label needs the Gemini (or, during the cutover, Codex) APPROVE instead of the Claude one (still no CHANGES from either reviewer). High, unmarked, low-on-code and client-origin PRs need both.
-7. **merge_cap** refuses after 10 brain merges in 24 h.
 
 The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <checked head>`. The state is read back as MERGED, then an `agent_activity` row `brain:pr-merge` is written (meta: repo, pr, url, branch, head, title, reason, tasks; the machine digest lists these) and an event turn goes to the brain thread.
 
@@ -181,7 +180,6 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 409 `base_moved` | the base branch changed during the check, or by the last read before the merge (a retarget changes the diff, not the head); `gate_unavailable` if that read fails; ask again |
 | 409 `client_gone` | the caller hung up before the merge, nothing merged. It reaches nobody, it shows in the log |
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
-| 429 `merge_cap` | 10 brain merges in 24 h |
 | 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
 
 ### Stale agent PRs (`/hooks/brain/pr-update-branch`)

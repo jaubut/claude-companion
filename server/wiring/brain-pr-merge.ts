@@ -30,7 +30,6 @@ export { retiredPark } from "./brain-pr-park"
 //   not_approved (409): Claude AND Gemini auto-review comments with VERDICT:
 //     APPROVE stamped with the current head sha, from the PR's author (the
 //     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
-//   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
 //     TEMPORARY: while the flag file ~/.claude/state/claude-review-paused exists (read on every call), a
 //     `normal` tier PR needs the Gemini APPROVE instead of Claude's (no CHANGES from either reviewer);
@@ -42,7 +41,6 @@ export { retiredPark } from "./brain-pr-park"
 
 export const PR_MERGE_ACTION = "brain:pr-merge"
 const REASON_MAX = 300
-export const MERGE_CAP = 10
 
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 // Pinned, from the first character: a quote (`>`) or code indent never counts as the heading.
@@ -218,11 +216,8 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   const humanApproved = deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
-  let recent: number
   try {
     park = await parked(deps.exec, v, humanApproved)
-    const c = await deps.exec("SELECT COUNT(*) AS n FROM agent_activity WHERE action = ? AND ts >= datetime('now', '-1 day')", [PR_MERGE_ACTION])
-    recent = Number(c.rows[0]?.n ?? NaN)
   } catch (err) {
     companionLog(`[brain] pr-merge: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
@@ -234,7 +229,6 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
     const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
     if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   }
-  if (!(recent < MERGE_CAP)) return fail(429, "merge_cap", { cap: MERGE_CAP })
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
   const last = await prReadiness(deps.gh, v.url).catch(() => null)
   if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })

@@ -80,7 +80,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 277 | lib | 47 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
-| `wiring/brain-pr-merge.ts` | 274 | lib | 5 |  |
+| `wiring/brain-pr-merge.ts` | 267 | lib | 4 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/question-hook.ts` | 272 | lib | 7 |  |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
