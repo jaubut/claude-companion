@@ -1,6 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "./sessions"
+import { type Session, listSessions, markHeadlessSession, recordSession, removeSessionByKey, setSessionModel } from "./sessions"
+import { workerAgentStatus } from "./worker-invocation"
 import type { SupervisedTaskSnapshot } from "./worker-supervisor"
 
 /**
@@ -19,6 +20,7 @@ export function workerOwnsConvo(id: string, cwd: string, sessions: Session[], ho
  * new id, every other headless record of the same task is retired.
  */
 export function recordWorkerSession(task: SupervisedTaskSnapshot, pid: number | null, model: string): Session | null {
+  markHeadlessSession(task.sessionId)
   const recorded = recordSession({
     cwd: task.worktree,
     agent: task.family,
@@ -28,7 +30,7 @@ export function recordWorkerSession(task: SupervisedTaskSnapshot, pid: number | 
     taskId: task.taskId,
     herdrPane: `headless:worker:${task.taskId}`,
     herdrAgent: task.builder,
-    agentStatus: task.status === "running" ? "busy" : "idle",
+    agentStatus: workerAgentStatus(task.status),
     pid: String(pid ?? process.pid),
     firstSeenAt: task.startedAt,
     model,

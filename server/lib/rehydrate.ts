@@ -9,6 +9,7 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import { join, basename } from "node:path"
 import { homedir } from "node:os"
+import { parseHead } from "./recent-sessions"
 import { recordSession } from "./sessions"
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects")
@@ -19,6 +20,8 @@ interface RehydrateResult { registered: number; scanned: number }
 async function findCwd(filePath: string): Promise<string | null> {
   try {
     const text = await readFile(filePath, "utf-8")
+    // `claude -p` (workers, the brain, weft programs, scripts) is never a drawer thread.
+    if (parseHead(text.slice(0, 64 * 1024)).entrypoint === "sdk-cli") return null
     const lines = text.trim().split("\n")
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i]

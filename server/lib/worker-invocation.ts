@@ -13,6 +13,10 @@ export const ALLOWED_FAMILIES = new Set<WorkerFamily>(["claude", "codex", "gemin
 const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/
 
 export type WorkerTaskStatus = "running" | "completed" | "failed" | "interrupted"
+/** A worker card's drawer status follows its task: only a running task reads as working. */
+export function workerAgentStatus(status: WorkerTaskStatus): "busy" | "idle" {
+  return status === "running" ? "busy" : "idle"
+}
 export interface StreamJsonEvent {
   sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean
 }
@@ -194,6 +198,7 @@ export function parseAgentEnv(text: string): Record<string, string> {
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string, secrets: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = scrubAgentEnv({ ...baseEnv, ...secrets })
   env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
+  env.COMPANION_HEADLESS = "1"; env.COMPANION_ORIGIN = "worker"
   // Nobody answers a prompt in a headless worker: an API-enable [y/N] from gcloud hung a gemini worker's background task for the whole turn.
   env.CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
   return env

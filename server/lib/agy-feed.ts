@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
 import { appendFeedEvent, getFeed, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
-import { getSessionByKey, listSessions, recordSession } from "./sessions"
+import { type Session, getSessionByKey, isHeadlessSession, listSessions, recordSession } from "./sessions"
 import { workerOwnsConvo } from "./worker-session"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
@@ -45,6 +45,9 @@ export interface AgyConversationSummary {
   status: "busy" | "idle"
   updatedAtMs: number
   stepCount: number
+  // Started by `agy -p` (headless workers, weft programs, pr-shepherd reviews): agy records no
+  // user input step for a print-mode prompt (last_user_input_step_index stays -1).
+  headless?: boolean
 }
 
 interface AgyTranscriptStep {
@@ -583,12 +586,13 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
       db.exec("PRAGMA busy_timeout = 2500;")
       const rows = db.query(`
         SELECT conversation_id AS id, title, step_count AS stepCount, last_modified_time AS lastModifiedTime,
-               workspace_uris AS workspaceUris, status, not_fully_idle AS notFullyIdle
+               workspace_uris AS workspaceUris, status, not_fully_idle AS notFullyIdle,
+               last_user_input_step_index AS lastUserInputStep
         FROM conversation_summaries WHERE killed = 0 AND step_count > 0
         ORDER BY last_modified_time DESC LIMIT ?
       `).all(MAX_CONVERSATIONS) as Array<{
         id: string; title: string; stepCount: number; lastModifiedTime: string
-        workspaceUris: string; status: string; notFullyIdle: number
+        workspaceUris: string; status: string; notFullyIdle: number; lastUserInputStep: number
       }>
       const out: AgyConversationSummary[] = []
       for (const r of rows) {
@@ -606,6 +610,7 @@ export function readRecentAgyConversations(home = homedir(), windowMs = THREAD_W
           status,
           updatedAtMs,
           stepCount: Number(r.stepCount) || 0,
+          headless: Number(r.lastUserInputStep) < 0,
         })
       }
       if (home === homedir()) cachedRecentAgyConversations = out
@@ -715,6 +720,23 @@ export function syncAgyOpenQuestion(
 
 const activeAgyProcs = new Set<string>()
 
+// Script-owned agy runs, by where they run or how their prompt starts: pr-shepherd and PR-review tmp worktrees, the weft
+// calendar agent (its tmp dir and prompt prefix). Hidden even if agy one day records a user-input step for them.
+const SCRIPTED_AGY_CWD = /^\/tmp\/(pr-shepherd-|cal-agy-|gemini-diff-)/
+const SCRIPTED_AGY_TITLE = "IMPORTANT: Ignore any files under ~/"
+function isScriptedAgy(c: { cwd?: string; title?: string }): boolean {
+  return SCRIPTED_AGY_CWD.test(c.cwd ?? "") || (c.title ?? "").startsWith(SCRIPTED_AGY_TITLE)
+}
+
+/**
+ * May this conversation create or update a `headless:agy:` drawer row? Never one a worker card owns (the card
+ * follows its task, not agy's status), and a print-mode one only once the phone has opened it as a thread.
+ */
+export function agyThreadVisible(c: Pick<AgyConversationSummary, "id" | "headless"> & Partial<Pick<AgyConversationSummary, "cwd" | "title">>, existing: Pick<Session, "herdrPane"> | undefined): boolean {
+  if (existing?.herdrPane?.startsWith("headless:worker:") || isHeadlessSession(c.id) || isScriptedAgy(c)) return false
+  return !c.headless || !!existing?.herdrPane?.startsWith("headless:agy:")
+}
+
 export function isAgyBrainRunning(): boolean {
   return activeAgyProcs.has(AGY_BRAIN_KEY)
 }
@@ -800,6 +822,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
     }
     if (workerOwnsConvo(c.id, c.cwd, currentSessions, home)) continue
     const existing = currentSessions.find((s) => s.sessionId === c.id)
+    if (!agyThreadVisible(c, existing)) continue
     if (!existing || existing.agentStatus !== c.status || existing.title !== c.title) {
       recordSession({
         agent: "gemini",
@@ -809,6 +832,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
         title: c.title,
         label: c.title,
         firstSeenAt: existing?.firstSeenAt ?? (c.updatedAtMs || undefined),
+        lastActiveAt: c.updatedAtMs || undefined,
         agentStatus: c.status,
         model: existing?.model || agyModel,
         pid: String(process.pid),

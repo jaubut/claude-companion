@@ -129,6 +129,8 @@ describe("parseStreamJsonLine", () => {
     expect(env.COMPANION_PEER_ZETTLAB_URL).toBeUndefined()
     expect(env.DISPATCH_TASK_ID).toBe("task-1")
     expect(env.CLAUDE_NO_AGENT_ENV).toBe("1")
+    expect(env.COMPANION_HEADLESS).toBe("1")
+    expect(env.COMPANION_ORIGIN).toBe("worker")
   })
 })
 
