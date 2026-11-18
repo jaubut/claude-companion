@@ -74,10 +74,10 @@ export function commandLabel(raw: unknown): string {
   if (TEST_RE.test(s)) return "Running tests"
   for (const segment of s.split(/\|\||&&|[|;\n&]/)) {
     const words = segment.trim().split(/\s+/).filter(Boolean)
-    while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift() // FOO=bar cmd
-    if (words[0] === "export" || words[0] === "env") words.shift()
+    // FOO=bar cmd, export FOO=bar, env FOO=bar cmd: drop every assignment before basename() can keep a value's tail.
+    while (words.length && (words[0] === "export" || words[0] === "env" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!))) words.shift()
     const head = words[0] ? basename(words[0]) : ""
-    if (!head || head === "cd" || head === "set" || head === "true" || head === "echo" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(head)) continue
+    if (!head || head === "cd" || head === "set" || head === "true" || head === "echo") continue
     if (!/^[A-Za-z0-9._+-]{1,32}$/.test(head)) return "Running command"
     const word = (w: string | undefined): boolean => !!w && /^[a-z][a-z0-9:-]{0,20}$/.test(w)
     const sub = SUBCOMMAND_TOOLS.has(head) && word(words[1]) ? ` ${words[1]}${words[1] === "run" && word(words[2]) ? ` ${words[2]}` : ""}` : ""

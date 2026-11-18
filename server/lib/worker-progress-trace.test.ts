@@ -158,6 +158,9 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
     ["bun run lint 2>&1 | tail -20", "Running: bun run lint"],
     ["git status --short", "Running: git status"],
     ["export FOO=bar; ./scripts/deploy.sh --prod", "Running: deploy.sh"],
+    [`export WEBHOOK=https://hooks.slack.com/services/T0/B0/${token} && ls`, "Running: ls"],
+    [`env CRED=/home/a/${token} FOO=bar ./run.sh`, "Running: run.sh"],
+    [`export A=/x/${token}`, "Running command"],
     ["$(echo secret)", "Running command"],
     ["", "Running command"],
   ]
@@ -223,5 +226,12 @@ test("throttleJobReports: one progress per job per second, the trailing send car
   report(r("done", "PR ready"))
   for (const fn of timers.splice(0)) fn()
   expect(sent.map((s) => s.step)).toEqual(["start", "b", "c", "PR ready"])
+  // A report past the window while a trailing timer is queued never jumps it: the late timer sends the latest, never a stale one.
+  report(r("task", "start2"))
+  clock = 3_000; report(r("progress", "e"))
+  clock = 4_500; report(r("progress", "f"))
+  expect(sent.map((s) => s.step)).toEqual(["start", "b", "c", "PR ready", "start2"])
+  for (const fn of timers.splice(0)) fn()
+  expect(sent.map((s) => s.step)).toEqual(["start", "b", "c", "PR ready", "start2", "f"])
   expect(mod.THROTTLE_MS).toBe(1_000)
 })

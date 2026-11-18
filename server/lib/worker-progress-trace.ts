@@ -101,13 +101,15 @@ export function throttleJobReports(send: (r: BuilderReport) => void, now: () => 
       return
     }
     jobs.set(r.id, j)
+    // A trailing send is already queued: it flushes the latest, so never send around it (a stale report would follow).
+    if (j.pending) { j.pending = r; return }
     const wait = j.lastAt + THROTTLE_MS - now()
     if (wait <= 0) { j.lastAt = now(); send(r); return }
-    if (!j.pending) schedule(() => {
+    j.pending = r
+    schedule(() => {
       if (jobs.get(r.id) !== j || !j.pending) return
       const latest = j.pending
       j.pending = null; j.lastAt = now(); send(latest)
     }, wait)
-    j.pending = r
   }
 }
