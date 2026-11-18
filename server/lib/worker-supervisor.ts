@@ -7,8 +7,8 @@ import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 import {
   ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
-  type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerTaskStatus,
-  buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs,
+  type PlanProgress, type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerProgress, type WorkerTaskStatus,
+  buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
@@ -41,6 +41,7 @@ export interface SupervisedTaskSnapshot {
   taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
   status: WorkerTaskStatus; turnCount: number; step: string | null; pct: number | null; result: string; prUrl: string | null
   error: string | null; startedAt: number; updatedAt: number; completedAt: number | null
+  progress?: WorkerProgress // absent on records written before it existed (state file, peer receipts)
 }
 
 export interface WorkerSupervisorDeps {
@@ -76,10 +77,11 @@ interface InternalTask extends PersistedTaskRecord {
   /** Armed on each `result` event: the process must exit after its turn (reapGraceMs). `lingered`: it didn't, and was stopped. */
   reapTimer: ReturnType<typeof setTimeout> | null; lingered: boolean
   waiters: Set<() => void>; stderrTail: string[]
+  plan?: PlanProgress | null // this turn's plan, from the worker's own todo list; not persisted
 }
 function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
   const { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
-  return { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt }
+  return { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt, progress: progressOf(t) }
 }
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
@@ -326,11 +328,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
         task.turnReportedTerminal = false; task.step = resume ? `Turn ${myTurn}: resuming ${family} builder` : `Starting headless ${family} builder`
-        task.pct = 5; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []; task.lingered = false
+        task.pct = 5; task.plan = null; task.error = null; task.completedAt = null; task.updatedAt = now; task.stderrTail = []; task.lingered = false
         closeTurn(task, "interrupted", now); task.dispatchTurn = openTurn(task, now).turn; refreshResult(task)
         tasks.set(taskId, task); savePersistedTasks(); syncTaskSession(task)
 
-        deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+        deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct, progress: progressOf(task) })
 
         const dCtx = deps.designContext?.().trim() ?? ""
         const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
@@ -353,7 +355,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
               if (ev.sessionId) { task.sessionId = ev.sessionId; task.sessionStarted = true }
               if (ev.prUrl) task.prUrl = ev.prUrl
               // Each turn keeps its own text: a later turn (a background-task notification) never overwrites an earlier report.
-              if (ev.assistantText || ev.resultText || ev.step) {
+              if (ev.assistantText || ev.resultText || ev.step || ev.plan) {
                 // Output after a `result`: the worker is working again, so it isn't idle yet.
                 if (task.reapTimer) { clearTimeout(task.reapTimer); task.reapTimer = null }
                 const cur = openTurn(task, task.updatedAt)
@@ -375,10 +377,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }, reapGraceMs)
                 task.reapTimer.unref?.()
               }
-              if (ev.step) {
-                task.sessionStarted = true; task.step = ev.step
-                task.pct = Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
-                deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct })
+              if (ev.plan) task.plan = ev.plan // the worker's own plan beats tool labels: its current item is the step
+              if (ev.step || ev.plan) {
+                task.sessionStarted = true; task.step = task.plan?.label ?? ev.step ?? task.step
+                task.pct = task.plan ? Math.round((task.plan.done / task.plan.total) * 100) : Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
+                deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct, progress: progressOf(task) })
                 syncTaskSession(task)
               }
               // A reason the supervisor already set (the turn timeout) beats agy's generic "interrupted", which it prints on any SIGTERM.
@@ -386,7 +389,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 ? "agy got a stop signal the supervisor did not send (Companion restart, another Companion or test instance, or a manual kill)"
                 : ev.resultText || `${family} turn reported an error`).slice(0, 400)
               if (turnEnded || task.sessionStarted !== prevStarted || task.sessionId !== prevSid || task.prUrl !== prevPrUrl) { savePersistedTasks(); syncTaskSession(task) }
-              else if (task.result !== prevResult && !ev.step) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
+              else if (task.result !== prevResult && !ev.step && !ev.plan) { try { deps.onTaskProgress?.(toSnapshot(task)) } catch { /* best effort */ } }
             },
             onStderrLine(line) {
               if (settled || task.activeTurn !== myTurn) return

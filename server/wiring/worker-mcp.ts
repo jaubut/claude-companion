@@ -15,7 +15,7 @@ import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler, defaultResolvePeer, isLocalTarget, relayWorkerReceipts } from "../lib/worker-mcp"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "../lib/worker-pr-link"
-import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
+import { createWorkerProgressTrace, throttleJobReports } from "../lib/worker-progress-trace"
 import { recordWorkerSession } from "../lib/worker-session"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { type WorkerReceipt, deliveredReceiptsFile, loadDeliveredKeys, saveDeliveredKeys } from "../lib/worker-task-store"
@@ -106,7 +106,7 @@ export const workerSupervisor = createWorkerSupervisor({
   uuid: randomUUID,
   sh: realSh,
   trust: (dir) => ensureFolderTrusted(dir),
-  reportJob: (r) => builderJobs.report(r),
+  reportJob: throttleJobReports((r) => builderJobs.report(r), Date.now),
   designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
     // A finished worker leaves the drawer (pruneGoneSessions drops its row); a follow-up dispatch records it again.

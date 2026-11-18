@@ -1,14 +1,15 @@
 import { type TraceRow, getRow, rowId, upsertRow } from "./brain-trace"
+import type { BuilderReport } from "./builder-jobs"
 import { workerReceipt } from "./worker-pr-link"
 import type { SupervisedTaskSnapshot } from "./worker-supervisor"
 
 // One live brain_trace card per headless worker turn (row `headless:<jobId>`):
-// family/model, step, latest summary and elapsed, rewritten in place at most
-// once per THROTTLE_MS and only when step or summary changed. It never touches
+// family/model, step, plan progress (ref.progress), latest summary and elapsed,
+// rewritten in place at most once per THROTTLE_MS and only when step, plan or summary changed. It never touches
 // the chat thread, so it never wakes the brain; finish() collapses it into the
 // same text as the PR ready / completed / blocked receipt.
 
-const THROTTLE_MS = 10_000
+export const THROTTLE_MS = 1_000
 
 type Snap = SupervisedTaskSnapshot
 
@@ -25,7 +26,7 @@ export function receiptText(t: Snap): string {
 }
 
 const cardId = (t: Snap): string => rowId.headless(t.turnCount <= 1 ? t.taskId : `${t.taskId}:t${t.turnCount}`)
-const keyOf = (t: Snap): string => `${t.step ?? ""}\n${t.result}`
+const keyOf = (t: Snap): string => `${t.step ?? ""}\n${t.progress?.done ?? ""}/${t.progress?.total ?? ""}\n${t.result}`
 
 function elapsed(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -38,7 +39,8 @@ export function createWorkerProgressTrace(deps: WorkerProgressTraceDeps) {
 
   function write(t: Snap, status: TraceRow["status"], detail: string): void {
     const title = `${t.family}${t.model ? ` · ${t.model}` : ""} — ${t.title}`
-    const row = upsertRow({ id: cardId(t), kind: "agent", status, title, detail, ref: { taskId: t.taskId, host: deps.host } }, deps.now())
+    const progress = t.progress ? { progress: t.progress } : {}
+    const row = upsertRow({ id: cardId(t), kind: "agent", status, title, detail, ref: { taskId: t.taskId, host: deps.host, ...progress } }, deps.now())
     if (row) deps.trace([row])
   }
 
@@ -50,7 +52,8 @@ export function createWorkerProgressTrace(deps: WorkerProgressTraceDeps) {
     if (key === j.sentKey) return
     j.sentKey = key; j.lastAt = deps.now()
     const t = j.latest
-    write(t, "running", `${t.step ?? "Working"} · ${elapsed(j.lastAt - t.startedAt)}${t.result ? `\n${t.result}` : ""}`)
+    const plan = t.progress && t.progress.source !== "none" ? ` (${t.progress.done}/${t.progress.total})` : ""
+    write(t, "running", `${t.step ?? "Working"}${plan} · ${elapsed(j.lastAt - t.startedAt)}${t.result ? `\n${t.result}` : ""}`)
   }
 
   function finish(t: Snap, status: TraceRow["status"], detail: string): void {
@@ -80,5 +83,31 @@ export function createWorkerProgressTrace(deps: WorkerProgressTraceDeps) {
     finish(t: Snap): void {
       finish(t, t.status === "completed" ? "done" : "error", receiptText(t))
     },
+  }
+}
+
+/**
+ * `builder_jobs` reports for headless workers, at most one `progress` per job per THROTTLE_MS: a change inside the
+ * window waits for one trailing send of the latest. task / done / aborted pass at once and drop a pending progress.
+ */
+export function throttleJobReports(send: (r: BuilderReport) => void, now: () => number, schedule: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref?.() }) {
+  const jobs = new Map<string, { lastAt: number; pending: BuilderReport | null }>()
+  return (r: BuilderReport): void => {
+    const j = jobs.get(r.id) ?? { lastAt: -Infinity, pending: null }
+    if (r.event !== "progress") {
+      if (r.event === "task") jobs.set(r.id, { lastAt: now(), pending: null })
+      else jobs.delete(r.id)
+      send(r)
+      return
+    }
+    jobs.set(r.id, j)
+    const wait = j.lastAt + THROTTLE_MS - now()
+    if (wait <= 0) { j.lastAt = now(); send(r); return }
+    if (!j.pending) schedule(() => {
+      if (jobs.get(r.id) !== j || !j.pending) return
+      const latest = j.pending
+      j.pending = null; j.lastAt = now(); send(latest)
+    }, wait)
+    j.pending = r
   }
 }

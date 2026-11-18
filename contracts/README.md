@@ -86,8 +86,16 @@ checks the live frame carries exactly these keys. Full contract: `docs/builder-p
   after `init` on `/ws` open only when non-empty. `GET /api/builder-jobs` → `{ok, jobs}`.
 
 Item: `id`, `title`, `builder` (nullable), `pct` (0-100, null = indeterminate), `step`
-(nullable), `startedAt` / `updatedAt` (server ms epoch), `stale` (no update for 10 min; the
-job drops after 2 h). Every key always present.
+(nullable), `progress` (nullable), `startedAt` / `updatedAt` (server ms epoch), `stale` (no update
+for 10 min; the job drops after 2 h). Every key always present.
+
+`progress` (headless workers only, null for relay jobs): `{done, total, label, source, startedAt,
+elapsedMs}`. `source` `todos` (Claude TodoWrite / Gemini write_todos) or `plan` (Codex todo_list) =
+a determinate bar, `pct = round(done / total * 100)`; `none` = no plan seen, `done` / `total` 0,
+`label` the last step as a human label (max 40 chars, never a shell pipeline). `startedAt` = turn
+start, `elapsedMs` = turn start → last update. Worker progress frames are throttled to 1/s per job.
+The brain thread's `headless:*` card carries the same object as `ref.progress`
+(`brain/trace.headless.json`).
 
 ## `subscriptions/` — AI plan usage (`server/lib/subscriptions.ts`)
 
