@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { writeLimiter } from "./vault-guard"
@@ -13,8 +13,9 @@ import { forwardVault, vaultUpstream } from "./vault-upstream"
 // 1Password first (`op` with that token, same item shape as tls-secrets.py:
 // title = NAME, field `credential`, tags `host:<h>`; the value only ever on
 // op's stdin), then to secrets.env (the fallback, and the name list), then
-// the legacy env file when present (mirrorEnvFiles). op down → secrets.env only, and
-// the reply says so. No op-token → secrets.env only (pre-1Password hosts).
+// the legacy env file when present (mirrorEnvFiles). op down → a new name goes
+// to secrets.env only and the reply says so; a rotate / retag / delete is
+// refused (503). No op-token → secrets.env only (pre-1Password hosts).
 //
 // Store format and masking are owned by ~/.claude/tools/tls-secrets.py:
 // one line per key, `NAME='value'  # host [host ...] [scripts|plain]`. Every
@@ -197,6 +198,7 @@ async function runSync(): Promise<{ ok: boolean; detail: string }> {
 
 async function runOp(args: string[], stdin?: string): Promise<{ ok: boolean; out: string }> {
   const token = readFileSync(opTokenPath(), "utf8").trim()
+  if (!token) return { ok: false, out: "op-token vide" }
   const bin = Bun.which("op") ?? join(homedir(), ".local", "bin", "op")
   const proc = Bun.spawn([bin, ...args], {
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]), stdout: "pipe", stderr: "pipe",
@@ -209,7 +211,15 @@ async function runOp(args: string[], stdin?: string): Promise<{ ok: boolean; out
   return { ok: code === 0, out: (code === 0 ? out : err.split(token).join("•••")).trim() }
 }
 
-type OpWrite = { ok: true; created: boolean } | { ok: false; detail: string }
+/** touched = 1Password changed; id = the item (a create's own id, for its undo). */
+type OpWrite = { ok: true; touched: boolean; created: boolean; id: string } | { ok: false; detail: string }
+
+function createdId(out: string): string | undefined {
+  try {
+    const id = (JSON.parse(out) as { id?: unknown }).id
+    return typeof id === "string" && id ? id : undefined
+  } catch { return undefined }
+}
 
 /** Apply one vault change to 1Password, as tls-secrets.py add / tag would. */
 async function opWrite(action: VaultAction, name: string, hosts: string[], value?: string): Promise<OpWrite> {
@@ -218,15 +228,16 @@ async function opWrite(action: VaultAction, name: string, hosts: string[], value
     if (!list.ok) return { ok: false, detail: list.out }
     const item = (JSON.parse(list.out || "[]") as { id: string; title?: string; tags?: string[] }[]).find((i) => i.title === name)
     // Absent from 1Password: nothing to delete or retag there.
-    if (!item && value === undefined) return { ok: true, created: false }
+    if (!item && value === undefined) return { ok: true, touched: false, created: false, id: "" }
     const tags = [...hosts.map((h) => `host:${h}`), ...(item?.tags ?? []).filter((t) => !t.startsWith("host:"))]
     const args = action === "deleted" ? ["item", "delete", item!.id, "--vault", OP_VAULT]
       : value === undefined ? ["item", "edit", item!.id, "--vault", OP_VAULT, "--tags", tags.join(",")]
-      : item ? ["item", "edit", item.id, "--vault", OP_VAULT] : ["item", "create", "--vault", OP_VAULT, "-"]
+      : item ? ["item", "edit", item.id, "--vault", OP_VAULT] : ["item", "create", "--vault", OP_VAULT, "--format", "json", "-"]
     const template = value === undefined ? undefined
       : JSON.stringify({ title: name, category: "API_CREDENTIAL", tags, fields: [{ id: "credential", label: "credential", type: "CONCEALED", value }] })
     const r = await vaultDeps.op(args, template)
-    return r.ok ? { ok: true, created: !item } : { ok: false, detail: r.out }
+    if (!r.ok) return { ok: false, detail: r.out }
+    return { ok: true, touched: true, created: !item, id: item?.id ?? createdId(r.out) ?? name }
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) }
   }
@@ -268,7 +279,9 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 
 // Keep the legacy ~/.config/tls-agent/env in step when it exists: perplexity-mcp,
 // scout-nightly, jev, tg-signals and calendar-sync read it directly, not via
-// tls-agent-env. No .env copy: its one reader (calendar-sync) reads env first.
+// tls-agent-env. No .env copy: its one reader (calendar-sync) reads env first,
+// so where env exists the old .env (frozen plaintext, rotated + deleted keys
+// included) is removed.
 export function mirrorEnvFiles(storeFile: string, action: VaultAction, name: string, hosts: string[], secret?: string): void {
   const legacyEnvPath = join(dirname(storeFile), "env")
   const change = action === "deleted"
@@ -280,6 +293,7 @@ export function mirrorEnvFiles(storeFile: string, action: VaultAction, name: str
     if (existsSync(legacyEnvPath)) {
       const nextEnv = editLine(readFileSync(legacyEnvPath, "utf8"), name, change)
       if (nextEnv !== null) atomicWrite(legacyEnvPath, nextEnv)
+      rmSync(join(dirname(storeFile), ".env"), { force: true })
     }
   } catch { /* best-effort mirror */ }
 }
@@ -288,29 +302,41 @@ async function commit(before: string | null, after: string, action: VaultAction,
   const path = storePath()
   const redact = (s: string): string => (secret ? s.split(secret).join("•••") : s).slice(0, 200)
   const op = existsSync(opTokenPath()) ? await opWrite(action, name, hosts, secret) : null
+  // 1Password down: only a new name falls back to secrets.env. A rotate / retag /
+  // delete there would be undone (old value, old hosts, deleted key back) as soon
+  // as 1Password answers again, since sessions read it first — fail closed.
+  if (op && !op.ok && action !== "created") {
+    return { ok: false, status: 503, name, error: "op_unavailable", message: `${name} NON modifié — 1Password injoignable (${redact(op.detail)}). Rien n'a changé; réessaie quand 1Password répond.` }
+  }
+  const inOp = op?.ok && op.touched ? op : null
+  const store = inOp ? "1password" : "secrets.env"
   atomicWrite(path, after)
   // Masks every name tls-secrets.py env exports (1Password included).
   const synced = await vaultDeps.sync().catch((e: unknown) => ({ ok: false, detail: String(e) }))
   if (!synced.ok) {
     const detail = redact(synced.detail)
     // ponytail: only a 1Password create is undone (a new name would go out unmasked);
-    // a rotate / retag / delete keeps its stale mask by name, so it stays.
-    if (op?.ok && !op.created) {
+    // a rotate / retag / delete keeps its stale mask by name, so it stays — and is recorded.
+    if (inOp && !inOp.created) {
+      mirrorEnvFiles(path, action, name, hosts, secret)
+      audit(action, name, hosts, origin, store)
       return { ok: false, status: 500, name, error: "sync_failed", message: `${name} modifié dans 1Password, mais masquage échoué (${detail}) — relance tls-secrets.py sync.` }
     }
-    if (op?.ok) await vaultDeps.op(["item", "delete", name, "--vault", OP_VAULT]).catch(() => undefined)
+    const undone = inOp ? await vaultDeps.op(["item", "delete", inOp.id, "--vault", OP_VAULT]).catch((e: unknown) => ({ ok: false, out: String(e) })) : { ok: true, out: "" }
     // No file before = remove it: an empty secrets.env would make
     // tls-agent-env switch to it and drop every other key.
     if (before === null) unlinkSync(path)
     else atomicWrite(path, before)
-    return { ok: false, status: 500, name, error: "sync_failed", message: `${name} NON enregistré — masquage échoué (${detail}). Rien n'a changé.` }
+    const tail = undone.ok ? " Rien n'a changé."
+      : ` ⚠️ ${name} reste dans 1Password SANS masque (suppression échouée: ${redact(undone.out)}) — supprime l'item ${inOp!.id} du coffre ${OP_VAULT}.`
+    return { ok: false, status: 500, name, error: "sync_failed", message: `${name} NON enregistré — masquage échoué (${detail}).${tail}` }
   }
   mirrorEnvFiles(path, action, name, hosts, secret)
-  audit(action, name, hosts, origin, op?.ok ? "1password" : "secrets.env")
+  audit(action, name, hosts, origin, store)
   const file = path.replace(homedir(), "~")
-  const dest = op?.ok ? `1Password (coffre ${OP_VAULT})` : file
+  const dest = inOp ? `1Password (coffre ${OP_VAULT})` : file
   const warn = op && !op.ok
-    ? ` ⚠️ 1Password injoignable (${redact(op.detail)}): ${file} est le repli que les sessions lisent tant que 1Password ne répond pas. Une fois 1Password rétabli, réenregistre ${name}, sinon il resservira l'ancienne valeur.`
+    ? ` ⚠️ 1Password injoignable (${redact(op.detail)}): ${file} est le repli que les sessions lisent tant que 1Password ne répond pas. Une fois 1Password rétabli, réenregistre ${name}, sinon les sessions ne l'auront plus.`
     : ""
   return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts, dest) + warn }
 }

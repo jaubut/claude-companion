@@ -4700,7 +4700,7 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 476,
+          "lines": 502,
           "kind": "lib",
           "exports": [
             "SyncFn",
