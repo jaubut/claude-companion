@@ -8,17 +8,17 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 280 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1250), `lib/worker-supervisor.ts` (610)
+⚠ over cap: `lib/agy-feed.ts` (1252), `lib/worker-supervisor.ts` (610)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
-| `lib/agy-feed.ts` | 1250 ⚠ 1250 > cap 600 | lib | 36 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
+| `lib/agy-feed.ts` | 1252 ⚠ 1252 > cap 600 | lib | 36 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/worker-supervisor.ts` | 610 ⚠ 610 > cap 600 | lib | 10 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/sessions.ts` | 599 | lib | 22 | state: sessions: Map, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `lib/discover.ts` | 588 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/discover.ts` | 591 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
@@ -260,6 +260,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
 | `lib/push-tokens.ts` | 46 | lib | 6 | state: db: Database |
 | `lib/worker-task-store.ts` | 46 | lib | 4 |  |
+| `lib/worker-session.ts` | 43 | lib | 2 |  |
 | `routes/auto-compact.ts` | 43 | route-host | 1 | routes: 3 |
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
@@ -277,7 +278,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/gauge.ts` | 34 | lib | 2 | emits: gauge |
 | `lib/json-body.ts` | 31 | lib | 4 |  |
 | `lib/pane-clean.ts` | 31 | lib | 3 |  |
-| `lib/worker-session.ts` | 31 | lib | 1 |  |
 | `routes/copy-jobs.ts` | 31 | route-host | 1 | routes: 2 |
 | `lib/turso-test-guard.test-util.ts` | 30 | lib | 3 |  |
 | `lib/herdr-fake.test-util.ts` | 28 | lib | 1 |  |
@@ -688,6 +688,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `extractToolResult()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `THINKING_MAX()` | `lib/transcript.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts` |
+| `workerOwnsConvo()` | `lib/worker-session.ts` | `lib/agy-feed.ts`, `lib/discover.ts` |
 | `Entry()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
 | `entryTime()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |
 | `isBoundary()` | `lib/auto-compact-transcript.ts` | `lib/auto-compact-keep.ts`, `lib/auto-compact.ts` |

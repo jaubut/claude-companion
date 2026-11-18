@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1250,
+          "lines": 1252,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -257,6 +257,7 @@
             "lib/feed.ts",
             "lib/activity.ts",
             "lib/sessions.ts",
+            "lib/worker-session.ts",
             "lib/tool-format.ts",
             "lib/questions.ts",
             "lib/keyboard-inject.ts",
@@ -1797,7 +1798,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 588,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1838,6 +1839,7 @@
             "lib/tmux-pane.ts",
             "lib/log.ts",
             "lib/herdr.ts",
+            "lib/worker-session.ts",
             "lib/agy-feed.ts"
           ],
           "listeners": [],
@@ -6654,9 +6656,10 @@
         },
         {
           "path": "lib/worker-session.ts",
-          "lines": 31,
+          "lines": 43,
           "kind": "lib",
           "exports": [
+            "workerOwnsConvo",
             "recordWorkerSession"
           ],
           "state": [],
@@ -10605,6 +10608,13 @@
             "routes/model.ts#POST /api/model/set",
             "wiring/brain-headless.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "workerOwnsConvo": {
+          "module": "lib/worker-session.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/discover.ts"
           ]
         },
         "getFeed": {
