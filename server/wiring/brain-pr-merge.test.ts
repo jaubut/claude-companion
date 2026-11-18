@@ -12,7 +12,7 @@ import type { ExecFn, Row } from "../lib/turso"
 // gh faked at the process boundary, notes DB a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
-const { mergeAgentPr, hasRecentUserMergeApproval, hasRecentUserTaskCancelApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
+const { mergeAgentPr, hasRecentUserMergeApproval, hasRecentUserTaskCancelApproval, PR_MERGE_ACTION } = await import("./brain-pr-merge")
 
 // Default to unpaused reviews, independent of the host's flag.
 const flagDir = mkdtempSync(join(tmpdir(), "cc-prmerge-unpaused-"))
@@ -307,10 +307,9 @@ describe("bin/pr-merge gate: refusals", () => {
     })
   }
 
-  test(`429 merge_cap after ${MERGE_CAP} brain merges in 24 h`, async () => {
-    const rows = Array.from({ length: MERGE_CAP }, () => `INSERT INTO agent_activity (agent_slug, action) VALUES ('brain', '${PR_MERGE_ACTION}');`).join("\n")
-    const out = await refused(green(), `${TASK}\n${rows}`)
-    expect([out.status, out.body.error]).toEqual([429, "merge_cap"])
+  test("an 11th brain merge in 24 h is not refused", async () => {
+    const rows = Array.from({ length: 10 }, () => `INSERT INTO agent_activity (agent_slug, action) VALUES ('brain', '${PR_MERGE_ACTION}');`).join("\n")
+    expect((await mergeAgentPr(input, world(green(), `${TASK}\n${rows}`).deps)).status).toBe(200)
   })
 
   test("503 turso_unreachable never merges", async () => {

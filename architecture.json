@@ -8599,11 +8599,10 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 274,
+          "lines": 267,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
-            "MERGE_CAP",
             "hasRecentUserMergeApproval",
             "hasRecentUserTaskCancelApproval",
             "mergeAgentPr"
