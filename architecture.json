@@ -6631,7 +6631,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 454,
+          "lines": 535,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6675,7 +6675,8 @@
             "defaultSpawnWorker"
           ],
           "state": [
-            "SUBCOMMAND_TOOLS: Set"
+            "SUBCOMMAND_TOOLS: Set",
+            "NOISE_COMMANDS: Set"
           ],
           "emits": [],
           "consumes": [],
