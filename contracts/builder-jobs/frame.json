@@ -5,8 +5,16 @@
       "id": "d094e0b4-1c2a-4f6e-9d3b-0a1b2c3d4e5f",
       "title": "Share Granby 87 GB",
       "builder": "builder-zettlab-claude-companion",
-      "pct": 39,
-      "step": "rsync 34/87 GB",
+      "pct": 38,
+      "step": "Writing the parser",
+      "progress": {
+        "done": 3,
+        "total": 8,
+        "label": "Writing the parser",
+        "source": "todos",
+        "startedAt": 1791229900000,
+        "elapsedMs": 100000
+      },
       "startedAt": 1791229900000,
       "updatedAt": 1791230000000,
       "stale": false
@@ -17,6 +25,7 @@
       "builder": null,
       "pct": null,
       "step": "previews 80/161",
+      "progress": null,
       "startedAt": 1791229000000,
       "updatedAt": 1791229300000,
       "stale": true

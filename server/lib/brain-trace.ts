@@ -1,5 +1,6 @@
 import { db } from "./orchestrator-db"
 import { type DispatchTask, phaseOf } from "./dispatch-tasks"
+import type { WorkerProgress } from "./worker-invocation"
 
 // brain-v2 trace rows (docs/brain-api.md): the brain thread rendered as a
 // trace — turn → repo → agent → pr, approvals and questions beside them.
@@ -41,6 +42,8 @@ export interface TraceRef {
   step?: string
   /** A worker row: the herdr workspace the brain-workers reaper closed. */
   workspaceId?: string
+  /** A headless worker card (`headless:*`): its progress bar, lib/worker-progress-trace.ts. */
+  progress?: WorkerProgress
 }
 
 export interface TraceRow {

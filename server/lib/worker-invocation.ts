@@ -25,7 +25,11 @@ export const WORKER_SHIP_RULE = "Ship rule: if this brief changes files in the r
   "in your final report. Nobody commits, pushes or opens the PR after you: a rule or skill saying \"the runner commits the diff and opens " +
   "the PR\" (headless DISPATCH_HEADLESS jobs) does not apply to this worker. Never end with staged or uncommitted changes. " +
   "If the brief changes no files, open no PR and say so."
-export const WORKER_FOOTER = `${WORKER_SHIP_RULE}\n\n${WORKER_TURN_RULE}`
+/** Footer on every worker brief: the phone's progress bar is the worker's own plan (TodoWrite / write_todos / Codex plan). */
+export const WORKER_PLAN_RULE = "Plan rule: before your first change, write your plan as a todo list of your 5 to 10 main steps (TodoWrite, " +
+  "write_todos or your plan tool), and update it as you go: one step in progress at a time, each marked completed as soon as it is done. " +
+  "Jeremie's phone shows that list as this task's progress bar."
+export const WORKER_FOOTER = `${WORKER_PLAN_RULE}\n\n${WORKER_SHIP_RULE}\n\n${WORKER_TURN_RULE}`
 /** After a turn's `result` event, a worker still alive this long is idle on background work: it gets SIGTERM, the turn stays completed. */
 export const DEFAULT_REAP_GRACE_MS = 10_000
 
@@ -34,27 +38,100 @@ export type WorkerTaskStatus = "running" | "completed" | "failed" | "interrupted
 export function workerAgentStatus(status: WorkerTaskStatus): "busy" | "idle" {
   return status === "running" ? "busy" : "idle"
 }
+/** The agent's own plan, read off its todo / plan tool: `source` todos = Claude TodoWrite or Gemini write_todos, plan = Codex todo_list. */
+export interface PlanProgress { done: number; total: number; label: string; source: "todos" | "plan" }
+/** A worker task's progress bar (snapshot, `builder_jobs` item, brain card `ref.progress`). source none = no plan seen:
+ *  done / total are 0 and label is the last step. elapsedMs = turn start → last update. */
+export interface WorkerProgress { done: number; total: number; label: string; source: PlanProgress["source"] | "none"; startedAt: number; elapsedMs: number }
+/** The progress bar of a supervised task: its plan when it wrote one, else its last step. */
+export function progressOf(t: { plan?: PlanProgress | null; step: string | null; turns?: ReadonlyArray<{ startedAt: number }>; startedAt: number; updatedAt: number; completedAt: number | null }): WorkerProgress {
+  const turnStart = t.turns?.at(-1)?.startedAt ?? t.startedAt
+  const time = { startedAt: turnStart, elapsedMs: Math.max(0, (t.completedAt ?? t.updatedAt) - turnStart) }
+  return t.plan ? { ...t.plan, ...time } : { done: 0, total: 0, label: clipLabel(t.step ?? "Working"), source: "none", ...time }
+}
+/** Apply a stream event's plan / step to a task's progress: the worker's own plan beats tool labels (its current item is
+ *  the step, pct = done / total). false = the event carries no progress. */
+export function applyProgressEvent(t: { plan?: PlanProgress | null; step: string | null; pct: number | null; sessionStarted: boolean }, ev: StreamJsonEvent): boolean {
+  if (ev.plan) t.plan = ev.plan
+  if (!ev.step && !ev.plan) return false
+  t.sessionStarted = true; t.step = t.plan?.label ?? ev.step ?? t.step
+  t.pct = t.plan ? Math.round((t.plan.done / t.plan.total) * 100) : Math.min(90, Math.max(10, (t.pct ?? 5) + 8))
+  return true
+}
 export interface StreamJsonEvent {
-  sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean
+  sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean; plan?: PlanProgress
 }
 
-function shortCmd(raw: unknown): string {
-  const s = redactSecrets(typeof raw === "string" ? raw : "").replace(/\s+/g, " ").trim()
-  return s ? `Running ${s.length > 60 ? `${s.slice(0, 59)}…` : s}` : "Running command"
+/** Step labels stay short enough for a phone card. */
+export const STEP_LABEL_MAX = 40
+export const clipLabel = (s: string): string => (s.length > STEP_LABEL_MAX ? `${s.slice(0, STEP_LABEL_MAX - 1)}…` : s)
+const SUBCOMMAND_TOOLS = new Set(["git", "gh", "bun", "npm", "pnpm", "yarn", "npx", "bunx", "cargo", "go", "docker", "turso", "herdr", "uv", "pip", "brew", "xcodebuild", "swift"])
+const TEST_RE = /\b(?:(?:bun|npm|pnpm|yarn|cargo|go|swift|deno)\s+(?:run\s+)?test|pytest|vitest|jest|xcodebuild\b[^|;&]*\btest)\b/
+const PR_RE = /\b(?:git\s+push|gh\s+pr\s+create)\b/
+
+/**
+ * A shell command as a human label: "Opening PR", "Running tests", or "Running: <command word>" (plus its subcommand
+ * for git / gh / bun …). Never the pipeline, never an argument: env assignments, `cd … &&`, a `bash -lc '…'` wrapper
+ * and paths are dropped, so no token or file content reaches the label.
+ */
+export function commandLabel(raw: unknown): string {
+  let s = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.filter((a) => typeof a === "string").join(" ") : ""
+  // Codex runs `bash -lc '<script>'`: label the script.
+  const wrapped = /^\s*(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(s)
+  if (wrapped) s = wrapped[2]!
+  if (PR_RE.test(s)) return "Opening PR"
+  if (TEST_RE.test(s)) return "Running tests"
+  for (const segment of s.split(/\|\||&&|[|;\n&]/)) {
+    const words = segment.trim().split(/\s+/).filter(Boolean)
+    // FOO=bar cmd, export FOO=bar, env FOO=bar cmd: drop every assignment before basename() can keep a value's tail.
+    while (words.length && (words[0] === "export" || words[0] === "env" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!))) words.shift()
+    const head = words[0] ? basename(words[0]) : ""
+    if (!head || head === "cd" || head === "set" || head === "true" || head === "echo") continue
+    if (!/^[A-Za-z0-9._+-]{1,32}$/.test(head)) return "Running command"
+    const word = (w: string | undefined): boolean => !!w && /^[a-z][a-z0-9:-]{0,20}$/.test(w)
+    const sub = SUBCOMMAND_TOOLS.has(head) && word(words[1]) ? ` ${words[1]}${words[1] === "run" && word(words[2]) ? ` ${words[2]}` : ""}` : ""
+    return clipLabel(`Running: ${head}${sub}`)
+  }
+  return "Running command"
 }
 function shortPath(raw: unknown, prefix: string): string {
   const base = typeof raw === "string" && raw.trim() ? basename(raw.trim()) : ""
-  return base ? `${prefix} ${base}` : prefix
+  return clipLabel(base ? `${prefix} ${base}` : prefix)
 }
+
+/** A full todo list (TodoWrite `todos[{content, status, activeForm}]`, write_todos `todos[{description, status}]`,
+ *  Codex `items[{text, completed}]`) → done / total and the current item. null = not a usable list. */
+export function planProgress(items: unknown, source: PlanProgress["source"]): PlanProgress | null {
+  if (!Array.isArray(items)) return null
+  const list = items.filter((i): i is Record<string, unknown> => !!i && typeof i === "object")
+    .map((i) => ({
+      text: [i.activeForm, i.content, i.description, i.text, i.step].find((v): v is string => typeof v === "string" && !!v.trim()) ?? "",
+      todo: [i.content, i.description, i.text, i.step].find((v): v is string => typeof v === "string" && !!v.trim()) ?? "",
+      status: i.completed === true ? "completed" : typeof i.status === "string" ? i.status : "pending",
+    }))
+    .filter((i) => i.status !== "cancelled")
+  if (!list.length) return null
+  const done = list.filter((i) => i.status === "completed").length
+  const current = list.find((i) => i.status === "in_progress") ?? list.find((i) => i.status !== "completed")
+  const label = current ? (current.status === "in_progress" ? current.text : current.todo) : "Wrapping up"
+  return { done, total: list.length, label: clipLabel(redactSecrets(label).replace(/\s+/g, " ").trim() || "Working"), source }
+}
+
+function setPlan(out: StreamJsonEvent, items: unknown, source: PlanProgress["source"]): void {
+  const plan = planProgress(items, source)
+  if (plan) out.plan = plan
+}
+
 function toolStep(name: string, input: Record<string, unknown>): string {
   const path = input.file_path ?? input.path ?? input.Path ?? input.TargetFile ?? input.AbsolutePath
   if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit" || name === "write_file" || name === "edit_file" || name === "replace" || name === "write_to_file" || name === "replace_file_content" || name === "multi_replace_file_content") return shortPath(path, "Editing")
   if (name === "Read" || name === "read_file" || name === "view_file") return shortPath(path, "Reading")
   const pattern = input.pattern ?? input.Query ?? input.Pattern
-  if (name === "Grep" || name === "search_file_content" || name === "grep_search") return typeof pattern === "string" && pattern.trim() ? `Searching ${redactSecrets(pattern.trim()).slice(0, 48)}` : "Searching codebase"
-  if (name === "Glob" || name === "glob" || name === "find_by_name" || name === "list_dir") return typeof pattern === "string" && pattern.trim() ? `Listing ${pattern.trim().slice(0, 48)}` : "Listing files"
-  if (name === "Bash" || name === "run_shell_command" || name === "run_command") return shortCmd(input.command ?? input.CommandLine)
-  return `Tool: ${name.slice(0, 48)}`
+  if (name === "Grep" || name === "search_file_content" || name === "grep_search") return typeof pattern === "string" && pattern.trim() ? clipLabel(`Searching ${redactSecrets(pattern.trim())}`) : "Searching codebase"
+  if (name === "Glob" || name === "glob" || name === "find_by_name" || name === "list_dir") return typeof pattern === "string" && pattern.trim() ? clipLabel(`Listing ${pattern.trim()}`) : "Listing files"
+  if (name === "Bash" || name === "run_shell_command" || name === "run_command") return commandLabel(input.command ?? input.CommandLine)
+  if (name === "TodoWrite" || name === "write_todos") return "Updating plan"
+  return clipLabel(`Tool: ${name.split("__").at(-1)}`)
 }
 
 /** Parse one NDJSON line from headless `claude`, `codex`, or `agy` (family gemini). Pure & never throws. */
@@ -80,6 +157,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
       const info = body.tool_info && typeof body.tool_info === "object" ? (body.tool_info as Record<string, unknown>) : {}
       const params = info.parameters && typeof info.parameters === "object" && !Array.isArray(info.parameters) ? (info.parameters as Record<string, unknown>) : {}
       out.step = toolStep(String(body.tool_name ?? info.name ?? "tool"), params)
+      if (body.tool_name === "write_todos" || info.name === "write_todos") setPlan(out, params.todos, "todos")
     }
     if (obj.event === "result" || obj.event === "error") {
       out.done = true
@@ -107,6 +185,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
       if (b.type === "tool_use" && typeof b.name === "string") {
         const input = b.input && typeof b.input === "object" && !Array.isArray(b.input) ? (b.input as Record<string, unknown>) : {}
         out.step = toolStep(b.name, input)
+        if (b.name === "TodoWrite") setPlan(out, input.todos, "todos")
       } else if (b.type === "text" && typeof b.text === "string" && b.text.trim()) {
         texts.push(b.text.trim())
       }
@@ -119,12 +198,14 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
     return Object.keys(out).length > 0 ? out : null
   }
 
-  if (obj.type === "item.started" || obj.type === "item.completed") {
+  if (obj.type === "item.started" || obj.type === "item.updated" || obj.type === "item.completed") {
     const item = obj.item && typeof obj.item === "object" && !Array.isArray(obj.item) ? (obj.item as Record<string, unknown>) : null
     if (item) {
-      if (item.type === "command_execution") out.step = shortCmd(item.command)
+      if (item.type === "todo_list") setPlan(out, item.items, "plan")
+      else if (obj.type === "item.updated") { /* only a plan's updates matter */ }
+      else if (item.type === "command_execution") out.step = commandLabel(item.command)
       else if (item.type === "file_change") out.step = "Editing files"
-      else if (item.type === "mcp_tool_call") out.step = `Tool: ${String(item.tool ?? item.server ?? "mcp").slice(0, 48)}`
+      else if (item.type === "mcp_tool_call") out.step = clipLabel(`Tool: ${String(item.tool ?? item.server ?? "mcp")}`)
       else if (item.type === "agent_message" && typeof item.text === "string" && item.text.trim()) {
         out.assistantText = item.text.trim()
         const pr = out.assistantText.match(PR_URL_RE)?.[0]
@@ -151,6 +232,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
       ? (obj.input as Record<string, unknown>)
       : {}
     out.step = toolStep(toolName, params)
+    if (toolName === "write_todos") setPlan(out, params.todos, "todos")
     return out
   }
 
@@ -218,6 +300,9 @@ export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, build
   env.COMPANION_HEADLESS = "1"; env.COMPANION_ORIGIN = "worker"
   // Nobody answers a prompt in a headless worker: an API-enable [y/N] from gcloud hung a gemini worker's background task for the whole turn.
   env.CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
+  // Headless claude 2.1.x ships TaskCreate/TaskUpdate (incremental, ids in tool results); 0 brings back TodoWrite, whose
+  // every call carries the full list, so the progress bar reads done / total off one event.
+  env.CLAUDE_CODE_ENABLE_TASKS = "0"
   return env
 }
 

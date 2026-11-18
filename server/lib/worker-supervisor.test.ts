@@ -60,7 +60,7 @@ describe("parseStreamJsonLine", () => {
       },
     }))
     expect(bashEv).toEqual({
-      step: "Running bun test server/lib/foo.test.ts",
+      step: "Running tests",
       assistantText: "Opened https://github.com/jaubut/claude-companion/pull/305 for review.",
       prUrl: "https://github.com/jaubut/claude-companion/pull/305",
     })
@@ -557,7 +557,7 @@ describe("createWorkerSupervisor", () => {
     // Antigravity (agy) stream events
     expect(parseStreamJsonLine(JSON.stringify({ event: "init", conversation_id: "agy-1", init: { cwd: "/w" } }))).toEqual({ sessionId: "agy-1" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "bun test" } } } })))
-      .toEqual({ sessionId: "agy-1", step: "Running bun test" })
+      .toEqual({ sessionId: "agy-1", step: "Running tests" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "write_to_file", tool_info: { parameters: { TargetFile: "/w/index.ts" } } } })))
       .toEqual({ sessionId: "agy-1", step: "Editing index.ts" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "result", result: { conversation_id: "agy-1", status: "SUCCESS", response: "PR ready at https://github.com/jaubut/claude-companion/pull/501\n" } }))).toEqual({
@@ -1639,10 +1639,10 @@ sleep 30
         expect(rest).toEqual([])
         expect(r1!.task.status).toBe("running")
         expect(workerReceipt(r1!.task, { host: "zettlab", note: r1!.note })).toBe(
-          "still running [pelchat1] Pelchat refactor — 1 h 0 min, step: Running bun test 55, last output 5 min ago\nFull report, every turn: bin/worker get --task pelchat1 --host zettlab")
+          "still running [pelchat1] Pelchat refactor — 1 h 0 min, step: Running tests, last output 5 min ago\nFull report, every turn: bin/worker get --task pelchat1 --host zettlab")
         h.advance(CHECKIN_MS / MIN, 7) // re-armed: one more an hour later, still no kill
         expect(h.kills).toEqual([])
-        expect(h.sup.pendingReceipts().map((r) => r.note)).toEqual([r1!.note, "2 h 0 min, step: Running bun test 56, last output 4 min ago"])
+        expect(h.sup.pendingReceipts().map((r) => r.note)).toEqual([r1!.note, "2 h 0 min, step: Running tests, last output 4 min ago"])
         expect(h.sup.getTask("pelchat1")!.status).toBe("running")
 
         h.spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Done: https://github.com/jaubut/claude-companion/pull/9" }))

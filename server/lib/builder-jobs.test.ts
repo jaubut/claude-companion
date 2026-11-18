@@ -48,7 +48,7 @@ describe("BuilderJobStore", () => {
   test("TASK → PROGRESS → DONE: shows then clears", () => {
     const h = harness()
     h.report({ event: "task", id: "t1", title: "Share 87 GB", builder: "builder-zettlab-x" })
-    expect(h.last()).toEqual([{ id: "t1", title: "Share 87 GB", builder: "builder-zettlab-x", pct: null, step: null, startedAt: 1_000_000, updatedAt: 1_000_000, stale: false }])
+    expect(h.last()).toEqual([{ id: "t1", title: "Share 87 GB", builder: "builder-zettlab-x", pct: null, step: null, progress: null, startedAt: 1_000_000, updatedAt: 1_000_000, stale: false }])
     h.advance(5_000)
     h.report({ event: "progress", id: "t1", pct: 39, step: "rsync 34/87 GB" })
     expect(h.last()[0]).toMatchObject({ title: "Share 87 GB", pct: 39, step: "rsync 34/87 GB", updatedAt: 1_005_000, startedAt: 1_000_000 })
