@@ -150,9 +150,9 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
   const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
   const cases: Array<[string, string]> = [
     ["bun test server/lib/foo.test.ts 2>&1 | head -5; exit 0", "Running tests"],
-    ["git add -A && git commit -m wip && git push -u origin HEAD", "Opening PR"],
+    ["git add -A && git commit -m wip && git push -u origin HEAD", "Pushing"],
     [`gh pr create --title x --body "$(cat <<'EOF'\nbody\nEOF\n)"`, "Opening PR"],
-    [`GITHUB_TOKEN=${token} TURSO_AUTH_TOKEN=abc curl -H "Authorization: Bearer ${token}" https://api`, "Running: curl"],
+    [`GITHUB_TOKEN=${token} TURSO_AUTH_TOKEN=abc curl -H "Authorization: Bearer ${token}" https://api`, "Calling an API"],
     ["cd /home/a/repo && ls -la | grep x", "Running: ls"],
     ["/bin/bash -lc 'printf \"%s\\n\" \"' '\"; echo; ls server'", "Running: printf"],
     ["bun run lint 2>&1 | tail -20", "Running: bun run lint"],
@@ -161,7 +161,47 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
     [`export WEBHOOK=https://hooks.slack.com/services/T0/B0/${token} && ls`, "Running: ls"],
     [`env CRED=/home/a/${token} FOO=bar ./run.sh`, "Running: run.sh"],
     [`export A=/x/${token}`, "Running command"],
+    // wrappers: the real command, never the wrapper
+    ["timeout 600 gh pr checks 452 --watch", "Waiting for CI"],
+    ["timeout -s KILL -k 5 1.5m gh pr checks 452", "Waiting for CI"],
+    ["env FOO=bar BAZ=1 bun test", "Running tests"],
+    ["nice -n 10 tsc --noEmit", "Type-checking"],
+    ["nohup bun run build > out.log", "Building"],
+    ["time pytest -q", "Running tests"],
+    ["sudo -u deploy docker build -t x .", "Building image"],
+    ["stdbuf -oL vitest run", "Running tests"],
+    ["git ls-files | xargs -n 1 sleep 2", "Running: git ls-files"],
+    ["xargs -I{} -n 1 curl {}", "Calling an API"],
+    ["bash -c 'gh pr create --title x'", "Opening PR"],
+    ["/bin/sh -c \"cd /r && timeout 30 git push origin HEAD\"", "Pushing"],
+    ["cd /r && export PATH=/x:$PATH; timeout 600 gh pr checks 452 --watch 2>&1 | tail -5", "Waiting for CI"],
+    ["export PATH=/x:$PATH; ./run.sh", "Running: run.sh"],
+    // mappings
+    ["gh pr view 4 --json state", "Checking PR"],
+    ["gh pr list", "Checking PR"],
+    ["gh run watch 9", "Waiting for CI"],
+    ["git commit -m 'bun test'", "Committing"],
+    ["npx vitest", "Running tests"],
+    ["npm test", "Running tests"],
+    ["bun run typecheck", "Type-checking"],
+    ["bunx tsc -p .", "Type-checking"],
+    ["astro build", "Building"],
+    ["vite build --mode x", "Building"],
+    ["wrangler deploy --env staging", "Deploying (staging)"],
+    ["wrangler deploy --env=staging", "Deploying (staging)"],
+    ["wrangler deploy", "Deploying"],
+    ["gcloud run deploy svc --image x", "Deploying to Cloud Run"],
+    ["sleep 30", "Waiting"],
+    ["rg 'bun test' server", "Running: rg"],
     ["$(echo secret)", "Running command"],
+    // Object.prototype keys are not wrappers; `\` doesn't escape inside single quotes; -c after a script file is its argument
+    ["constructor -x secret", "Running: constructor"],
+    ["toString secret", "Running: toString"],
+    [`echo 'a\\' "x; secret_tok"`, "Running command"],
+    [`awk -F'\\' '{a=1; ${token}}' f`, "Running: awk"],
+    [`bash scripts/deploy.sh -c ${token}`, "Running: bash"],
+    [`sh run.sh -config ${token}`, "Running: sh"],
+    ["bash -o pipefail -e -c 'bun test'", "Running tests"],
     ["", "Running command"],
   ]
   for (const [cmd, label] of cases) {
@@ -172,6 +212,13 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
     expect(got).not.toMatch(/[|;&]/)
   }
   expect(commandLabel(["bash", "-lc", "cargo test -q"])).toBe("Running tests")
+  expect(commandLabel(["bash", "-lc", `tr '\\' '/' < f && bun test`])).toBe("Running tests")
+  // The agent's own description wins, scrubbed.
+  const { parseStreamJsonLine } = await import("./worker-invocation")
+  const bash = (input: object) => parseStreamJsonLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input }] } }))?.step
+  expect(bash({ command: "timeout 600 gh pr checks 452 --watch", description: "Wait for CI on PR 452" })).toBe("Wait for CI on PR 452")
+  expect(bash({ command: "ls", description: `Use ${token}` })).not.toContain(token)
+  expect(bash({ command: "timeout 600 gh pr checks 452 --watch" })).toBe("Waiting for CI")
 })
 
 test("a TodoWrite plan drives step, pct, progress and the card; tool steps don't override it", async () => {

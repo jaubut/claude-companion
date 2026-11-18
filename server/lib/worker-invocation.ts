@@ -66,33 +66,114 @@ export interface StreamJsonEvent {
 export const STEP_LABEL_MAX = 40
 export const clipLabel = (s: string): string => (s.length > STEP_LABEL_MAX ? `${s.slice(0, STEP_LABEL_MAX - 1)}…` : s)
 const SUBCOMMAND_TOOLS = new Set(["git", "gh", "bun", "npm", "pnpm", "yarn", "npx", "bunx", "cargo", "go", "docker", "turso", "herdr", "uv", "pip", "brew", "xcodebuild", "swift"])
-const TEST_RE = /\b(?:(?:bun|npm|pnpm|yarn|cargo|go|swift|deno)\s+(?:run\s+)?test|pytest|vitest|jest|xcodebuild\b[^|;&]*\btest)\b/
-const PR_RE = /\b(?:git\s+push|gh\s+pr\s+create)\b/
+const TEST_RE = /^(?:(?:bun|npm|pnpm|yarn|cargo|go|swift|deno)\s+(?:run\s+)?test|pytest|vitest|jest|python3?\s+-m\s+pytest|uv\s+run\s+pytest)\b/
+const TYPECHECK_RE = /^(?:(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?)?(?:tsc|typecheck|type-check)\b/
+const BUILD_RE = /^(?:(?:bun|npm|pnpm|yarn)\s+run\s+build|yarn\s+build|(?:astro|vite)\s+build)\b/
+const HEREDOC_RE = /<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\b/g
+/** Commands that say nothing about what the worker is doing: skipped when picking the real command of a chain. */
+const NOISE_COMMANDS = new Set(["cd", "pushd", "popd", "set", "true", "echo", "exit"])
+/** Wrappers that run the next command; the flags that take a value are listed so the value isn't mistaken for the command. */
+const WRAPPERS: Record<string, Set<string>> = {
+  timeout: new Set(["-s", "-k", "--signal", "--kill-after"]),
+  nice: new Set(["-n", "--adjustment"]),
+  sudo: new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group"]),
+  xargs: new Set(["-n", "-I", "-P", "-d", "-L", "-s", "-E", "-a"]),
+  env: new Set(["-u", "-C", "-S"]),
+  nohup: new Set(), time: new Set(), stdbuf: new Set(), npx: new Set(), bunx: new Set(), pnpx: new Set(),
+}
+
+/** Split a script on && || ; & and newlines outside quotes (2>&1 and &> are redirects); a pipeline keeps only its first command. */
+function chainSegments(s: string): string[] {
+  const out: string[] = []
+  let cur = "", quote = "", piped = false
+  const add = (x: string): void => { if (!piped) cur += x }
+  const flush = (): void => { out.push(cur); cur = ""; piped = false }
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!
+    if (c === "\\" && quote !== "'") { add(c + (s[++i] ?? "")); continue }
+    if (quote) { if (c === quote) quote = ""; add(c); continue }
+    if (c === "'" || c === '"') { quote = c; add(c); continue }
+    if (c === "|") { if (s[i + 1] === "|") { flush(); i++ } else piped = true; continue }
+    if (c === ";" || c === "\n" || (c === "&" && !"<>".includes(s[i - 1] ?? "x") && s[i + 1] !== ">")) { flush(); continue }
+    add(c)
+  }
+  out.push(cur)
+  return out
+}
+const shellWords = (seg: string): string[] =>
+  (seg.match(/(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"?|'[^']*'?)+/gs) ?? []).map((w) => w.replace(/\\(.)|"((?:[^"\\]|\\.)*)"?|'([^']*)'?/gs, (_, e, d, q) => e ?? d ?? q))
+
+/** Drop leading `VAR=x`, `export`, `timeout 600`, `nice -n 5`, `sudo -u x`, `nohup`, `npx` … until the real command. */
+function stripWrappers(words: string[]): string[] {
+  const w = [...words]
+  for (;;) {
+    const head = w[0] ? basename(w[0]) : ""
+    if (head === "export" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0] ?? "")) { w.shift(); continue }
+    if (!Object.hasOwn(WRAPPERS, head)) return w
+    const valueFlags = WRAPPERS[head]!
+    w.shift()
+    while (w[0]?.startsWith("-")) if (valueFlags.has(w.shift()!)) w.shift()
+    if (head === "timeout" && /^\d/.test(w[0] ?? "")) w.shift()
+  }
+}
+
+/** The last meaningful command of a script, as words: `cd x && timeout 5 bash -c 'gh pr checks'` → [gh, pr, checks]. */
+function lastCommand(script: string): string[] | null {
+  let found: string[] | null = null
+  for (const seg of chainSegments(script.replace(HEREDOC_RE, ""))) {
+    let w = stripWrappers(shellWords(seg))
+    if (/^(?:ba|z|da)?sh$/.test(w[0] ? basename(w[0]) : "")) {
+      // Only the shell's own options: stop at `--` or the first non-option word (a script file and its arguments).
+      let c = 1
+      for (; /^[-+]./.test(w[c] ?? "") && w[c] !== "--" && !/^-[a-z]*c[a-z]*$/.test(w[c]!); c++) {
+        if (/^(?:[-+][oO]|--rcfile|--init-file)$/.test(w[c]!)) c++
+      }
+      if (/^-[a-z]*c[a-z]*$/.test(w[c] ?? "")) w = (w[c + 1] !== undefined ? lastCommand(w[c + 1]!) : null) ?? []
+    }
+    if (w.length && !NOISE_COMMANDS.has(basename(w[0]!))) found = w
+  }
+  return found
+}
+
+/** A known command as a phrase, null = no phrase (the caller labels it "Running: <command>"). Matches on the command word and
+ *  its leading words only, never on argument text. */
+function commandPhrase(head: string, w: string[]): string | null {
+  const [a, b] = [w[1], w[2]]
+  const rest = w.slice(1)
+  if (head === "gh") {
+    if (rest.includes("--watch") || (a === "pr" && b === "checks") || (a === "run" && b === "watch")) return "Waiting for CI"
+    if (a === "pr" && b === "create") return "Opening PR"
+    if (a === "pr" && (b === "view" || b === "list")) return "Checking PR"
+    return null
+  }
+  if (head === "git") return a === "push" ? "Pushing" : a === "commit" ? "Committing" : null
+  if (head === "curl") return "Calling an API"
+  if (head === "sleep") return "Waiting"
+  if (head === "docker") return a === "build" ? "Building image" : null
+  if (head === "wrangler") return a === "deploy" ? (rest.some((x) => /^(?:--env=?)?staging$/.test(x) || x === "--env=staging") ? "Deploying (staging)" : "Deploying") : null
+  if (head === "gcloud") return a === "run" && b === "deploy" ? "Deploying to Cloud Run" : null
+  if (head === "xcodebuild") return rest.includes("test") ? "Running tests" : null
+  const lead = w.slice(0, 4).join(" ")
+  return TEST_RE.test(lead) ? "Running tests" : TYPECHECK_RE.test(lead) ? "Type-checking" : BUILD_RE.test(lead) ? "Building" : null
+}
 
 /**
- * A shell command as a human label: "Opening PR", "Running tests", or "Running: <command word>" (plus its subcommand
- * for git / gh / bun …). Never the pipeline, never an argument: env assignments, `cd … &&`, a `bash -lc '…'` wrapper
- * and paths are dropped, so no token or file content reaches the label.
+ * A shell command as a human label: "Waiting for CI", "Running tests", or "Running: <command word>" (plus its subcommand
+ * for git / gh / bun …). The real command only: env assignments, `timeout 600`, `nohup`, `sudo`, `bash -c '…'`, `cd … &&`
+ * and `export …;` are looked through. Never the pipeline, never an argument: no token or file content reaches the label.
  */
 export function commandLabel(raw: unknown): string {
-  let s = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.filter((a) => typeof a === "string").join(" ") : ""
-  // Codex runs `bash -lc '<script>'`: label the script.
-  const wrapped = /^\s*(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(s)
-  if (wrapped) s = wrapped[2]!
-  if (PR_RE.test(s)) return "Opening PR"
-  if (TEST_RE.test(s)) return "Running tests"
-  for (const segment of s.split(/\|\||&&|[|;\n&]/)) {
-    const words = segment.trim().split(/\s+/).filter(Boolean)
-    // FOO=bar cmd, export FOO=bar, env FOO=bar cmd: drop every assignment before basename() can keep a value's tail.
-    while (words.length && (words[0] === "export" || words[0] === "env" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!))) words.shift()
-    const head = words[0] ? basename(words[0]) : ""
-    if (!head || head === "cd" || head === "set" || head === "true" || head === "echo") continue
-    if (!/^[A-Za-z0-9._+-]{1,32}$/.test(head)) return "Running command"
-    const word = (w: string | undefined): boolean => !!w && /^[a-z][a-z0-9:-]{0,20}$/.test(w)
-    const sub = SUBCOMMAND_TOOLS.has(head) && word(words[1]) ? ` ${words[1]}${words[1] === "run" && word(words[2]) ? ` ${words[2]}` : ""}` : ""
-    return clipLabel(`Running: ${head}${sub}`)
-  }
-  return "Running command"
+  const s = typeof raw === "string" ? raw
+    : Array.isArray(raw) ? raw.filter((a): a is string => typeof a === "string").map((a) => (/[\s'"\\]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(" ") : ""
+  const w = lastCommand(s)
+  if (!w) return "Running command"
+  const head = basename(w[0]!)
+  const phrase = commandPhrase(head, w)
+  if (phrase) return phrase
+  if (!/^[A-Za-z0-9._+-]{1,32}$/.test(head)) return "Running command"
+  const word = (x: string | undefined): boolean => !!x && /^[a-z][a-z0-9:-]{0,20}$/.test(x)
+  const sub = SUBCOMMAND_TOOLS.has(head) && word(w[1]) ? ` ${w[1]}${w[1] === "run" && word(w[2]) ? ` ${w[2]}` : ""}` : ""
+  return clipLabel(`Running: ${head}${sub}`)
 }
 function shortPath(raw: unknown, prefix: string): string {
   const base = typeof raw === "string" && raw.trim() ? basename(raw.trim()) : ""
@@ -129,7 +210,11 @@ function toolStep(name: string, input: Record<string, unknown>): string {
   const pattern = input.pattern ?? input.Query ?? input.Pattern
   if (name === "Grep" || name === "search_file_content" || name === "grep_search") return typeof pattern === "string" && pattern.trim() ? clipLabel(`Searching ${redactSecrets(pattern.trim())}`) : "Searching codebase"
   if (name === "Glob" || name === "glob" || name === "find_by_name" || name === "list_dir") return typeof pattern === "string" && pattern.trim() ? clipLabel(`Listing ${pattern.trim()}`) : "Listing files"
-  if (name === "Bash" || name === "run_shell_command" || name === "run_command") return commandLabel(input.command ?? input.CommandLine)
+  if (name === "Bash" || name === "run_shell_command" || name === "run_command") {
+    // The agent's own description of the call beats a derived label.
+    const said = typeof input.description === "string" ? redactSecrets(input.description).replace(/\s+/g, " ").trim() : ""
+    return said ? clipLabel(said) : commandLabel(input.command ?? input.CommandLine)
+  }
   if (name === "TodoWrite" || name === "write_todos") return "Updating plan"
   return clipLabel(`Tool: ${name.split("__").at(-1)}`)
 }
