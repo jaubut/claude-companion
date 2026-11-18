@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, jest, test } from "bun:test"
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -20,6 +20,7 @@ import {
 import { WORKER_FOOTER, WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
+import { CHECKIN_MS, IDLE_KILL_MS } from "./worker-turn-watch"
 import { listSessions, removeSessionByKey } from "./sessions"
 import { recordWorkerSession, workerOwnsConvo } from "./worker-session"
 
@@ -1595,5 +1596,101 @@ sleep 30
       for (const s of listSessions()) if (ids.includes(s.taskId)) removeSessionByKey(s.key)
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  describe("turn watchdog: hourly check-in, idle kill, explicit timeout (no 1 h hard stop)", () => {
+    const MIN = 60_000
+    const step = (cmd: string) => JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: cmd } }] } })
+    async function harness() {
+      const home = join(tmpdir(), `worker-sup-watch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+      const spawned: SpawnWorkerOpts[] = []
+      const kills: string[] = []
+      let clock = 1700000000000
+      const sup = createWorkerSupervisor({
+        host: "zettlab", home, now: () => clock, uuid: () => "aaaa1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+        sh: async (_cmd, args) => {
+          if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+          return { ok: true, out: "origin/main\n", err: "", code: 0 }
+        },
+        spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill(sig) { kills.push(sig ?? "SIGTERM") } } },
+      })
+      /** Minute by minute; `out` = worker prints a step every N minutes (0: silent). */
+      const advance = (minutes: number, out = 0) => {
+        for (let i = 1; i <= minutes; i++) {
+          clock += MIN
+          if (out && i % out === 0) spawned.at(-1)!.onStdoutLine(step(`bun test ${i}`))
+          jest.advanceTimersByTime(MIN)
+        }
+      }
+      return { home, sup, spawned, kills, advance }
+    }
+
+    test("a long turn is never killed: one check-in receipt per hour, then the real receipt", async () => {
+      jest.useFakeTimers()
+      const h = await harness()
+      try {
+        await h.sup.dispatchTask({ taskId: "pelchat1", repo: "claude-companion", prompt: "big refactor", title: "Pelchat refactor" })
+        h.advance(CHECKIN_MS / MIN - 1, 5)
+        expect(h.sup.pendingReceipts()).toEqual([])
+        h.advance(1)
+        expect(h.kills).toEqual([])
+        const [r1, ...rest] = h.sup.pendingReceipts()
+        expect(rest).toEqual([])
+        expect(r1!.task.status).toBe("running")
+        expect(workerReceipt(r1!.task, { host: "zettlab", note: r1!.note })).toBe(
+          "still running [pelchat1] Pelchat refactor — 1 h 0 min, step: Running tests, last output 5 min ago\nFull report, every turn: bin/worker get --task pelchat1 --host zettlab")
+        h.advance(CHECKIN_MS / MIN, 7) // re-armed: one more an hour later, still no kill
+        expect(h.kills).toEqual([])
+        expect(h.sup.pendingReceipts().map((r) => r.note)).toEqual([r1!.note, "2 h 0 min, step: Running tests, last output 4 min ago"])
+        expect(h.sup.getTask("pelchat1")!.status).toBe("running")
+
+        h.spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Done: https://github.com/jaubut/claude-companion/pull/9" }))
+        h.spawned[0]!.onExit(0, null)
+        const all = h.sup.pendingReceipts()
+        expect(all).toHaveLength(3) // the final receipt never collides with a check-in's id
+        expect(new Set(all.map((r) => r.id)).size).toBe(3)
+        expect(all[2]!.task.status).toBe("completed")
+      } finally {
+        jest.useRealTimers(); rmSync(h.home, { recursive: true, force: true })
+      }
+    })
+
+    test("a worker silent for IDLE_KILL_MS is stopped; the receipt says so and keeps the worktree", async () => {
+      jest.useFakeTimers()
+      const h = await harness()
+      try {
+        await h.sup.dispatchTask({ taskId: "stuck1", repo: "claude-companion", prompt: "x", title: "Stuck" })
+        h.advance(10, 1)
+        h.advance(IDLE_KILL_MS / MIN - 1)
+        expect(h.kills).toEqual([])
+        h.advance(1)
+        expect(h.kills).toEqual(["SIGTERM"])
+        h.spawned[0]!.onExit(null, "SIGTERM")
+        const task = h.sup.getTask("stuck1")!
+        expect(task.status).toBe("failed")
+        expect(task.error).toBe(`stopped: no output for 30 min; worktree kept at ${task.worktree}`)
+        const [r] = h.sup.pendingReceipts()
+        expect(workerReceipt(r!.task, { host: "zettlab", note: r!.note })).toContain(`blocked [stuck1] claude-companion — Stuck\nError: stopped: no output for 30 min; worktree kept at ${task.worktree}`)
+      } finally {
+        jest.useRealTimers(); rmSync(h.home, { recursive: true, force: true })
+      }
+    })
+
+    test("an explicit timeout_s is still a hard limit, output or not", async () => {
+      jest.useFakeTimers()
+      const h = await harness()
+      try {
+        await h.sup.dispatchTask({ taskId: "hard1", repo: "claude-companion", prompt: "x", timeoutS: 120 })
+        h.advance(1, 1)
+        expect(h.kills).toEqual([])
+        h.advance(1, 1)
+        expect(h.kills).toEqual(["SIGTERM"])
+        h.spawned[0]!.onExit(null, "SIGTERM")
+        expect(h.sup.getTask("hard1")!.error).toBe("timed out after 120s")
+      } finally {
+        jest.useRealTimers(); rmSync(h.home, { recursive: true, force: true })
+      }
+    })
   })
 })

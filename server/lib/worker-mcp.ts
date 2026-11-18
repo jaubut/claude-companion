@@ -24,7 +24,7 @@ export const WORKER_MCP_TOOLS = [
         agent: { type: "string", description: "Optional agent profile slug (e.g. `builder`, or `codex`/`gemini`)." },
         model: { type: "string", description: "Optional model override." },
         mode: { type: "string", description: "Permission mode (`auto`, `acceptEdits`, `default`, `dontAsk`, `plan`). Defaults to `auto`." },
-        timeout_s: { type: "number", description: "Per-turn timeout in seconds (default 3600)." },
+        timeout_s: { type: "number", description: "Hard per-turn limit in seconds. Default none: a running turn checks in with the brain every hour, and is stopped only after 30 min with no output." },
         host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
         claim: { type: "string", description: "The handoff claim `bin/propose --handoff --repo` returned for this task id and repo. Pass it on every dispatch of the task, fix rounds included (never inherited); without it the worker runs unbound and its PR is never linked to the task row (origin unknown)." },
       },

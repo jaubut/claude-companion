@@ -9,9 +9,10 @@ export function createReceiptOutbox(file: string, now: () => number, onReceipt?:
   const outbox = loadReceipts(file)
   return {
     /** `turns`: the current dispatch's. Its start keys the receipt, so a restart re-enqueuing it keeps the same id.
-     *  `note`: what the host did after the turn (the worker was stopped, its dirty worktree kept). */
-    enqueue(task: SupervisedTaskSnapshot, turns: readonly WorkerTurn[], note: string | null = null): void {
-      const id = `${task.taskId}#${task.turnCount}@${turns[0]?.startedAt ?? task.completedAt ?? task.updatedAt}`
+     *  `note`: what the host did after the turn (the worker was stopped, its dirty worktree kept). `tag`: a distinct id for a
+     *  receipt sent while the turn still runs (a check-in), so it never stands in for the turn's final one. */
+    enqueue(task: SupervisedTaskSnapshot, turns: readonly WorkerTurn[], note: string | null = null, tag = ""): void {
+      const id = `${task.taskId}#${task.turnCount}@${turns[0]?.startedAt ?? task.completedAt ?? task.updatedAt}${tag}`
       if (outbox.some((r) => r.id === id)) return
       const report = reportTurn(turns)
       const latest = turns.findLast((x) => x.endedAt !== null && !!x.result)
