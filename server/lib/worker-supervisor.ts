@@ -8,7 +8,7 @@ import { redactSecrets } from "./secret-redact"
 import {
   ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
   type PlanProgress, type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerProgress, type WorkerTaskStatus,
-  buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
+  applyProgressEvent, buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
@@ -377,10 +377,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 }, reapGraceMs)
                 task.reapTimer.unref?.()
               }
-              if (ev.plan) task.plan = ev.plan // the worker's own plan beats tool labels: its current item is the step
-              if (ev.step || ev.plan) {
-                task.sessionStarted = true; task.step = task.plan?.label ?? ev.step ?? task.step
-                task.pct = task.plan ? Math.round((task.plan.done / task.plan.total) * 100) : Math.min(90, Math.max(10, (task.pct ?? 5) + 8))
+              if (applyProgressEvent(task, ev)) {
                 deps.reportJob({ event: "progress", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct, progress: progressOf(task) })
                 syncTaskSession(task)
               }

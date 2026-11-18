@@ -8,14 +8,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 284 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630), `lib/worker-supervisor.ts` (606)
+⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630), `lib/worker-supervisor.ts` (603)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1276 ⚠ 1276 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/sessions.ts` | 630 ⚠ 630 > cap 600 | lib | 25 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
-| `lib/worker-supervisor.ts` | 606 ⚠ 606 > cap 600 | lib | 6 |  |
+| `lib/worker-supervisor.ts` | 603 ⚠ 603 > cap 600 | lib | 6 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
@@ -36,8 +36,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/link-media.ts` | 460 | lib | 18 | state: inflight: Map |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
+| `lib/worker-invocation.ts` | 454 | lib | 39 | state: SUBCOMMAND_TOOLS: Set |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
-| `lib/worker-invocation.ts` | 445 | lib | 38 | state: SUBCOMMAND_TOOLS: Set |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
@@ -188,9 +188,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
+| `lib/worker-progress-trace.ts` | 116 | lib | 5 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
-| `lib/worker-progress-trace.ts` | 114 | lib | 5 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |

@@ -6554,7 +6554,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 445,
+          "lines": 454,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6573,6 +6573,7 @@
             "PlanProgress",
             "WorkerProgress",
             "progressOf",
+            "applyProgressEvent",
             "StreamJsonEvent",
             "STEP_LABEL_MAX",
             "clipLabel",
@@ -6695,7 +6696,7 @@
         },
         {
           "path": "lib/worker-progress-trace.ts",
-          "lines": 114,
+          "lines": 116,
           "kind": "lib",
           "exports": [
             "THROTTLE_MS",
@@ -6763,7 +6764,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 606,
+          "lines": 603,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -15604,6 +15605,12 @@
           ]
         },
         "progressOf": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "applyProgressEvent": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"

@@ -49,6 +49,15 @@ export function progressOf(t: { plan?: PlanProgress | null; step: string | null;
   const time = { startedAt: turnStart, elapsedMs: Math.max(0, (t.completedAt ?? t.updatedAt) - turnStart) }
   return t.plan ? { ...t.plan, ...time } : { done: 0, total: 0, label: clipLabel(t.step ?? "Working"), source: "none", ...time }
 }
+/** Apply a stream event's plan / step to a task's progress: the worker's own plan beats tool labels (its current item is
+ *  the step, pct = done / total). false = the event carries no progress. */
+export function applyProgressEvent(t: { plan?: PlanProgress | null; step: string | null; pct: number | null; sessionStarted: boolean }, ev: StreamJsonEvent): boolean {
+  if (ev.plan) t.plan = ev.plan
+  if (!ev.step && !ev.plan) return false
+  t.sessionStarted = true; t.step = t.plan?.label ?? ev.step ?? t.step
+  t.pct = t.plan ? Math.round((t.plan.done / t.plan.total) * 100) : Math.min(90, Math.max(10, (t.pct ?? 5) + 8))
+  return true
+}
 export interface StreamJsonEvent {
   sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean; plan?: PlanProgress
 }
