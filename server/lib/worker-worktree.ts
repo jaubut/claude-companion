@@ -28,7 +28,8 @@ function sameRealPath(a: string, b: string): boolean {
   try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
 }
 
-/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's, else created. */
+/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's (on whatever branch
+ *  it is checked out; that branch is returned), else created. */
 export async function ensureWorktree(
   sh: ShFn, home: string, others: Iterable<{ taskId: string; repo: string; worktree: string }>,
   repoDir: string, repo: string, taskId: string, ownedByTask: boolean,
@@ -51,8 +52,8 @@ export async function ensureWorktree(
     const curBranch = await sh("git", ["-C", worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: worktree, timeoutMs: 10_000 })
     if (!curBranch.ok) return { ok: false, error: "existing worktree is not on a branch" }
     const bOut = curBranch.out.trim()
-    if (bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
-    return { ok: true, worktree, branch }
+    // Another branch (a PR's branch the worker was asked to update, a stacked dispatch/<id>-c): reused as-is, never switched, stashed or reset.
+    return { ok: true, worktree, branch: bOut && bOut !== "origin/main" ? bOut : branch }
   }
   mkdirSync(wtRoot, { recursive: true })
   const sym = await sh("git", ["-C", repoDir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { cwd: repoDir, timeoutMs: 15_000 })
@@ -86,13 +87,16 @@ export async function closeTaskWorktree(
   const dirty = await worktreeDirtyPaths(sh, t.worktree)
   if (dirty === null) return { removed: false, note: `worktree kept: git status failed in ${t.worktree}` }
   if (dirty.length) return { removed: false, note: `worktree kept: ${dirty.length} uncommitted or ignored file(s) in ${t.worktree}` }
+  // The branch the worktree is on now (a worker may have switched or stacked), not the one recorded at dispatch.
+  const cur = await sh("git", ["-C", t.worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
+  const branch = cur.ok && cur.out.trim() ? cur.out.trim() : t.branch
   await sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
   const pushed = await sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
   const head = prHead ? (await sh("git", ["-C", t.worktree, "rev-parse", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })).out.trim() : ""
   if (!(pushed.ok && pushed.out.trim()) && !(prHead && head === prHead)) return { removed: false, note: `worktree kept: HEAD is not pushed to any remote branch (${t.worktree})` }
   const rm = await sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
   if (!rm.ok) return { removed: false, note: `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}` }
-  await sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
+  await sh("git", ["-C", t.repoDir, "branch", "-D", branch], { cwd: t.repoDir, timeoutMs: 10_000 })
   return { removed: true }
 }
 

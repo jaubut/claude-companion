@@ -275,6 +275,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
+        const otherBranch = existing && wt.branch !== `dispatch/${taskId}` ? wt.branch : null
         const familyChanged = !!existing && existing.family !== family
         // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
         // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
@@ -324,7 +325,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
 
         clearTimers(task)
-        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim
+        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim; task.branch = wt.branch
         task.title = title; task.family = family; task.model = effectiveModel; task.modelPinned = !!explicitModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
@@ -336,7 +337,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct, progress: progressOf(task) })
 
         const dCtx = deps.designContext?.().trim() ?? ""
-        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
+        const branchNote = otherBranch ? `[Resumed worktree is on branch ${otherBranch}, not dispatch/${taskId}: keep working on it, uncommitted work is intact.]\n\n` : ""
+        const effectivePrompt = prompt.startsWith("/") ? prompt : `${branchNote}${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let lastOutputAt = deps.now()
