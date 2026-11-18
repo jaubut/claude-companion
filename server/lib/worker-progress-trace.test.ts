@@ -194,6 +194,14 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
     ["sleep 30", "Waiting"],
     ["rg 'bun test' server", "Running: rg"],
     ["$(echo secret)", "Running command"],
+    // Object.prototype keys are not wrappers; `\` doesn't escape inside single quotes; -c after a script file is its argument
+    ["constructor -x secret", "Running: constructor"],
+    ["toString secret", "Running: toString"],
+    [`echo 'a\\' "x; secret_tok"`, "Running command"],
+    [`awk -F'\\' '{a=1; ${token}}' f`, "Running: awk"],
+    [`bash scripts/deploy.sh -c ${token}`, "Running: bash"],
+    [`sh run.sh -config ${token}`, "Running: sh"],
+    ["bash -o pipefail -e -c 'bun test'", "Running tests"],
     ["", "Running command"],
   ]
   for (const [cmd, label] of cases) {
@@ -204,6 +212,7 @@ test("command labels: short, never a pipeline, an argument or a secret", async (
     expect(got).not.toMatch(/[|;&]/)
   }
   expect(commandLabel(["bash", "-lc", "cargo test -q"])).toBe("Running tests")
+  expect(commandLabel(["bash", "-lc", `tr '\\' '/' < f && bun test`])).toBe("Running tests")
   // The agent's own description wins, scrubbed.
   const { parseStreamJsonLine } = await import("./worker-invocation")
   const bash = (input: object) => parseStreamJsonLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input }] } }))?.step
