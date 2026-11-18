@@ -9,14 +9,14 @@ import { companionLog } from "../lib/log"
 import { appendTurn } from "../lib/orchestrator-chat"
 import { startSessionArchive } from "../lib/session-archive"
 import { startGoneSessionPrune } from "../lib/session-prune-gone"
-import { listSessions, markHeadlessSession, recordSession, setSessionModel } from "../lib/sessions"
+import { listSessions } from "../lib/sessions"
 import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler } from "../lib/worker-mcp"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr, workerReceipt } from "../lib/worker-pr-link"
 import { createWorkerProgressTrace } from "../lib/worker-progress-trace"
-import { workerAgentStatus } from "../lib/worker-invocation"
+import { recordWorkerSession } from "../lib/worker-session"
 import { type SupervisedTaskSnapshot, createWorkerSupervisor, workerStateFile } from "../lib/worker-supervisor"
 import { HOST_INFO } from "../state"
 import { emitTrace, getBrainDeliver } from "./brain"
@@ -99,24 +99,7 @@ export const workerSupervisor = createWorkerSupervisor({
   reportJob: (r) => builderJobs.report(r),
   designContext: () => designStateHookContext(),
   syncSession: (task, pid, linkBound) => {
-    const model = task.model || DEFAULT_FAMILY_MODELS[task.family]
-    markHeadlessSession(task.sessionId)
-    const recorded = recordSession({
-      cwd: task.worktree,
-      agent: task.family,
-      sessionId: task.sessionId,
-      label: `${task.repo} · ${task.taskId}`,
-      title: task.status === "running" && task.step ? `${task.title} · ${task.step}` : task.title,
-      taskId: task.taskId,
-      herdrPane: `headless:worker:${task.taskId}`,
-      herdrAgent: task.builder,
-      agentStatus: workerAgentStatus(task.status),
-      pid: String(pid ?? process.pid),
-      model,
-    }, { sessionIdConfirmed: true })
-    if (recorded && model) {
-      setSessionModel(recorded.key, model)
-    }
+    recordWorkerSession(task, pid, task.model || DEFAULT_FAMILY_MODELS[task.family])
     void syncWorkerTaskToTurso(task, linkBound)
   },
   // Bind at dispatch on a verified handoff claim, link before the turn reads completed (lib/worker-pr-link.ts); bounded, never fails the turn.

@@ -19,6 +19,7 @@ import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
 import { transcriptPath } from "./session-titles"
 import { validHerdrPane } from "./herdr"
+import { workerOwnsConvo } from "./worker-session"
 import {
   type AgyConversationSummary,
   AGY_BRAIN_PANE,
@@ -582,7 +583,9 @@ async function discoverOnce(): Promise<{ registered: number }> {
   for (const c of recentAgy.slice(0, 5)) {
     if (liveAgyIds.has(c.id) || (brainSid && c.id === brainSid)) continue
     // Only register headlessly if no tty-backed or pinned brain session already owns this sessionId
-    const owners = listSessions().filter((s) => s.sessionId === c.id)
+    const sessions = listSessions()
+    if (workerOwnsConvo(c.id, c.cwd, sessions)) continue
+    const owners = sessions.filter((s) => s.sessionId === c.id)
     if (owners.some((s) => !!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE)) continue
     if (!agyThreadVisible(c, owners[0])) continue
     recordSession({
