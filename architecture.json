@@ -2550,7 +2550,7 @@
         },
         {
           "path": "lib/inject-guard.ts",
-          "lines": 188,
+          "lines": 225,
           "kind": "lib",
           "exports": [
             "InjectRefusalCode",
@@ -2558,6 +2558,11 @@
             "PaneNotReadyReason",
             "paneExcerpt",
             "paneNotReady",
+            "FRESH_SESSION_MS",
+            "PROMPT_WAIT_MS",
+            "PROMPT_POLL_MS",
+            "PromptWaitClock",
+            "awaitPrompt",
             "InjectAttempt",
             "injectRefusal"
           ],
@@ -5075,11 +5080,14 @@
         },
         {
           "path": "lib/submit-confirm.ts",
-          "lines": 484,
+          "lines": 538,
           "kind": "lib",
           "exports": [
             "SUBMIT_WINDOW_MS",
             "LATE_HOOK_GRACE_MS",
+            "SUBMIT_RETRIES",
+            "RETRY_WINDOW_MS",
+            "PASTE_SETTLE_MS",
             "SubmitIdentity",
             "SubmitClock",
             "SubmitWatch",
@@ -16230,6 +16238,13 @@
           "callers": [
             "routes/api.ts#* /api/feed",
             "wiring/auto-compact.ts",
+            "ws.ts"
+          ]
+        },
+        "awaitPrompt": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "routes/api.ts#* /api/feed",
             "ws.ts"
           ]
         },

@@ -26,10 +26,31 @@ export const SUBMIT_WINDOW_MS = 3_000
 // Text left the box but no hook yet: on a loaded host Claude Code runs its
 // pre-prompt hooks before UserPromptSubmit reaches us — seen 6.6 s after the
 // Enter on Zettlab (2026-10-03), past the 3 s window, so a delivered prompt was
-// reported lost. One more wait in that case only. 3 s + this stays under the
-// phone's 12 s inject timeout (the Enter-retry path skips it: it already waited
-// a second window).
+// reported lost. One more wait in that case only.
 export const LATE_HOOK_GRACE_MS = 6_000
+// Every wait after the Enter (window, settle reads, retries, captures, grace)
+// runs against ONE deadline: window + grace by default, or the route's
+// INJECT_BUDGET_MS counted from before the fresh-session prompt wait. Past it
+// we answer, so the phone's 12 s inject timeout never fires on a prompt that
+// may still be submitted (a resend would hand Claude the text twice).
+export const INJECT_BUDGET_MS = 10_000
+// A typed prompt whose Enter was lost gets ONE more Enter, then a full window.
+// A paste placeholder (below) gets up to SUBMIT_RETRIES, RETRY_WINDOW_MS apart:
+// a paste swallows Enters while it is being taken in, typed text does not, and
+// every extra Enter is one more chance to answer a picker that just opened.
+export const SUBMIT_RETRIES = 3
+export const RETRY_WINDOW_MS = 1_000
+// A multi-line or long prompt arrives as a bracketed paste (herdr `agent
+// prompt`) or a burst Claude Code reads as one, and the box shows
+// `[Pasted text #1 +2 lines]`, not the text. The Enter sent right behind it
+// can be swallowed while Claude Code is still taking the paste in
+// (2026-11-15, lead-tls-dashboard-v2). Re-read until the placeholder holds
+// still before pressing Enter on it.
+export const PASTE_SETTLE_MS = 300
+const PASTE_SETTLE_READS = 3
+// ponytail: Claude Code's collapse rule approximated as newline or >800 chars;
+// a shorter one-line paste is not recognised as ours (no retry, honest verdict).
+const PASTE_MIN_CHARS = 800
 
 // Who a UserPromptSubmit hook (or a watch) is about. Any non-empty field that
 // matches is enough: the hook's session key is derived from the same tty /
@@ -50,11 +71,14 @@ export { isHooklessInput }
 export interface SubmitClock {
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
+  // Defaults to Date.now.
+  now?(): number
 }
 
 const realClock: SubmitClock = {
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
 }
 
 export interface SubmitWatch {
@@ -210,6 +234,8 @@ export interface ConfirmDeps {
   windowMs?: number
   // Extra wait when our text left the box but no hook came (LATE_HOOK_GRACE_MS).
   lateGraceMs?: number
+  // Answer by this time (clock.now()); defaults to now + window + grace.
+  deadline?: number
   clock?: SubmitClock
 }
 
@@ -233,10 +259,45 @@ function textPrefix(text: string): string {
   return norm(text).slice(0, 16)
 }
 
-// Our text is still typed (not dim) on the input line: the Enter was lost.
-function stillInBox(pane: string, prefix: string): boolean {
+// Claude Code's stand-in for a paste, alone on the input line.
+const PASTE_RE = /^❯[\s ]*\[Pasted text #\d+[^\]]*\]\s*$/
+
+function pastedLine(pane: string): string | null {
+  const lines = unstyle(pane).split("\n")
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^❯/.test(lines[i] ?? "")) return PASTE_RE.test(lines[i]!) ? lines[i]!.trim() : null
+  }
+  return null
+}
+
+// Text Claude Code would collapse into a paste placeholder.
+function pasteSized(text: string): boolean {
+  return text.includes("\n") || text.length > PASTE_MIN_CHARS
+}
+
+// Our text is still on the input line, typed (not dim) or as the paste
+// placeholder: the Enter was lost. A placeholder counts as ours only when our
+// text is paste-sized (a local paste in the same pane is not ours).
+function stillInBox(pane: string, prefix: string, pasted: boolean): boolean {
+  if (pastedLine(pane)) return pasted
   const typed = inputLine(pane)
   return !!prefix && !!typed && norm(typed).startsWith(prefix)
+}
+
+const sleep = (ms: number, clock: SubmitClock) => new Promise<void>((r) => clock.setTimeout(r, ms))
+
+// Re-read a pasted box until the placeholder reads the same twice (bounded by
+// reads and by the time left). Returns that capture, a capture where the
+// placeholder is gone, or null when the pane can't be read or never settled.
+async function settledPaste(deps: ConfirmDeps, pane: string, left: () => number): Promise<string | null> {
+  let last = pane
+  for (let i = 0; i < PASTE_SETTLE_READS && left() >= PASTE_SETTLE_MS + RETRY_WINDOW_MS; i++) {
+    await sleep(PASTE_SETTLE_MS, deps.clock ?? realClock)
+    const next = await deps.capture()
+    if (next === null || !pastedLine(next) || pastedLine(next) === pastedLine(last)) return next
+    last = next
+  }
+  return null
 }
 
 // Claude is mid-turn and our text shows above the box (the queued-prompt
@@ -257,37 +318,60 @@ export async function confirmSubmit(deps: ConfirmDeps): Promise<ConfirmResult> {
 }
 
 async function confirmTyped(deps: ConfirmDeps): Promise<ConfirmResult> {
+  const clock = deps.clock ?? realClock
+  const now = () => clock.now?.() ?? Date.now()
   const windowMs = deps.windowMs ?? SUBMIT_WINDOW_MS
+  const deadline = deps.deadline ?? now() + windowMs + (deps.lateGraceMs ?? LATE_HOOK_GRACE_MS)
+  const left = () => deadline - now()
   const prefix = textPrefix(deps.text)
-  if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: false }
+  const pasted = pasteSized(deps.text)
+  if (await deps.watch.wait(Math.min(windowMs, left()), clock)) return { ok: true, confirmed: true, retried: false }
 
   const before = await deps.capture()
   if (before === null) return { ok: false, error: "not_submitted", excerpt: "" }
   // The hook may have landed while we were capturing: never press a spurious
   // Enter into an idle box.
-  if (await deps.watch.wait(0, deps.clock)) return { ok: true, confirmed: true, retried: false }
+  if (await deps.watch.wait(0, clock)) return { ok: true, confirmed: true, retried: false }
 
-  // Retry ONLY when our own text is visibly sitting unsent in the input box
-  // and nothing modal is on screen. Anything else — an empty box, a picker, a
-  // panel — means the text went somewhere else, and an Enter there would
-  // answer a prompt nobody chose (review of PR #51, item 1).
-  let retried = false
-  if (stillInBox(before, prefix) && !PICKER_RE.test(unstyle(before))) {
-    retried = true
+  // Retry ONLY while our own text (or its paste placeholder) is visibly
+  // sitting unsent in the input box and nothing modal is on screen. Anything
+  // else — an empty box, a picker, a panel — means the text went somewhere
+  // else, and an Enter there would answer a prompt nobody chose (review of
+  // PR #51, item 1). Typed text: one press. A placeholder: SUBMIT_RETRIES.
+  const pending = (pane: string | null): pane is string => pane !== null && stillInBox(pane, prefix, pasted) && !PICKER_RE.test(unstyle(pane))
+  const placeholder = pending(before) && pastedLine(before) !== null
+  const maxPresses = placeholder ? SUBMIT_RETRIES : 1
+  const pressWait = placeholder ? RETRY_WINDOW_MS : windowMs
+  let presses = 0
+  let seen: string | null = before
+  while (presses < maxPresses && pending(seen)) {
+    if (pastedLine(seen)) {
+      seen = await settledPaste(deps, seen, left)
+      if (!pending(seen)) break
+    }
+    // No Enter we could not wait out, and none once the hook came (it can
+    // land during any capture).
+    if (left() < RETRY_WINDOW_MS) break
+    if (await deps.watch.wait(0, clock)) return { ok: true, confirmed: true, retried: presses > 0 }
+    presses++
     await deps.pressEnter()
-    if (await deps.watch.wait(windowMs, deps.clock)) return { ok: true, confirmed: true, retried: true }
+    if (await deps.watch.wait(Math.min(pressWait, left()), clock)) return { ok: true, confirmed: true, retried: true }
+    seen = await deps.capture()
   }
+  const retried = presses > 0
 
-  const after = await deps.capture()
+  const after = retried ? seen : await deps.capture()
   if (after !== null && queuedBehindTurn(after, prefix)) return { ok: true, confirmed: false, queued: true }
   // A picker still means the text went into it, busy or not.
   const last = after ?? before
   if (!PICKER_RE.test(unstyle(last)) && (await deps.busy?.())) return { ok: true, confirmed: false, queued: true }
   // Our text is gone from the input line and nothing modal took it: it was
-  // most likely submitted and the hook is just late. Wait once more.
-  // Never for hookless input (/cmd, !cmd): no hook is coming.
-  if (!deps.hookless && !retried && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix)) {
-    if (await deps.watch.wait(deps.lateGraceMs ?? LATE_HOOK_GRACE_MS, deps.clock)) return { ok: true, confirmed: true, retried: false }
+  // most likely submitted and the hook is just late. Wait out what is left
+  // before the deadline. Never for hookless input (/cmd, !cmd): no hook is
+  // coming.
+  if (!deps.hookless && after !== null && !PICKER_RE.test(unstyle(after)) && !stillInBox(after, prefix, pasted)) {
+    const grace = left()
+    if (grace > 0 && (await deps.watch.wait(grace, clock))) return { ok: true, confirmed: true, retried }
   }
   return { ok: false, error: "not_submitted", excerpt: paneExcerpt(after ?? before) }
 }
@@ -381,7 +465,8 @@ function withPaneLock<T>(pane: string, fn: () => Promise<T>): Promise<T> {
 // `herdr` is a test seam.
 // A Claude prompt (not /cmd or !cmd) is recorded as a phone origin until its
 // hook consumes it; a failed or already-confirmed inject drops the record.
-export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr, isCurrent?: () => boolean): Promise<InjectOutcome> {
+// `deadline` (Date.now() ms): when the route must answer (INJECT_BUDGET_MS).
+export async function injectConfirmed(text: string, target: ConfirmTarget | undefined, herdr: Herdr = realHerdr, isCurrent?: () => boolean, deadline?: number): Promise<InjectOutcome> {
   const origin = target && (target.agent ?? "claude") === "claude" && !isHooklessInput(text)
     ? notePhoneOrigin({ key: target.key, sessionId: target.sessionId, tty: target.tty }, text)
     : null
@@ -392,15 +477,15 @@ export async function injectConfirmed(text: string, target: ConfirmTarget | unde
     if (!isCurrent()) targetChanged = true
     return !targetChanged
   } : undefined
-  const delivered = await injectRouted(text, target, herdr, canDeliver)
+  const delivered = await injectRouted(text, target, herdr, canDeliver, deadline)
   const res: InjectOutcome = targetChanged ? { ok: false, error: "target_changed" } : delivered
   if (origin && (!res.ok || res.confirmed)) origin.drop()
   return res
 }
 
-async function injectRouted(text: string, target: ConfirmTarget | undefined, herdr: Herdr, canDeliver?: () => boolean): Promise<InjectOutcome> {
+async function injectRouted(text: string, target: ConfirmTarget | undefined, herdr: Herdr, canDeliver?: () => boolean, deadline?: number): Promise<InjectOutcome> {
   const herdrPane = herdrPaneOf(target)
-  if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr, canDeliver)
+  if (target && herdrPane) return injectHerdr(text, target, herdrPane, herdr, canDeliver, deadline)
   const ref = target && (target.agent ?? "claude") === "claude" ? await confirmPane(target) : null
   if (!target || !ref) {
     return (await injectText(text, target, { canDeliver })) ? { ok: true, confirmed: false } : { ok: false, error: "deliver_failed" }
@@ -420,6 +505,7 @@ async function injectRouted(text: string, target: ConfirmTarget | undefined, her
         capture: () => capturePane(ref.pane, AbortSignal.timeout(CAPTURE_TIMEOUT_MS), { escapes: true, socket: ref.socket }),
         busy: busyOf(target),
         hookless,
+        deadline,
       })
       return confirmOutcome(r, pane)
     } finally {
@@ -446,7 +532,7 @@ function confirmOutcome(r: ConfirmResult, where: string): InjectOutcome {
 // before the Enter, same confirmSubmit (#51). Delivery is `herdr agent
 // prompt`; the Enter retry and the read-back go through `pane send-keys` /
 // `pane read`. Never AppleScript.
-async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h: Herdr, canDeliver?: () => boolean): Promise<InjectOutcome> {
+async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h: Herdr, canDeliver?: () => boolean, deadline?: number): Promise<InjectOutcome> {
   const where = herdrGateKey(pane)
   return withPaneLock(where, async (): Promise<InjectOutcome> => {
     const hookless = isHooklessInput(text)
@@ -474,6 +560,7 @@ async function injectHerdr(text: string, target: ConfirmTarget, pane: string, h:
         capture: () => h.read(pane),
         busy: busyOf(target),
         hookless,
+        deadline,
       })
       return confirmOutcome(r, where)
     } finally {

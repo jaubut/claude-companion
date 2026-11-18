@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { injectRefusal, paneExcerpt, paneNotReady } from "./inject-guard"
+import { FRESH_SESSION_MS, PROMPT_POLL_MS, PROMPT_WAIT_MS, awaitPrompt, injectRefusal, paneExcerpt, paneNotReady } from "./inject-guard"
 import type { Dialog } from "./dialogs"
 import type { Session } from "./sessions"
 import { herdrScreen } from "./herdr"
@@ -325,5 +325,52 @@ describe("injectRefusal — herdr screen", () => {
 
   test("an empty herdr input box proceeds", () => {
     expect(injectRefusal({ ...at, pane: herdr(["", DIV, "❯ ", DIV, FOOTER, ""]) })).toBeNull()
+  })
+})
+
+// A lead brief sent right after bin/lead started the session: Claude Code was
+// still booting, no input box yet. Wait for the prompt (bounded) before typing.
+describe("awaitPrompt: a fresh session gets time to draw its input box", () => {
+  const LINE = "─".repeat(40)
+  const READY = `${LINE}\n❯ \n${LINE}\n  ? for shortcuts\n`
+  const BOOTING = " ▐▛███▜▌   Claude Code\n"
+  function clock() {
+    let t = 1_000_000
+    return { now: () => t, sleep: async (ms: number) => { t += ms } }
+  }
+  function reads(seq: string[]) {
+    let i = 0
+    return { read: async () => seq[Math.min(i++, seq.length - 1)]!, count: () => i }
+  }
+
+  test("booting then ready: polls until the prompt shows", async () => {
+    const c = clock()
+    const r = reads([BOOTING, BOOTING, READY])
+    expect(await awaitPrompt(r.read, c.now() - 2_000, c)).toBe(READY)
+    expect(r.count()).toBe(3)
+  })
+
+  test("an old session is never waited on (no_prompt is a panel there)", async () => {
+    const c = clock()
+    const r = reads([BOOTING, READY])
+    expect(await awaitPrompt(r.read, c.now() - FRESH_SESSION_MS - 1, c)).toBe(BOOTING)
+    expect(r.count()).toBe(1)
+  })
+
+  test("never ready: gives up after PROMPT_WAIT_MS and the guard still refuses", async () => {
+    const c = clock()
+    const start = c.now()
+    const pane = await awaitPrompt(reads([BOOTING]).read, start, c)
+    expect(pane).toBe(BOOTING)
+    expect(c.now() - start).toBeGreaterThanOrEqual(PROMPT_WAIT_MS)
+    expect(c.now() - start).toBeLessThanOrEqual(PROMPT_WAIT_MS + PROMPT_POLL_MS)
+    expect(paneNotReady(pane ?? null)).toBe("no_prompt")
+  })
+
+  test("text already in the box is not a boot: no wait", async () => {
+    const c = clock()
+    const r = reads([`${LINE}\n❯ leftover\n${LINE}\n`])
+    await awaitPrompt(r.read, c.now(), c)
+    expect(r.count()).toBe(1)
   })
 })

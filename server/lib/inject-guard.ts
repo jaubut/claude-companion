@@ -118,6 +118,43 @@ export function paneNotReady(pane: string | null): PaneNotReadyReason | null {
   return null
 }
 
+// ── fresh sessions ──────────────────────────────────────────────────────────
+//
+// A session started seconds ago (bin/lead, a phone spawn) may still be booting:
+// no input box on screen yet, so paneNotReady says no_prompt and the first
+// message is refused. For a session first seen under FRESH_SESSION_MS ago,
+// poll the pane (bounded) until the box shows. On an older session no_prompt
+// means a panel took the box, and waiting would only delay the refusal.
+// ponytail: fixed bounds, tune if Claude Code boots slower than PROMPT_WAIT_MS.
+export const FRESH_SESSION_MS = 60_000
+export const PROMPT_WAIT_MS = 5_000
+export const PROMPT_POLL_MS = 250
+
+export interface PromptWaitClock { now(): number; sleep(ms: number): Promise<void> }
+const realWaitClock: PromptWaitClock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }
+
+const booting = (pane: string | null | undefined): boolean => {
+  if (typeof pane !== "string") return false
+  const r = paneNotReady(pane)
+  return r === "no_prompt" || r === "prompt_unframed"
+}
+
+/** The pane snapshot for the guard, after waiting out a fresh session's boot. */
+export async function awaitPrompt(
+  read: () => Promise<string | null | undefined>,
+  firstSeenAt: number | undefined,
+  clock: PromptWaitClock = realWaitClock,
+): Promise<string | null | undefined> {
+  let pane = await read()
+  const start = clock.now()
+  if (firstSeenAt === undefined || start - firstSeenAt > FRESH_SESSION_MS) return pane
+  while (booting(pane) && clock.now() - start < PROMPT_WAIT_MS) {
+    await clock.sleep(PROMPT_POLL_MS)
+    pane = await read()
+  }
+  return pane
+}
+
 export interface InjectAttempt {
   // What the caller addressed: a session key or a cwd. Empty means "frontmost"
   // — the caller named nothing, so there is no target to check.
