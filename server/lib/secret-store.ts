@@ -13,8 +13,7 @@ import { forwardVault, vaultUpstream } from "./vault-upstream"
 // 1Password first (`op` with that token, same item shape as tls-secrets.py:
 // title = NAME, field `credential`, tags `host:<h>`; the value only ever on
 // op's stdin), then to secrets.env (the fallback, and the name list), then
-// the .env / env mirrors (read directly by scripts: calendar-sync flow,
-// perplexity-mcp, scout-nightly, jev hooks). op down → secrets.env only, and
+// the legacy env file when present (mirrorEnvFiles). op down → secrets.env only, and
 // the reply says so. No op-token → secrets.env only (pre-1Password hosts).
 //
 // Store format and masking are owned by ~/.claude/tools/tls-secrets.py:
@@ -206,7 +205,8 @@ async function runOp(args: string[], stdin?: string): Promise<{ ok: boolean; out
   const timer = setTimeout(() => proc.kill(), 30_000)
   const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()])
   clearTimeout(timer)
-  return { ok: code === 0, out: (code === 0 ? out : err).trim() }
+  // op's error text never carries the token (an invalid one is quoted by nothing, but be sure).
+  return { ok: code === 0, out: (code === 0 ? out : err.split(token).join("•••")).trim() }
 }
 
 type OpWrite = { ok: true; created: boolean } | { ok: false; detail: string }
@@ -266,29 +266,19 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-// Write, sync, roll back on sync failure, audit on success, and mirror to .env / env.
+// Keep the legacy ~/.config/tls-agent/env in step when it exists: perplexity-mcp,
+// scout-nightly, jev, tg-signals and calendar-sync read it directly, not via
+// tls-agent-env. No .env copy: its one reader (calendar-sync) reads env first.
 export function mirrorEnvFiles(storeFile: string, action: VaultAction, name: string, hosts: string[], secret?: string): void {
-  const dir = dirname(storeFile)
-  const dotenvPath = join(dir, ".env")
-  const legacyEnvPath = join(dir, "env")
+  const legacyEnvPath = join(dirname(storeFile), "env")
   const change = action === "deleted"
     ? { remove: true }
     : secret !== undefined
       ? { value: secret, hosts }
       : { hosts }
-
-  try {
-    const seed = existsSync(dotenvPath)
-      ? readFileSync(dotenvPath, "utf8")
-      : (existsSync(legacyEnvPath) ? readFileSync(legacyEnvPath, "utf8") : "")
-    const nextDotenv = editLine(seed, name, change)
-    if (nextDotenv !== null) atomicWrite(dotenvPath, nextDotenv)
-  } catch { /* best-effort mirror */ }
-
   try {
     if (existsSync(legacyEnvPath)) {
-      const prevEnv = readFileSync(legacyEnvPath, "utf8")
-      const nextEnv = editLine(prevEnv, name, change)
+      const nextEnv = editLine(readFileSync(legacyEnvPath, "utf8"), name, change)
       if (nextEnv !== null) atomicWrite(legacyEnvPath, nextEnv)
     }
   } catch { /* best-effort mirror */ }
@@ -319,7 +309,9 @@ async function commit(before: string | null, after: string, action: VaultAction,
   audit(action, name, hosts, origin, op?.ok ? "1password" : "secrets.env")
   const file = path.replace(homedir(), "~")
   const dest = op?.ok ? `1Password (coffre ${OP_VAULT})` : file
-  const warn = op && !op.ok ? ` ⚠️ 1Password injoignable (${redact(op.detail)}): repli sur ${file}, lu par les sessions seulement tant que 1Password ne répond pas — réessaie.` : ""
+  const warn = op && !op.ok
+    ? ` ⚠️ 1Password injoignable (${redact(op.detail)}): ${file} est le repli que les sessions lisent tant que 1Password ne répond pas. Une fois 1Password rétabli, réenregistre ${name}, sinon il resservira l'ancienne valeur.`
+    : ""
   return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts, dest) + warn }
 }
 

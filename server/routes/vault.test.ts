@@ -397,23 +397,20 @@ test("/api/orchestrator/send `/key`: same gate as inject; a refused /key never r
   expect(stderr).not.toContain(SECRET)
 })
 
-test("POST /api/vault mirrors saved key into sibling .env (and env when present) with 0600 mode", async () => {
+test("POST /api/vault: no .env written; legacy env kept in step when present, 0600", async () => {
   const { dirname } = await import("node:path")
-  const { statSync } = await import("node:fs")
+  const { existsSync, statSync } = await import("node:fs")
   const dir = dirname(store)
-  const dotenvFile = join(dir, ".env")
   const legacyEnvFile = join(dir, "env")
   writeFileSync(legacyEnvFile, "EXISTING_KEY='keep'\n", { mode: 0o600 })
 
   const r = await call("POST", "/api/vault", { name: "OPENAI_API_KEY", value: SECRET, hosts: ["api.openai.com"] })
   expect(r.status).toBe(200)
-  expect(readFileSync(dotenvFile, "utf8")).toContain("EXISTING_KEY='keep'\n")
-  expect(readFileSync(dotenvFile, "utf8")).toContain(`OPENAI_API_KEY='${SECRET}'  # api.openai.com\n`)
-  expect(readFileSync(legacyEnvFile, "utf8")).toContain(`OPENAI_API_KEY='${SECRET}'  # api.openai.com\n`)
-  expect(statSync(dotenvFile).mode & 0o777).toBe(0o600)
+  expect(existsSync(join(dir, ".env"))).toBe(false)
+  expect(readFileSync(legacyEnvFile, "utf8")).toBe(`EXISTING_KEY='keep'\nOPENAI_API_KEY='${SECRET}'  # api.openai.com\n`)
+  expect(statSync(legacyEnvFile).mode & 0o777).toBe(0o600)
 
   const del = await call("DELETE", "/api/vault/OPENAI_API_KEY")
   expect(del.status).toBe(200)
-  expect(readFileSync(dotenvFile, "utf8")).not.toContain("OPENAI_API_KEY")
   expect(readFileSync(legacyEnvFile, "utf8")).not.toContain("OPENAI_API_KEY")
 })
