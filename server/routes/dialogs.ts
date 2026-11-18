@@ -7,6 +7,9 @@ import { paneKey, sendKeysArgs } from "../lib/tmux-pane"
 import { dialogWatcher, endQuestionsOnEscape } from "../wiring/dialogs"
 import { herdrGateKey, herdrGatedKey, herdrPaneOf } from "../lib/herdr"
 import { checked, jsonObject } from "../lib/json-body"
+import { getPendingQuestions } from "../lib/questions"
+import { isDeskRow } from "../lib/desk-runner"
+import { interruptSession } from "../wiring/desk-deliver"
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -25,6 +28,17 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const session = key ? resolveSession(key) : null
     const named = /^(Enter|Escape|Up|Down|Left|Right|Tab|Space)$/.test(name)
     if (session && !named && [...name].length !== 1) return Response.json({ ok: false, error: "name must be a key name or one character" }, { status: 400 })
+    // headless-desk: no terminal behind a desk or brain row. Escape = Stop
+    // (cancel only an open question card, else interrupt the turn), always 2xx
+    // so build 59's Stop keeps working; other keys: 410 no_dialogs.
+    if (session && (isDeskRow(session) || session.herdrPane === "headless:brain")) {
+      if (!/^esc(ape)?$/i.test(name)) return Response.json({ ok: false, error: "no_dialogs" }, { status: 410 })
+      const asking = getPendingQuestions().some((q) => q.sessionKey === session.key || (!!session.sessionId && q.sessionId === session.sessionId))
+      if (asking) endQuestionsOnEscape(session, "escape")
+      else await interruptSession(session)
+      companionLog(`\x1b[36mdialog key\x1b[0m ${name} → ${asking ? "question cancelled" : "interrupt"} ${session.label || session.key}`)
+      return Response.json({ ok: true })
+    }
     // herdr session (Mac): Esc/interrupt and dialog keys via `pane send-keys`.
     const herdrPane = herdrPaneOf(session)
     if (session && herdrPane) {
@@ -74,6 +88,7 @@ export async function handleDialogRoute(req: Request, url: URL): Promise<Respons
     const body = checked(await jsonObject<{ key?: string; index?: number }>(req), { key: "string" })
     const key = (body.key ?? "").trim()
     const session = key ? resolveSession(key) : null
+    if (session && (isDeskRow(session) || session.herdrPane === "headless:brain")) return Response.json({ ok: false, error: "no_dialogs" }, { status: 410 })
     const herdrPane = herdrPaneOf(session)
     if (!session || (!session.tmuxPane && !herdrPane)) return Response.json({ ok: false, error: "no tmux pane for session" }, { status: 404 })
     const dialog = dialogWatcher.current()[session.key]

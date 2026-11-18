@@ -118,7 +118,7 @@ function prune(now: number): boolean {
       if (!isAgentPidAlive(s.pid, s.agent)) {
         sessions.delete(key)
         logRemoval(s, "prune:pid-dead")
-        herdrSessionGone(s, listSessions, "killed")
+        if (!adoptDead(s, now)) herdrSessionGone(s, listSessions, "killed")
         changed = true
       }
       continue
@@ -130,6 +130,30 @@ function prune(now: number): boolean {
     }
   }
   return changed
+}
+
+// headless-desk: a closed terminal's chat stays, as an idle desk row
+// (`<agent>:sid:<sid>`, herdrPane headless:desk:<sid>) Companion can resume.
+// Installed by wiring/desk-deliver.ts; it records the row, returns false to decline.
+type PidDeadAdopter = (s: Session) => boolean
+let pidDeadAdopter: PidDeadAdopter | null = null
+export function setPidDeadAdopter(fn: PidDeadAdopter | null): void {
+  pidDeadAdopter = fn
+}
+
+function adoptDead(s: Session, now: number): boolean {
+  if (!pidDeadAdopter || (s.agent !== "claude" && s.agent !== "codex") || !s.sidConfirmed || !s.sessionId) return false
+  if (s.herdrPane?.startsWith("headless:")) return false
+  const key = `${s.agent}:sid:${s.sessionId}`
+  const row: Session = {
+    ...s, key, tty: "", iTermSessionId: "", tmuxPane: "", tmuxSocket: "", herdrPane: `headless:desk:${s.sessionId}`, herdrAgent: "",
+    termProgram: "", pid: "", agentStatus: "idle", waitingFor: "", waitingReasons: [], lastActiveAt: now,
+  }
+  project(row)
+  sessions.set(key, row)
+  if (pidDeadAdopter(row)) return true
+  sessions.delete(key)
+  return false
 }
 
 // Periodic background prune so idle sessions disappear without waiting for

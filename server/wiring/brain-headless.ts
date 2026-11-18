@@ -11,6 +11,7 @@ import { type Session, recordSession, setSessionModel } from "../lib/sessions"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
 import { type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
 import { brainWorkers } from "./brain-workers"
+import { commandCatalog } from "../lib/command-catalog"
 
 /** The brain's cwd: its CLAUDE.md + .claude/settings.json (repo `brain/`, or COMPANION_BRAIN_DIR). */
 export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
@@ -146,6 +147,7 @@ export function createHeadlessBrainRunner(hooks: {
           cwd: BRAIN_DIR,
           env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1" },
           onStdoutLine(line) {
+            commandCatalog.noteLine(BRAIN_DIR, line)
             if (settled) return
             const ev = parseStreamJsonLine(line)
             if (!ev) return

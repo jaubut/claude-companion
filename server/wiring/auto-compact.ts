@@ -27,6 +27,8 @@ import { broadcast } from "../state"
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { openDialogFor, screenSnapshotFor, screenWidthFor, yieldPaneForInject } from "./dialogs"
+import { isDeskRow } from "../lib/desk-runner"
+import { deskRunner } from "./desk-deliver"
 
 // Real deps for lib/auto-compact.ts. Two hard rules on the inject:
 //   - only into the session's OWN pane, tmux or herdr: no pane → "unknown"
@@ -59,6 +61,8 @@ function hasPane(s: Session): boolean {
 
 async function inputState(key: string): Promise<InputState> {
   const s = claudeSession(key)
+  // A desk row has no input box: free whenever no turn of ours runs.
+  if (s && isDeskRow(s)) return deskRunner.running(s.sessionId) ? "not_ready" : "empty"
   if (!s || !hasPane(s)) return "unknown"
   const pane = await screenSnapshotFor(s)
   if (pane === undefined || pane === null) return "unknown"
@@ -72,6 +76,13 @@ async function inputState(key: string): Promise<InputState> {
 async function inject(key: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const s = claudeSession(key)
   if (!s) return { ok: false, error: "target_gone" }
+  // headless-desk: /compact as a desk turn (`claude -p "/compact keep: …"` compacts, Verify 7).
+  // A chat a terminal still holds is that terminal's to compact: skip, never type.
+  if (isDeskRow(s)) {
+    const r = deskRunner.send({ sid: s.sessionId, agent: s.agent, cwd: s.cwd, text })
+    if (!r.ok) companionLog(`auto-compact skipped → ${key}: ${r.error}`)
+    return r.ok ? { ok: true } : { ok: false, error: r.error }
+  }
   if (!hasPane(s)) return { ok: false, error: "no_tmux_pane" }
   const paneFree = await yieldPaneForInject(s)
   const refusal = injectRefusal({

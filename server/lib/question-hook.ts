@@ -49,6 +49,7 @@ import { recordToolStart } from "./activity"
 import { summarize } from "./tool-format"
 import { hookDecisionResponse, hookPassthroughResponse } from "./hook-common"
 import type { Session } from "./sessions"
+import { isDeskRow } from "./desk-runner"
 
 const dim = "\x1b[2m"; const reset = "\x1b[0m"; const yellow = "\x1b[33m"; const cyan = "\x1b[36m"
 const green = "\x1b[32m"; const red = "\x1b[31m"
@@ -193,7 +194,9 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
   if (!isQuestionTool(p.tool)) return null
   const questions = parseQuestionInput(p.input)
   const target = questionInjectTarget(p.session, p.headerMeta)
-  if (!questions || !(target.tmuxPane || target.tty)) {
+  // A desk turn (`claude -p`, no terminal): the phone is the only way to answer.
+  const desk = isDeskRow(p.session)
+  if (!questions || !(target.tmuxPane || target.tty || desk)) {
     companionLog(`${yellow}question fallback${reset} — ${questions ? "no live terminal target" : "could not parse questions"}`)
     return null
   }
@@ -203,7 +206,7 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
     companionLog(`${dim}question already answered — allow (${p.eventName})${reset}`)
     return answeredResponse(p.agent, p.eventName, p.input, questions, prior)
   }
-  const afterAnswer = deps.afterAnswer ?? defaultAfterAnswer
+  const afterAnswer = deps.afterAnswer ?? (desk ? () => {} : defaultAfterAnswer)
   // A lapse belongs to its tool call: a NEW call with the same text (re-asked
   // after Esc) gets a fresh phone card. Without ids on both sides, assume same call.
   const fell = fellThrough(dedupeKey, Date.now(), p.toolUseId ?? "")
@@ -232,7 +235,8 @@ export async function questionFastPath(p: QuestionHookInput, deps: QuestionHookD
   if (!reask) recordToolStart({ tool: p.tool, input: p.input, summary: summarize(p.tool, p.input), verdict: "pending", cwd: p.cwd, sessionId: p.sessionId, tty: p.tty, sessionKey: p.session?.key ?? "" })
   // Claude PreToolUse: park on lapse so the card stays answerable until the
   // PermissionRequest sibling claims it. Codex has no such sibling.
-  const park = p.eventName === "PreToolUse" && p.agent !== "codex"
+  // A desk turn has no sibling either: a lapse is a denial, re-raised at turn exit (sweepDeskOrphanQuestion).
+  const park = p.eventName === "PreToolUse" && p.agent !== "codex" && !desk
   const answers = await (deps.ask ?? addQuestionRequest)(
     { agent: p.agent, sessionId: p.sessionId, cwd: p.cwd, questions, sessionKey: p.session?.key ?? "" },
     {
