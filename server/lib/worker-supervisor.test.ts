@@ -12,8 +12,6 @@ import {
   buildHeadlessGeminiArgs,
   buildHeadlessWorkerInvocation,
   buildWorkerEnv,
-  CHECKIN_MS,
-  IDLE_KILL_MS,
   createWorkerSupervisor,
   defaultSpawnWorker,
   parseStreamJsonLine,
@@ -22,6 +20,7 @@ import {
 import { WORKER_FOOTER, WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
+import { CHECKIN_MS, IDLE_KILL_MS } from "./worker-turn-watch"
 import { listSessions, removeSessionByKey } from "./sessions"
 import { recordWorkerSession, workerOwnsConvo } from "./worker-session"
 

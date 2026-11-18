@@ -15,6 +15,7 @@ import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultK
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
 import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
+import { watchTurn } from "./worker-turn-watch"
 import { cloneRepo, closeTaskWorktree, defaultResolveRepoDir, ensureWorktree, finishedPrHead, worktreeDirtyPaths } from "./worker-worktree"
 
 export {
@@ -25,9 +26,6 @@ export {
 }
 
 const PROMPT_MAX = 100_000, MAX_WAIT_MS = 120_000, DEFAULT_WAIT_MS = 30_000
-/** A running turn checks in with the brain every CHECKIN_MS; it is stopped only after IDLE_KILL_MS with no output (or past an explicit timeoutS). */
-export const CHECKIN_MS = 3_600_000, IDLE_KILL_MS = 30 * 60_000
-const fmtMin = (ms: number): string => { const m = Math.floor(ms / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min` }
 
 export interface DispatchTaskInput {
   taskId: string; repo: string; prompt: string; title?: string; family?: string; agent?: string; model?: string; mode?: string; timeoutS?: number
@@ -486,33 +484,11 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           task.pidIdentity = task.pid ? getPidIdentity(task.pid) : null
           task.reloadedFromDisk = false
           savePersistedTasks(); syncTaskSession(task)
-          // No hard stop by default: the brain hears from a long turn every hour; only silence (or an explicit timeoutS) stops it.
-          const turnStart = deps.now()
-          const timeoutMs = input.timeoutS ? Math.max(1, input.timeoutS) * 1000 : Infinity
-          let nextCheckIn = turnStart + CHECKIN_MS
-          const stop = (error: string) => {
-            task.error = error.slice(0, 400)
-            task.handle?.kill("SIGTERM")
-            task.killTimer = setTimeout(() => { if (!settled && task.activeTurn === myTurn) task.handle?.kill("SIGKILL") }, 5_000)
-            task.killTimer.unref?.()
-          }
-          const arm = (t: number) => {
-            task.timeoutTimer = setTimeout(watch, Math.max(1_000, Math.min(turnStart + timeoutMs, nextCheckIn, lastOutputAt + IDLE_KILL_MS) - t))
-            task.timeoutTimer.unref?.()
-          }
-          const watch = () => {
-            task.timeoutTimer = null
-            if (settled || task.activeTurn !== myTurn || task.status !== "running") return
-            const t = deps.now(), idle = t - lastOutputAt
-            if (t - turnStart >= timeoutMs) { const last = task.stderrTail.at(-1); return stop(`timed out after ${Math.round(timeoutMs / 1000)}s${last ? `: ${last}` : ""}`) }
-            if (idle >= IDLE_KILL_MS) return stop(`stopped: no output for ${fmtMin(idle)}; worktree kept at ${task.worktree}`)
-            if (t >= nextCheckIn) {
-              if (task.turns.at(-1)?.endedAt === null) enqueueReceipt(task, `${fmtMin(t - turnStart)}, step: ${task.step ?? "none"}, last output ${fmtMin(idle)} ago`, `~running@${t}`)
-              nextCheckIn = t + CHECKIN_MS
-            }
-            arm(t)
-          }
-          arm(turnStart)
+          watchTurn(task, {
+            now: deps.now, timeoutS: input.timeoutS, lastOutputAt: () => lastOutputAt,
+            live: () => !settled && task.activeTurn === myTurn && task.status === "running",
+            checkIn: (note, tag) => enqueueReceipt(task, note, tag),
+          })
         }
 
         return { ok: true, task: toSnapshot(task), claim: claimStatus }

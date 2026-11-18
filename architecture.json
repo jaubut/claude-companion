@@ -6652,7 +6652,7 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 158,
+          "lines": 159,
           "kind": "lib",
           "exports": [
             "OWNABLE",
@@ -6705,7 +6705,7 @@
         },
         {
           "path": "lib/worker-receipt-outbox.ts",
-          "lines": 33,
+          "lines": 34,
           "kind": "lib",
           "exports": [
             "createReceiptOutbox"
@@ -6747,7 +6747,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 603,
+          "lines": 602,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6773,6 +6773,7 @@
             "lib/worker-receipt-outbox.ts",
             "lib/worker-task-store.ts",
             "lib/worker-turns.ts",
+            "lib/worker-turn-watch.ts",
             "lib/worker-worktree.ts"
           ],
           "listeners": [],
@@ -6809,6 +6810,28 @@
           "imports": [
             "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-turn-watch.ts",
+          "lines": 49,
+          "kind": "lib",
+          "exports": [
+            "CHECKIN_MS",
+            "TurnWatchOpts",
+            "watchTurn"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts",
+            "lib/worker-task-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -15467,6 +15490,7 @@
           "callers": [
             "lib/worker-receipt-outbox.ts",
             "lib/worker-supervisor.ts",
+            "lib/worker-turn-watch.ts",
             "lib/worker-turns.ts"
           ]
         },
@@ -15557,7 +15581,8 @@
         "SpawnedWorkerHandle": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-turn-watch.ts"
           ]
         },
         "SpawnWorkerOpts": {
@@ -15768,6 +15793,12 @@
         },
         "closeTaskWorktree": {
           "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "watchTurn": {
+          "module": "lib/worker-turn-watch.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
