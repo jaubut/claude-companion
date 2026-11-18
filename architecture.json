@@ -4700,10 +4700,11 @@
         },
         {
           "path": "lib/secret-store.ts",
-          "lines": 416,
+          "lines": 476,
           "kind": "lib",
           "exports": [
             "SyncFn",
+            "OpFn",
             "VaultAction",
             "AuditOrigin",
             "VaultEntry",
@@ -4712,6 +4713,7 @@
             "storePath",
             "syncToolPath",
             "vaultWritable",
+            "opTokenPath",
             "auditPath",
             "validName",
             "validValue",
@@ -8599,7 +8601,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 267,
+          "lines": 268,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",

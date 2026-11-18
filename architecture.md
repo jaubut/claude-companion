@@ -32,6 +32,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
+| `lib/secret-store.ts` | 476 | lib | 30 | state: FLAGS: Set, let lock |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/link-media.ts` | 460 | lib | 18 | state: inflight: Map |
@@ -43,7 +44,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `lib/desk-runner.ts` | 417 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
-| `lib/secret-store.ts` | 416 | lib | 28 | state: FLAGS: Set, let lock |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
 | `routes/brain.ts` | 405 | lib | 3 |  |
@@ -80,13 +80,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 277 | lib | 47 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
-| `wiring/brain-pr-merge.ts` | 267 | lib | 4 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/question-hook.ts` | 272 | lib | 7 |  |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
+| `wiring/brain-pr-merge.ts` | 268 | lib | 4 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 262 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
