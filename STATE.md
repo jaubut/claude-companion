@@ -213,6 +213,222 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — headless-desk (2026-11-18)
+**Request:** Go fully headless for desk and interactive sessions and retire all terminal-pane plumbing (tmux and herdr). Phone or Mac Companion → session = `claude -p --resume <sid> --output-format stream-json --verbose` (codex and gemini where their CLIs can resume), streaming into the feed. The slash picker is built from stream-json `system/init` (`slash_commands`, `skills`, `plugins`), with an init-only probe for sessions that have no headless turn yet. Delete the tmux, herdr, scrape, dialog-mirror, picker-driver and Esc pane code, plus the hook-side pane headers. Contracts used by iOS and Companion Canvas change additively where possible, with a migration for anything removed. PR #337 was reverted by #338: no tmux, no herdr.
+**Done when:**
+- From the phone (and, after P4, from Companion Canvas, which has no `/api/inject` caller today), a message to any claude or codex desk session runs a headless turn on that host, and its prompt, tools, approvals, questions and reply show up in the feed. No terminal window gets keystrokes, and "no tab for tty" is gone from the log.
+- `/api/command/list` returns the init-derived list (about 276 on the Mac) in under 5 s cold and under 50 ms warm. The probe is killed after init with zero `POST /v1/messages`.
+- `rg -n "tmux|herdr" server/ hooks/ scripts/` matches only the dated 410 shims and the `herdrPane`/`tmuxPane` wire fields. Phone spawn works on Zettlab again.
+
+**Target shape & drift** (leader: Claude Agent SDK `query()`, the API Claude Code ships for driving sessions headless)
+- SDK → ours: `query({resume})` → a desk-runner turn `-p --resume`. `options.forkSession` → refused for now (follow-up). `Query.interrupt()` → kill the turn (phase 1); a streaming-input `control_request interrupt` is the follow-up. `setModel()` → `session.model` passed as `--model` on the next turn. `supportedCommands()` / `system/init.slash_commands` → command catalog. `canUseTool` → the PreToolUse long-poll (phone approvals, AskUserQuestion `updatedInput.answers`). One `Query` per conversation → one runner lease per sessionId.
+- Reference for this intent:
+  - A session is a conversation id, never a tty or pane.
+  - One runner process per active conversation, holding an exclusive lease.
+  - The control plane is typed: send, interrupt, setModel, listCommands.
+  - The data plane is stream-json plus hooks into the feed.
+  - Approvals and questions are callbacks, never screen scraping.
+  - Clients never address processes.
+- Deviations today:
+  - Delivery is keystrokes over 4 transports (AppleScript tty, tmux, herdr, Ghostty). Delivery is verified by scraping the screen (submit-confirm, inject-guard, dialog-watch).
+  - Identity is tty-first ("a session is a terminal window", `sessions.ts:6`).
+  - The runner kind is overloaded into `herdrPane` (`headless:*`).
+  - There are two inject paths that duplicate the refusals (`ws.ts:159-221` vs `routes/api.ts deliverInject`).
+  - The command list is a 40 s `/help` scrape in a hidden pane.
+  - There are three separate headless runners: `brain-headless.ts`, `agy-feed.ts deliverHeadlessAgyTurn`, `worker-supervisor`.
+  - The map `## Intent` still says "keystroke injection back into tmux sessions".
+- This change moves toward: one desk runner with a lease for claude and codex, keyed by sessionId; one inject path (ws → `deliverInject`); a catalog built from init; the Intent line rewritten (`archmap.json`) in phase 3.
+- Leaves for follow-up (to file):
+  - (a) A long-lived streaming-input process per session, giving interrupt and setModel without a kill and native queueing.
+  - (b) Fold the brain runner and the agy turn into the desk runner.
+  - (c) A `runner` wire field in place of `herdrPane: "headless:*"`: dual-field, then iOS, then removal.
+  - (d) An opt-in `--fork-session` for sessions owned by a terminal.
+  - (e) A per-session permission mode (plan / acceptEdits).
+  - (f) Split `agy-feed.ts` (agy-turn / agy-transcript / agy-poller).
+  - (g) Split `sessions.ts` (identity+prune / registry).
+
+**State decisions**
+- Desk turn lease + FIFO: lives in NEW `server/lib/desk-runner.ts` as `Map<sessionId, {handle, pid, pidStart, queue[]}>`.
+  - Only `deskRunner.send / interrupt / create / adopt` mutate it.
+  - It is announced through the existing `sessions` frame: a `recordSession` with `agentStatus` busy/idle, `herdrPane: "headless:desk:<sid>"` and key `<agent>:sid:<sid>`.
+  - Persistence: `~/.claude/state/companion-desk-turns.json` (sid, pid, pidStart, queue). At boot, a pid that is alive with a matching start time keeps the lease and gets watched, so a server restart never starts a second writer.
+- Queue: if a send arrives while our own turn runs, it is queued (cap 5, `200 {ok, confirmed:true, queued:true}`; the 6th gets `409 queue_full`) and runs at turn exit. The prompt bubble comes from the turn's UserPromptSubmit hook, not from an echo, so a message never shows twice.
+- Two writers, with one rule per owner. Refusals happen before spawn:
+  - The sid is owned by a worker (`isHeadlessSession`), the brain or the agy brain → `409 runner_owned`.
+  - An interactive claude or codex still holds the sid → `409 terminal_owned`, whether it is idle or mid-turn. "Holds" means a non-`headless:` row with a live pid, or a `~/.claude/sessions/<pid>.json` that names the sid, excluding the runner's own descendants (checked with `worker-pid` parent walk). Such turns are refused, never queued: a turn driven by a human has no end we can wait on.
+  - Transcripts are local to the host. A resume on a host without `~/.claude/projects/…/<sid>.jsonl` → `410 target_gone`, and the client stays pinned to the origin host.
+- Hand-off: when the process of an interactive row dies (`sessions.ts` prune), a claude or codex row with `sidConfirmed` is re-recorded as an idle desk row (`setPidDeadAdopter`, same pattern as `titleResolver`) instead of being dropped. Closing a terminal therefore hands the chat to Companion. `session-archive.ts` ages these rows out as usual. This replaces `ended-sessions.ts`.
+- Command catalog: lives in NEW `server/lib/command-catalog.ts`, as `Map<cwd, {at, commands: CommandEntry[]}>` plus `~/.claude/state/companion-commands.json`.
+  - It is mutated by `noteLine(cwd, line)` on every headless turn (desk runner and brain) and by `probe(cwd)`.
+  - The names come from `system/init` `slash_commands` plus `skills` (kind `custom`) and plugin commands. Descriptions come from the probe's `control_response.commands` (SDK `supportedCommands` shape), else from SKILL.md / command frontmatter, else "".
+  - No frame: clients pull it.
+- Gemini keeps `agy-feed.ts` `activeAgyProcs` as its lease (it is not in the desk runner yet, follow-up b). Kimi gets `409 unsupported_agent`.
+- Env: desk turns get `scrubAgentEnv(process.env)` plus the agent secrets (the workers' policy) and no `DISPATCH_HEADLESS`, so the approval, question and prompt hooks fire to the phone. `--permission-mode default` is used. A PreToolUse that falls through is a denial in `-p`.
+
+**Contracts touched**
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `POST /api/inject` | endpoint | delivery = desk turn; +`queued`; +errors `terminal_owned`, `runner_owned`, `queue_full`, `unsupported_agent`; `pane_*`/`busy_flow`/`not_submitted` never sent | ios AppState+SendQueue.swift, CompanionKit CompanionClient.swift:200-254, SendQueue.swift; server wiring/canvas.ts (Canvas Swift app: no caller) | additive (409 is terminal in SendQueue: build 59 shows the raw code; build 60 strings). Untargeted (`key` empty) → 410 `no_target`: **downgrade, no migration** (no tty rows left to pick) |
+| ws `input` msg (`ws.ts:142-221`) / `inject_error` frame | frame | same refusals; `osascript_failed` retired; +async `turn_failed` {key,cwd,text} and `queue_expired` | CompanionKit CompanionSocket.swift:342, WSFrame.swift:108 | additive |
+| `POST /api/command/list` / `suggest` | endpoint | catalog; every entry carries `kind` (built-ins `default`, skills/plugins/user `custom`); `suggest` always `source:"list"`, cold cache → `ok:true, commands:[]` immediately; `aborted` only on probe failure; shell-key palette path dies with shells | CompanionClient.swift:530-545, CommandPaletteSheet.swift | same shape |
+| `POST /api/spawn-session` | endpoint | claude/codex → headless desk (+`key`, `app:"headless"`, `seed:"pending"` kept until build 60, never `"sent"`); `agent:"shell"` → 410 `shell_retired` (P3) | CompanionClient.swift:316,356, TaskSession.swift:107, NewSessionSheet.swift, Canvas BoardView drop | additive; shell = break |
+| `POST /api/sessions/resume` | endpoint | → `{ok, via:"headless"}`; adopt drops the `ended:<sid>` row and broadcasts `sessions` in the same step | CompanionClient.swift:392 (no `key` → `.pane`) | compatible |
+| `POST /api/sessions/ended/delete` | endpoint | drops the row, `closed:false` | CompanionClient.swift:412 | compatible |
+| `POST /api/session/interrupt` | endpoint | NEW `{key}` → kills the turn | iOS build 60 TurnInterrupt.swift | additive |
+| `POST /api/dialog/key` | endpoint | `name` matching `/^esc(ape)?$/i` (clients send `Escape`) → always 2xx `{ok:true}`, idempotent: session waiting on a question → cancel that question only (Canvas Cancel); else interrupt + `endQuestionsOnEscape` + close pending approvals + clear activity and waiting. Other names → 410 `no_dialogs` (body validation stays before the 410). Shim dated 2026-11-18 | TurnInterrupt.swift, CompanionClient.swift:435, Canvas BoardModel.swift:454 | Stop keeps working on build 59 |
+| `POST /api/dialog/pick` | endpoint | 410 `no_dialogs` | CompanionClient.swift:441, Canvas BoardModel.swift:450 | break (dead UI: no dialogs to pick) |
+| `dialog` / `dialog_closed` frames, waitingKind `"dialog"` | frame | never emitted | WSFrame.swift:161-171, SessionWaiting.swift:26 | benign |
+| `POST /api/model/open|set|cancel` | endpoint | one filtered catalog function for open AND set (index round-trips); no `agent` flip on set; never `--model auto` (`modelFitsFamily`); "this session only" hint kept; `current` matched on base id (strip `[1m]`); selection stored in desk-runner, not `Session.model` (hooks overwrite it) | CompanionClient.swift:468-487 | same shape |
+| `/api/terminal`, `/api/pane-mirror` WS, `POST /api/shell/close` | endpoint | WS upgrades accepted then closed `4000 "retired"` (build 59 shows "Session ended"; a refusal would retry 4× and say "Couldn't reach the shell"); `/api/shell/close` → 410 (no client) | ShellSessions.swift, TerminalScreen.swift, PaneMirror.swift, TerminalMirror.swift, Canvas TerminalNode.swift | **break**: build 59 Terminal tab + mirror, Canvas terminal node |
+| `sessions` frame | frame | desk rows `herdrPane:"headless:desk:<sid>"`, `tmuxPane` always "" | WSFrame.swift:77, Models.swift:161 | additive |
+| `POST /hooks/brain/lead`, `/hooks/brain/sessions op:close` | hook | 410 `leads_retired` / `retired` (P2) | brain/bin/lead, brain/bin/sessions | brain-internal |
+| hook headers `X-Companion-Tmux*`, `X-Companion-Herdr-Pane` | hook | the server stops reading them (P3), then hooks/_lib.sh stops sending | hooks/_lib.sh:118-121, hooks/companion-codex-hook.sh:40-42 (+ deployed `~/.codex/hooks`, `~/apps/claude-config/hooks` copies) | order: server first |
+
+Migration for the breaks:
+1. P3 server deploy (Mac + Zettlab). Shell and mirror are already dead on Zettlab since 65e720f.
+2. iOS build 60 and the Canvas rebuild (in addition): `PaneMirror.canMirror` false for `headless:*`; seed accepts `pending||sent`; Canvas drops `app:"tmux"` (BoardModel.swift:504) and HostBadge "no tmux"; EndedResumeState + InjectErrorBanner/UndeliveredNote strings for `shell_retired`, `terminal_owned`, `runner_owned`, `queue_full`, `queue_expired`, `turn_failed`, `no_target`; Canvas gets a composer on `CompanionClient.inject`. Base items: drop the Terminal tab, TerminalMirror, DialogSheet and TerminalNode; move Stop to `/api/session/interrupt`; and show a readable message for `terminal_owned`.
+3. Named step "remove esc shim + dialog 410s": once build 60 has been on the phone 14 days (not before 2026-12-15).
+
+**Files — one owner each** (phases ship sequentially: P1 merges before P2 starts, P2 before P3; inside a phase every file has one owner)
+| file | owner | change | lines now → after |
+|---|---|---|---|
+| `server/lib/desk-runner.ts` | P1 builder | NEW: `createDeskRunner, DeskRunner, DeskTurnRecord, deskStateFile`. Covers send / create(seed) / adopt / interrupt (SIGINT to the group, SIGKILL +3 s) / lease / queue / boot restore. claude uses `buildHeadlessClaudeArgs`, codex uses `buildHeadlessCodexArgs` | 0 → ~380 ✓ |
+| `server/lib/command-catalog.ts` | P1 builder | NEW: `commandCatalog, parseInitLine, initProbeArgs` | 0 → ~220 ✓ |
+| `server/wiring/desk-deliver.ts` | P1 builder | NEW: `deliverInject, deskRunner` (moved from routes/api.ts; the pane branch becomes `deskRunner.send`; the headless brain/worker/agy branches are kept verbatim) | 0 → ~170 ✓ |
+| `server/routes/api.ts` | P1 builder | deliverInject moved out; spawn → `deskRunner.create`; resume → `adopt`; +`/api/session/interrupt`; P3: shell/ended routes → 410 | 593 → ~430 ✓ |
+| `server/ws.ts` | P1 builder | `inject` → `deliverInject`; P3: drop the terminal/mirror branches | 246 → ~170 ✓ |
+| `server/routes/command.ts` | P1 builder | list and suggest from the catalog; `listAgyCommands` kept | 260 → ~120 ✓ |
+| `server/routes/dialogs.ts` | P1 builder | esc → interrupt (desk or brain); everything else 410 | 103 → ~40 ✓ |
+| `server/routes/model.ts` | P1 builder | shared filtered catalog for open+set, drop `agent: picked.family`, desk selection → `deskRunner.setModel`, keep hints, base-id `current`; P3 deletes the pane branches | 309 → ~150 ✓ |
+| `server/lib/question-hook.ts` (P1 part) | P1 builder | `questionFastPath` (`:185-189`) accepts desk rows (`headless:desk:*` / sid) so AskUserQuestion is held for the phone, not a generic approval | 267 → ~270 |
+| `server/lib/idempotency.ts` | P1 builder | header comment: desk sends return at spawn/enqueue; the key is also stored on the persisted queue item and deduped at enqueue (in-memory map is lost on restart) | 90 → ~92 ✓ |
+| `server/routes/hooks.ts` (P1 part) | P1 builder | session-end on `/exit` (`:535-536`) adopts the row as a desk row instead of removing it; UserPromptSubmit marks the desk turn "accepted" (for `turn_failed`) | 566 → ~575 ✓ |
+| `server/wiring/brain-headless.ts` | P1 builder | `commandCatalog.noteLine` in onStdoutLine; P2 drops the `brainWorkers.stopBrain` sweep | 210 → ~205 ✓ |
+| `server/wiring/canvas.ts` | P1 builder | import from wiring/desk-deliver; treat `queued:true` as delivered-pending (distinct from its 8 s `PICK_WAIT_MS` wait); pass `canDeliver`+`boundSid` as a dequeue-time guard; rebind a node by sessionId when its tty key re-keys to `claude:sid:`; `canvasPickNotify` null → log, never silent | 202 → ~215 ✓ |
+| `server/wiring/auto-compact.ts` | P1 builder | `/compact` as a desk turn (skip `terminal_owned`) | 284 → ~200 ✓ |
+| `server/lib/orphan-question.ts` | P1 builder | answer → `deskRunner.send(formatted answers)`, no picker; triggered at server boot and on each desk turn exit (its only trigger, `wiring/dialogs.ts:78-80`, is deleted in P3) | 224 → ~170 ✓ |
+| `server/lib/sessions.ts` | P1 builder | `setPidDeadAdopter` in prune (keeps `firstSeenAt`, sets `lastActiveAt`, never `markHeadlessSession`); a meta carrying a tty clears a sticky `headless:desk` marker (`:226`, `:269`); P3: `herdrSessionGone` out | 629 → ~625 ⚠ not split now: a net-negative touch; follow-up (g) |
+| `server/wiring/brain-lead.ts` | P2 builder | retire: relay fns move to NEW `wiring/brain-relay.ts` (`maybeRelaySendMessageToBrain, relayToBrainThread`), the rest is deleted | 269 → 0 |
+| `server/routes/brain.ts` | P2 builder | `/hooks/brain/lead` → 410; `op:list` and `GET /api/brain/workers` keep the `liveSessions` shape (`:205-217`, `:389`) from `listSessions` headless rows, close → 410 | 404 → ~370 ✓ |
+| `brain/.claude/settings.json` (`:12`, `:25` bin/lead allows), `lib/brain.ts:262` label, `companion-server.ts:127` lead timeout | P2 builder | remove | — |
+| `wiring/brain-workers.ts`, `lib/brain-workers.ts`, `wiring/takeover-liveness.ts`, `wiring/brain-restore.ts` (dead) | P2 builder | delete (a herdr workspace reaper with no herdr) | 636 → 0 |
+| `brain/bin/lead`, `brain/LEAD.md`, `brain/CLAUDE.md:106-110`, `docs/brain-api.md:84,90,135` | P2 builder | delete / rewrite | — |
+| `server/routes/hooks.ts` (P3 part) | P3 builder | drop `noteSessionBoundary/noteUserPromptSubmit`, `herdrSessionGone`; P2's `brain-relay` import | 566 → ~550 ✓ |
+| `server/lib/hook-common.ts` | P3 builder | drop scrape passthrough and tmux/herdr header parsing | 144 → ~100 ✓ |
+| `server/lib/discover.ts` | P3 builder | drop `mapTtysToPanes`, scrape and herdr validation | 607 → ~560 ✓ (leaves the cap) |
+| `server/lib/question-hook.ts` (P3 part) | P3 builder | drop the picker fall-through and `localTerminalAttached` tmux probe (window = `EXPIRY_MS` for headless) | 267 → ~190 ✓ |
+| `server/lib/agy-feed.ts` | P3 builder | delete the `ttySession` picker branch (`:690-700`) | 1276 → ~1265 ⚠ not split now: a 10-line deletion; follow-up (f) |
+| `server/lib/spawn-session.ts` | P3 builder | keep `ensureFolderTrusted, folderTrusted, resolveSpawnCwd, SpawnAgent, SpawnResult`; delete `spawnInTmuxDetached/spawnInHerdr/spawnInGhostty/spawnLinux/spawnCompanionSession` | 512 → ~120 ✓ |
+| `server/lib/command-menu.ts`, `lib/command-list.ts`, `lib/model-control.ts` | P3 builder | keep `CommandEntry`, `suggestFromList`, `filterCommands`, `choicesFrom`; delete the pane parsers | 845 → ~200 ✓ |
+| `server/companion-server.ts` | P3 builder | terminal/pane-mirror upgrades → accept + close 4000 `"retired"`; drop the ended sweep, `ensureUtf8Locale`, `dialogs` from `init` and `/api/status` |  217 → ~180 ✓ |
+| `server/lib/waiting.ts`, `wiring/waiting.ts`, `lib/canvas.ts:360` | P3 builder | remove `dialog` from `WaitingKind`, `WAITING_PRECEDENCE`, `BLOCKING` (clients keep decoding it) | ✓ |
+| `server/wiring/events.ts` | P3 builder | `wireSessions` → plain `listSessions` | 223 → ~220 ✓ |
+| `server/lib/session-archive.ts` | P3 builder | drop the `endedStore` handoff | 56 → ~45 ✓ |
+| DELETE (`lib/` unless noted, plus their `*.test.ts`) | P3 builder | `tmux-pane, tmux-inject, tmux-spawn-confirm, keyboard-inject, submit-confirm, pane-mirror, wiring/pane-mirror, key-gate, session-pane, herdr, herdr-inject, herdr-workspace, herdr-socket, herdr-fake.test-util, command-offpane{,-cache,-home,-launch,-herdr}, scrape-registry, command-scrape, dialogs, dialog-watch, wiring/dialogs, question-driver, inject-verified, inject-guard, pane-clean, terminal-bridge, shell-sessions, wiring/shell-sessions, ended-sessions, suggest-cleanup, spawn-seed` | ~7.5k → 0 |
+| `scripts/cc-tmux`, `scripts/herdr-zettlab-setup.sh`, `docs/herdr-*.md`, `docs/tmux-socket-hooks.md` | P3 builder | delete | — |
+| `hooks/_lib.sh`, `hooks/companion-session-end.sh`, `hooks/companion-codex-hook.sh:40-42` | P3 hooks owner (after the server deploy) | drop the Tmux/Herdr headers; `bun scripts/install.ts`, then copy the codex hook to `~/.codex/hooks` by hand (`install.ts:320` does not refresh a drifted copy; fixing that is in scope) | ✓ |
+| `~/apps/claude-config/hooks` copies | P3 hooks owner | same header removal | — |
+| `~/.claude/hooks/herdr-agent-state.sh`, `_lib.sh.bak-2026-10-08-herdr` (claude-config repo) | P3 hooks owner | delete (already a no-op; no settings.json reference) | — |
+| `archmap.json` intent | P3 builder | "…headless turns (`claude -p --resume`) streamed into the feed…" | — |
+| iOS / Canvas (`~/apps/claude companion`) | iOS builder (P4) | build 60: remove the Terminal tab, mirror, DialogSheet and TerminalNode; Stop → `/api/session/interrupt`; regenerate its archmap first | — |
+
+**Fan-in paths to guard**
+- `deliverInject()` is reached from `POST /api/inject`, ws `inject`, `wiring/canvas.ts`, `orphan-question` and `auto-compact`. All of these go through one `deskRunner.send`, so the lease plus the queue serialize them, and the `withIdempotency` replay on `/api/inject` must stay ahead of `send` (a retry must not enqueue twice).
+- `recordSession` is reached from hooks (headless turn: no tty → key `claude:sid:<sid>`), `discover.ts` (it can see the `-p` child via `~/.claude/sessions/<pid>.json`) and the desk runner. `herdrPane: "headless:desk:*"` must stay sticky, so that prune never drops a desk row when the turn's pid exits.
+- Worker rows: `headless:worker:*` keeps the existing `workerSupervisor.dispatchTask` branch verbatim (`api.ts:466-478`, `inject-worker-autoresume.test.ts:28-31`). `runner_owned` applies only when a desk send resolves (by tty/sid row) to a sid the supervisor, brain or agy brain owns. The desk branch runs before the pane fallthrough (today `headless:desk:*` would reach `yieldPaneForInject` → 410 `target_idle`) and never calls `recordUserPrompt` (`api.ts:462`).
+- The interrupt flag: `deskRunner.interrupt` clears the queue, and the turn's `onExit` must read that flag before it pops the next queued prompt. Otherwise Stop re-asserts the next turn.
+
+**Risks**
+- `kb offline — no external gotchas checked`.
+- Map blind spot: `ios:ios` is stale (2026-10-29), so the frames table shows "no consumer" for `dialog`, `dialog_closed`, `inject_error`, `sessions`, `waiting_input` and `init`, which are decoded at `CompanionKit/WSFrame.swift:75-171`. Also, `/api/terminal` and `/api/pane-mirror` are missing from the endpoint table (path constants in companion-server.ts). This is an adapter bug: file it. Regenerate the iOS map before P4.
+- `-p` hooks unverified: PreToolUse approval and AskUserQuestion `updatedInput.answers` in print mode (PermissionRequest likely never fires) → Verify 4/5. If they don't hold, keep the phase 1 deploy behind `COMPANION_DESK_HEADLESS=1` until they do.
+- `claude -p "/compact"` may be unsupported in print mode → Verify 7. Fallback: auto-compact skips desk rows and logs.
+- Codex `exec resume` has no phone approvals (no hook in exec mode). Codex desk turns run under the workers' sandbox mode; this is stated in the plan, and a follow-up covers codex approvals.
+- Jeremie's Ghostty sessions that are open at deploy become `terminal_owned` until he exits them. That is intended, and the error text says so.
+- The probe starts MCP servers and plugins before init (`--strict-mcp-config` skips MCP, so MCP prompts appear only after the first real turn's `noteLine`).
+
+**Verify**
+1. `bun test server/lib/desk-runner.test.ts` (fake spawn, temp HOME for the state file). Covers: lease (a second send queues), cap 5 → `queue_full`, `terminal_owned` (a live pid file names the sid), `runner_owned` (worker sid), boot restore keeps a live pid's lease, and interrupt then exit does not pop the queue.
+1b. Before P1 merges: a `-p --resume` turn on 2.1.327 that calls AskUserQuestion, answered through PreToolUse `updatedInput.answers` (live, plus a captured fixture in `hooks-question.test.ts`). The 2.1.282 proof was interactive only.
+2. Init-only probe, zero model calls. Start `bun -e` as a listener on :8999 that logs every request. In a scratch cwd, run `ANTHROPIC_BASE_URL=http://127.0.0.1:8999 claude -p --input-format stream-json --output-format stream-json --verbose --no-session-persistence --strict-mcp-config --settings '{"disableAllHooks":true}'`, write only `{"type":"control_request","request_id":"1","request":{"subtype":"initialize"}}`, and SIGKILL on the first `control_response` or `system/init` line. Check four things: the listener logged 0 `POST /v1/messages`; there is no new `~/.claude/projects/<slug>/*.jsonl`; `commands.length` ≈ 276 on the Mac; and it took < 5 s. Re-run with the fallback form (`-p x`, killed on init). If that one logs a `/v1/messages`, the fallback is rejected and only the control form ships.
+3. `bun test server/lib/command-catalog.test.ts`: fixture init lines (2.1.327) → entries, plus kinds and description merge.
+4. Mac live: `curl /api/inject` to a desk row whose prompt needs Bash. Expect a phone approval card; Allow lands; the feed shows prompt → tool → reply; `ps` shows exactly one `claude -p` for the sid, and it exits after the turn.
+5. A prompt that triggers AskUserQuestion → phone card → answer → the reply uses it (`updatedInput.answers` in `-p`).
+6. Send twice quickly → the second reply is `queued:true` and runs after the first. Stop (build 59 esc) mid-turn → the process group is gone within 3 s, the queue is empty and the next send resumes cleanly.
+7. Auto-compact test endpoint on a desk row → `/compact` runs headless, or skips with a log line.
+8. Zettlab: phone spawn with a seed → a new desk row appears, the seed runs, and there is no herdr call in the log.
+9. P3: `bun run typecheck && bun test && bun --bun run lint` pass, the archmap lint shows 0 blocking, `rg -n "tmux|herdr|osascript|X-Companion-(Tmux|Herdr)" server hooks scripts ~/.claude/hooks ~/.codex/hooks ~/apps/claude-config/hooks` is limited to the allowed set, and `rg -n "X-Companion-(Tmux|Herdr)" server` is empty before the hooks edit.
+10. Manual pass by Jeremie on the running build. The plan isn't shipped until each of these is clean:
+    - (a) Canvas: type in a desk session; the reply lands in Companion and no terminal moves.
+    - (b) Phone `/` picker: the full list opens in under 1 s on its second open.
+    - (c) Stop on the phone stops the turn.
+    - (d) Close a Ghostty claude; its chat stays in Companion and answers the next message.
+    - (e) A message to a still-open Ghostty session shows "open in a terminal — exit it there first".
+    - (f) The model switch to Sonnet shows on the next reply's model pill.
+    - (g) After P3 the build 59 Terminal tab and pane mirror show "Session ended" (close 4000), not a retry spinner.
+    - (h) On Canvas, Cancel on a question card cancels that question only; the turn keeps running.
+    - (i) Kill the server mid-question, restart it: the question card comes back (orphan sweep at boot).
+
+**Analyst findings (2026-11-18, 5 reports, reconciled)**
+Jeremie decided three product calls: `terminal_owned` refuses (fork stays a follow-up); losing the iOS Terminal tab, the pane mirror, and Canvas TerminalNode/DialogSheet after P3 is accepted; desk turns run in permission mode `default`.
+- Consumers the plan missed:
+  - The ws client message is `type:"input"`, not `inject`.
+  - The Canvas Swift app has no `/api/inject` caller, no edge send and no pick, so "send from Canvas" needs a P4 composer.
+  - `hooks/companion-codex-hook.sh` is a third header sender, alongside its deployed `~/.codex/hooks` and `~/apps/claude-config/hooks` copies.
+  - Repo leads are wired into `brain/.claude/settings.json`, `lib/brain.ts:262` and `companion-server.ts:127`.
+  - The only orphan-question trigger is `dialogWatcher`.
+  - Normal `/exit` removes the row through `hooks.ts:535-536`, not through prune.
+- Compat downgrades:
+  - A turn that fails after the 200 is no longer covered by "confirmed": we now send an async `inject_error turn_failed` when a `-p --resume` exits before its UserPromptSubmit.
+  - A queue wait longer than iOS `DeliveredSend.ttl` (600 s, `SendQueue.swift:189`) would show a second bubble, so queued items expire at 540 s with `inject_error queue_expired`.
+  - An untargeted inject now answers 410 `no_target`.
+  - `seed:"pending"` stays (build 59 shows "context not sent" for anything else).
+  - A WS upgrade that is refused would read as a network failure on iOS, so upgrades are accepted and closed with 4000.
+- **Contracts that still break, with no migration:**
+  - (1) Untargeted `/api/inject` (empty key) returns 410 `no_target`.
+  - (2) Codex AskUserQuestion: `driveAnswer` (`question-hook.ts:176`) is a pane driver, and `codex exec` has nothing to replace it, so codex questions in desk turns go unanswered. Follow-up.
+  - (3) Canvas DialogSheet pick (`/api/dialog/pick` 410) has no UI left to call it in build 60.
+  - (4) `/hooks/brain/lead`: internal, brain side updated in P2.
+  - Everything else either has the migration above or stays compatible.
+- Required edits now in Files:
+  - `question-hook.ts` fast path for desk rows (otherwise AskUserQuestion is denied in `-p`).
+  - `idempotency.ts` dedupe on the persisted queue.
+  - A `hooks.ts` adopt on `/exit`.
+  - `sessions.ts`: a tty clears the sticky `headless:desk` marker.
+  - `canvas.ts` dequeue guard and sid rebind.
+  - `model.ts`: shared filter, no agent flip, no `--model auto`, model selection stored in desk-runner.
+  - The catalog sets `kind` on every entry.
+  - The Escape shim matches `Escape`, is idempotent 2xx, and cancels only the question when one is open.
+  - Interrupt clears activity and waiting (`activity.ts:139-140` TTLs).
+  - `dialog` is removed from the server's waiting kinds.
+- Regression checks (tests):
+  - P1:
+    - extend `api-idempotency` (real `handleApiRoute` + fake deskRunner, restart replay)
+    - new `desk-deliver.test.ts`, a ws `input` test, and `api-spawn-desk.test.ts` (seed `pending`)
+    - `api-resume.test.ts:23` (ended row dropped and broadcast)
+    - rewrite `canvas-pick-delivery.test.ts` (it spied on herdr and keyboard)
+    - `inject-worker-autoresume` imports
+    - new `routes/command-model.test.ts` (real `createCompanionServer`, desk row, canned init line, open and set index round-trip)
+    - `command-catalog.test.ts` with a captured 2.1.327 init fixture
+    - `dialogs.test.ts` Escape cases (desk, brain, question-only)
+    - a `question-hook` desk-row case
+    - `sessions.test.ts` (~505, adopter; tty clears the marker), `session-archive`, `session-prune-gone`
+  - P2: rewrite `brain.test.ts:669-676` (it already fails on a sandbox git clone) to assert 410; `hooks-brain.test.ts:75` uses `recordSession`.
+  - P3:
+    - new `retired-shims.test.ts` (Escape shim, 410s, WS close 4000)
+    - delete `command-offpane.test.ts:603-679` and `api-shell-close.test.ts`
+    - update `dialogs.test.ts:36-80`, `waiting.test.ts:19-30,73,93-96`, `sessions.test.ts:96,304-377,437-441`, `canvas.test.ts:16`, `wrong-type-body.test.ts:45-47`, `tmux-argv.test.ts:53-56`, `hooks-question.test.ts:25`, `approval-history.test.ts:40`, `non-object-body.test.ts:29,47-54`, `request-gate.test.ts:11`
+    - move the surviving `filterCommands` assertions
+  - iOS build 60 (no CI, so run by name from the xcresult):
+    - SendQueueTests 202-215, SendQueueAppTests 114, UndeliveredTests 65
+    - ModelControlTests 58/98/121
+    - TurnInterruptTests 91/168
+    - BoardListingTests, PaneMirrorTests, TerminalAttachTests
+    - TaskSession seed decode
+    - a CompanionKitTests `init` with no `dialogs`
+
+**Out of scope:** the follow-ups (a)-(g) above, worker-supervisor changes (602, untouched), the brain's own runner, codex phone approvals, and iOS build 60 itself (P4 is a separate iOS plan).
+
 ### Change Plan — handoff-claim (2026-11-12)
 **Request:** TASK 34e8dfe58e35004a621a3cef8eb501c3, the security follow-up to #309. (1) `bin/propose --handoff` on a Jeremie turn gets a server-signed claim (task id, repo, turn id, HMAC with a server secret). `bin/worker dispatch` and the worker PR link require a valid claim for that exact id and repo; anything else stays origin unknown and is never linked. (2) Headless workers (claude -p, codex exec, gemini) run without notes DB/db credentials. The 3 other taint reasons stay as they are. Tests first. High review tier, human merge.
 **Done when:**
