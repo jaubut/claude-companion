@@ -8,10 +8,17 @@ import {
   formatDesignStatePrompt,
   parseFigcraftInfoOutput,
   parseThemeCssTokens,
+  withActiveDesignStatePrompt,
   withDesignStatePrompt,
 } from "./design-state"
-import { createDesignStateRoute } from "../routes/design-state"
-import { BadJsonBody } from "./json-body"
+import { handleDesignStateRoute } from "../routes/design-state"
+import {
+  appendDesignStatePrompt,
+  designStateHookContext,
+  designStateSnapshotFrame,
+  startDesignStateWatcher,
+  stopDesignStateWatcher,
+} from "../wiring/design-state"
 
 const tempDirs: string[] = []
 function makeTempDir(prefix: string): string {
@@ -195,59 +202,33 @@ test("designStateService discovers files, persists updates, caches previews, and
   stopListen()
 })
 
-test("design-state routes validate body, serve previews, and pass patches", async () => {
-  const state = {
-    activeFile: "/tmp/f.figcraft",
-    activeFileName: "Kit",
-    activeFrameId: "5",
-    activeFrameName: "Hero",
-    activePageName: "Main",
-    brand: "tls",
-    themeMode: "light" as const,
-    pickedDirection: null,
-    pickedNodeId: null,
-    pickedAt: null,
-    mcpAttached: false,
-    updatedAt: 1,
-    availableFiles: [],
-    frames: [],
-    tokens: {},
+test("design-state routes are retired: all four answer 410 figcraft_retired, body unread", async () => {
+  const cases: Array<[string, string, string | undefined]> = [
+    ["GET", "http://localhost/api/canvas/design-state?refresh=1", undefined],
+    ["POST", "http://localhost/api/canvas/design-state", JSON.stringify({ themeMode: "sepia" })],
+    ["POST", "http://localhost/api/canvas/design-state/export-tokens", "null"],
+    ["GET", "http://localhost/api/canvas/figcraft/preview?node=5&scale=2", undefined],
+  ]
+  for (const [method, href, body] of cases) {
+    const res = await handleDesignStateRoute(new Request(href, { method, body }), new URL(href))
+    expect(res?.status).toBe(410)
+    expect(await res?.json()).toEqual({ error: "figcraft_retired" })
   }
-  const route = createDesignStateRoute({
-    getSnapshot: () => state,
-    refresh: async () => state,
-    update: async (p) => ({ ...state, ...p }),
-    renderPreview: async () => ({ ok: true, path: "/x.png", bytes: new Uint8Array([1, 2, 3, 4]) }),
-    exportTokens: async () => ({ ok: true, status: 200, output: "done", state }),
-  })
+  const other = "http://localhost/api/canvas/design-state"
+  expect(await handleDesignStateRoute(new Request(other, { method: "DELETE" }), new URL(other))).toBeNull()
+})
 
-  const getRes = await route(new Request("http://localhost/api/canvas/design-state"), new URL("http://localhost/api/canvas/design-state"))
-  expect(getRes?.status).toBe(200)
-
-  const badTheme = await route(
-    new Request("http://localhost/api/canvas/design-state", { method: "POST", body: JSON.stringify({ themeMode: "sepia" }) }),
-    new URL("http://localhost/api/canvas/design-state"),
-  )
-  expect(badTheme?.status).toBe(400)
-
-  await expect(route(
-    new Request("http://localhost/api/canvas/design-state", { method: "POST", body: "null" }),
-    new URL("http://localhost/api/canvas/design-state"),
-  )).rejects.toThrow(BadJsonBody)
-
-  const okPatch = await route(
-    new Request("http://localhost/api/canvas/design-state", { method: "POST", body: JSON.stringify({ themeMode: "dark", brand: "acme" }) }),
-    new URL("http://localhost/api/canvas/design-state"),
-  )
-  expect(okPatch?.status).toBe(200)
-  expect(await okPatch?.json()).toMatchObject({ ok: true, state: { themeMode: "dark", brand: "acme" } })
-
-  const pngRes = await route(
-    new Request("http://localhost/api/canvas/figcraft/preview?node=5&scale=2"),
-    new URL("http://localhost/api/canvas/figcraft/preview?node=5&scale=2"),
-  )
-  expect(pngRes?.status).toBe(200)
-  expect(pngRes?.headers.get("content-type")).toBe("image/png")
+test("no design state reaches ws init, hook context, worker prompts or agy turns", async () => {
+  startDesignStateWatcher()
+  expect(designStateSnapshotFrame()).toBeNull()
+  expect(designStateHookContext()).toBe("")
+  expect(appendDesignStatePrompt("Build hero section")).toBe("Build hero section")
+  // agy-feed's brain-turn footer reads the registered provider; the watcher must leave none.
+  expect(withActiveDesignStatePrompt("Build hero section")).toBe("Build hero section")
+  process.env.COMPANION_DB_PATH ??= join(makeTempDir("cc-ds-canvas-"), "test.db")
+  const { canvasHookContext } = await import("../wiring/canvas")
+  expect(canvasHookContext({ key: "k", sessionId: "s" })).not.toContain("[Active Design State]")
+  stopDesignStateWatcher()
 })
 
 test("smoke: real figcraft-cli info + export when ~/tls-design-system is present", async () => {
