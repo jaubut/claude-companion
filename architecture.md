@@ -8,15 +8,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 284 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630)
+⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630), `lib/worker-supervisor.ts` (603)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1276 ⚠ 1276 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/sessions.ts` | 630 ⚠ 630 > cap 600 | lib | 25 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
+| `lib/worker-supervisor.ts` | 603 ⚠ 603 > cap 600 | lib | 6 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/worker-supervisor.ts` | 599 | lib | 6 |  |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
@@ -122,9 +122,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `wiring/brain-headless.ts` | 211 | lib | 4 |  |
+| `wiring/worker-mcp.ts` | 211 | lib | 8 | state: lastTursoSync: Map, let relayStarted, let relaying, let relayAgain |
 | `lib/feed.ts` | 210 | lib | 12 | state: let retention, feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `routes/canvas.ts` | 210 | lib | 2 |  |
-| `wiring/worker-mcp.ts` | 210 | lib | 8 | state: lastTursoSync: Map, let relayStarted, let relaying, let relayAgain |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `lib/front-door.ts` | 205 | lib | 9 |  |
@@ -183,9 +183,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `lib/note-media.ts` | 120 | lib | 4 |  |
+| `lib/worker-task-store.ts` | 120 | lib | 16 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
-| `lib/worker-task-store.ts` | 118 | lib | 16 |  |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
@@ -195,8 +195,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `routes/design-state.ts` | 109 | lib | 3 |  |
+| `lib/worker-worktree.ts` | 107 | lib | 6 |  |
 | `lib/brain-store.ts` | 105 | lib | 14 |  |
-| `lib/worker-worktree.ts` | 104 | lib | 6 |  |
 | `routes/dialogs.ts` | 104 | route-host | 1 | routes: 2 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
 | `lib/orchestrator-db.ts` | 101 | lib | 2 |  |

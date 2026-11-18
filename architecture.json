@@ -6747,7 +6747,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 599,
+          "lines": 603,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6781,7 +6781,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 118,
+          "lines": 120,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -6840,7 +6840,7 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 104,
+          "lines": 107,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",
@@ -9727,7 +9727,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 210,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",

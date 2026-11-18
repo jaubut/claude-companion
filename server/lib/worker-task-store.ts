@@ -47,6 +47,8 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   turnsRead?: number
   /** The turn the current dispatch opened: the report is picked from it onward, never from an earlier dispatch. */
   dispatchTurn?: number
+  /** Completed with no PR, its receipt not queued yet (waits on git status): a reload queues it. */
+  receiptDue?: boolean
   /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
   ownerPid?: number | null
 }

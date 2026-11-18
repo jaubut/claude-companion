@@ -1358,7 +1358,8 @@ sleep 30 & wait $!
   describe("exit when done, own PR, receipts (2026-11-17)", () => {
     const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
     const assistant = (text: string) => JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
-    function harness(opts: { dirty?: string; pr?: { state: string; head: string } } = {}) {
+    // `gate`: a git / gh call (matched on its args) waits for the returned promise; `killOutput`: a line the worker prints on SIGTERM.
+    function harness(opts: { dirty?: string; pr?: { state: string; head: string }; gate?: (args: string[]) => Promise<void> | undefined; killOutput?: string } = {}) {
       const home = join(tmpdir(), `worker-sup-exit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
       mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
       const spawned: SpawnWorkerOpts[] = []
@@ -1369,6 +1370,7 @@ sleep 30 & wait $!
         host: "mac", home, killGraceMs: 50, reapGraceMs: 30, now: () => Date.now(), uuid: () => "dddd1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
         sh: async (cmd, args) => {
           const ok = (out: string) => ({ ok: true, out, err: "", code: 0 })
+          await opts.gate?.(args)
           if (args.includes("worktree") && args.includes("add")) { mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true }); return ok("") }
           if (args.includes("status") && args.includes("--porcelain")) return ok(state.dirty)
           if (args.includes("--contains")) return ok(state.pushed ? "  origin/main\n" : "") // unpushed: only a merged / closed PR's head lets it go
@@ -1377,7 +1379,7 @@ sleep 30 & wait $!
           if (args.includes("worktree") && args.includes("remove")) { removed.push(args.at(-1)!); rmSync(args.at(-1)!, { recursive: true, force: true }); return ok("") }
           return ok("origin/main\n")
         },
-        spawnWorker(o) { spawned.push(o); return { pid: 0, kill(sig) { signals.push(sig); queueMicrotask(() => o.onExit(null, sig)) } } },
+        spawnWorker(o) { spawned.push(o); return { pid: 0, kill(sig) { signals.push(sig); if (opts.killOutput) o.onStdoutLine(opts.killOutput); queueMicrotask(() => o.onExit(null, sig)) } } },
       })
       return { home, sup, spawned, signals, removed, state }
     }
@@ -1403,6 +1405,73 @@ sleep 30 & wait $!
       } finally { rmSync(h.home, { recursive: true, force: true }) }
     })
 
+    test("agy's \"interrupted\" error on the reaper's SIGTERM never turns the finished turn into a failure (PR #332 review)", async () => {
+      const h = harness({ killOutput: JSON.stringify({ type: "result", subtype: "error", is_error: true, result: "interrupted" }) })
+      try {
+        await h.sup.dispatchTask({ taskId: "reap-agy", repo: "claude-companion", prompt: "Render the cut" })
+        h.spawned[0]!.onStdoutLine(result("Rendered: https://frame.io/v8"))
+        await Bun.sleep(60)
+        expect(h.signals).toEqual(["SIGTERM"])
+        const got = h.sup.getTaskTurns("reap-agy")!
+        expect([got.task.status, got.task.error, got.task.result]).toEqual(["completed", null, "Rendered: https://frame.io/v8"])
+        expect(got.turns.map((t) => t.status)).toEqual(["completed"])
+        const [r, ...rest] = h.sup.pendingReceipts()
+        expect(rest).toEqual([])
+        expect(r!.task.status).toBe("completed")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("a restart while the no-PR receipt waits on git status still queues it (PR #332 review)", async () => {
+      let release!: () => void
+      const held = new Promise<void>((r) => { release = r })
+      const h = harness({ gate: (args) => args.includes("status") ? held : undefined })
+      try {
+        await h.sup.dispatchTask({ taskId: "restart-gap", repo: "claude-companion", prompt: "Answer a question" })
+        h.spawned[0]!.onStdoutLine(result("The answer is 42."))
+        h.spawned[0]!.onExit(0, null)
+        await Bun.sleep(5)
+        expect(h.sup.pendingReceipts()).toEqual([]) // still waiting on git status
+        // The server restarts here: the reloaded supervisor queues the receipt from the persisted state.
+        const reloaded = createWorkerSupervisor({ host: "mac", home: h.home, now: () => Date.now(), uuid: () => "x", sh: async () => ({ ok: false, out: "", err: "", code: 1 }), trust: () => {}, reportJob: () => {} })
+        expect(reloaded.pendingReceipts().map((r) => [r.task.taskId, r.task.result])).toEqual([["restart-gap", "The answer is 42."]])
+        release(); await Bun.sleep(5)
+        expect(h.sup.pendingReceipts()).toHaveLength(1) // the live one still queues exactly one, same id
+        expect(h.sup.pendingReceipts()[0]!.id).toBe(reloaded.pendingReceipts()[0]!.id)
+      } finally { release(); rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("a follow-up dispatch waits for an in-flight worktree close instead of a 409; a slow gh never holds it (PR #332 review)", async () => {
+      let releaseFetch!: () => void
+      const fetchHeld = new Promise<void>((r) => { releaseFetch = r })
+      let releaseGh!: () => void
+      const ghHeld = new Promise<void>((r) => { releaseGh = r })
+      let holdFetch = false
+      const h = harness({ pr: { state: "MERGED", head: "abc123" }, gate: (args) => args.includes("--json") ? ghHeld : holdFetch && args.includes("fetch") ? fetchHeld : undefined })
+      try {
+        await h.sup.dispatchTask({ taskId: "pr-close", repo: "claude-companion", prompt: "Fix it" })
+        h.spawned[0]!.onStdoutLine(result("Done: https://github.com/jaubut/claude-companion/pull/402"))
+        h.spawned[0]!.onExit(0, null)
+        // gh is slow: a follow-up dispatched meanwhile starts at once, and the sweep then leaves its worktree alone.
+        const sweep1 = h.sup.sweepWorktrees()
+        await Bun.sleep(5)
+        const d1 = await h.sup.dispatchTask({ taskId: "pr-close", repo: "claude-companion", prompt: "One more fix" })
+        expect(d1.ok).toBe(true)
+        releaseGh()
+        expect(await sweep1).toEqual([])
+        h.spawned[1]!.onStdoutLine(result("Done: https://github.com/jaubut/claude-companion/pull/402"))
+        h.spawned[1]!.onExit(0, null)
+        // The close itself holds the reservation (fetch held): a dispatch now waits for it, then recreates the worktree.
+        holdFetch = true
+        const sweep2 = h.sup.sweepWorktrees()
+        await Bun.sleep(5)
+        const d2 = h.sup.dispatchTask({ taskId: "pr-close", repo: "claude-companion", prompt: "Reopen" })
+        await Bun.sleep(5)
+        releaseFetch()
+        expect(await sweep2).toEqual(["pr-close"])
+        expect((await d2).ok).toBe(true)
+      } finally { releaseGh(); releaseFetch(); rmSync(h.home, { recursive: true, force: true }) }
+    })
+
     test("every brief tells the worker to commit, push and open its own PR, and not to end on background work (a88c7bd9)", async () => {
       const h = harness()
       try {
@@ -1412,6 +1481,8 @@ sleep 30 & wait $!
         expect(prompt).toContain(WORKER_TURN_RULE)
         expect(WORKER_SHIP_RULE).toMatch(/commit them yourself.*push.*open ONE pull request.*PR link in your final report/)
         expect(WORKER_SHIP_RULE).toContain("the runner commits the diff and opens the PR\" (headless DISPATCH_HEADLESS jobs) does not apply")
+        // A brief near the cap is refused, never silently cut to fit the footer.
+        expect(await h.sup.dispatchTask({ taskId: "too-long", repo: "claude-companion", prompt: "x".repeat(100_000 - 10) })).toEqual({ ok: false, status: 400, error: "invalid_prompt" })
       } finally { rmSync(h.home, { recursive: true, force: true }) }
     })
 
@@ -1424,11 +1495,11 @@ sleep 30 & wait $!
         await Bun.sleep(5)
         const wt = h.sup.getTask("a88c7bd9")!.worktree
         const [r] = h.sup.pendingReceipts()
-        expect(r!.note).toBe(`No PR, and 3 uncommitted change(s) left in ${wt}: worktree kept. Resume the task to commit and open the PR.`)
+        expect(r!.note).toBe(`No PR, and 3 uncommitted or ignored file(s) left in ${wt}: worktree kept. Resume the task to commit and open the PR.`)
         expect(workerReceipt(r!.task, { host: "mac", note: r!.note })).toContain("worktree kept")
         expect(h.removed).toEqual([])
         const out = await h.sup.interruptTask("a88c7bd9", { closeWorktree: true })
-        expect(out.ok && [out.worktreeRemoved, out.note]).toEqual([false, `worktree kept: 3 uncommitted change(s) in ${wt}`])
+        expect(out.ok && [out.worktreeRemoved, out.note]).toEqual([false, `worktree kept: 3 uncommitted or ignored file(s) in ${wt}`])
         expect(await h.sup.sweepWorktrees()).toEqual([])
         expect(h.removed).toEqual([])
 

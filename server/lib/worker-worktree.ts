@@ -60,21 +60,24 @@ export async function ensureWorktree(
   const baseBranch = baseRef.replace(/^origin\//, "")
   await sh("git", ["-C", repoDir, "fetch", "-q", "origin", baseBranch], { cwd: repoDir, timeoutMs: 30_000 })
   const hasBranch = (await sh("git", ["-C", repoDir, "show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repoDir, timeoutMs: 10_000 })).ok
+  // A closed worktree's branch was deleted locally, not on origin: a follow-up turn picks up its pushed commits, never main.
+  const pushed = !hasBranch && (await sh("git", ["-C", repoDir, "fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: repoDir, timeoutMs: 30_000 })).ok
   const wtRes = hasBranch
     ? await sh("git", ["-C", repoDir, "worktree", "add", "-q", worktree, branch], { cwd: repoDir, timeoutMs: 30_000 })
-    : await sh("git", ["-C", repoDir, "worktree", "add", "-q", "-b", branch, worktree, baseRef], { cwd: repoDir, timeoutMs: 30_000 })
+    : await sh("git", ["-C", repoDir, "worktree", "add", "-q", "-b", branch, worktree, pushed ? `origin/${branch}` : baseRef], { cwd: repoDir, timeoutMs: 30_000 })
   if (!wtRes.ok) return { ok: false, error: `worktree add failed: ${(wtRes.err || wtRes.out).trim().slice(0, 200)}` }
   return { ok: true, worktree, branch }
 }
 
-/** `git status --porcelain` of a worktree: the changed paths, or null when it can't be read (never "clean"). */
+/** `git status --porcelain --ignored` of a worktree: changed, untracked and ignored paths (a render in out/, a .env copy:
+ *  `git worktree remove` deletes ignored files without asking), or null when it can't be read (never "clean"). */
 export async function worktreeDirtyPaths(sh: ShFn, worktree: string): Promise<string[] | null> {
-  const res = await sh("git", ["-C", worktree, "status", "--porcelain"], { cwd: worktree, timeoutMs: 10_000 })
+  const res = await sh("git", ["-C", worktree, "status", "--porcelain", "--ignored"], { cwd: worktree, timeoutMs: 10_000 })
   return res.ok ? res.out.split("\n").filter((l) => l.trim()) : null
 }
 
-/** Removes a finished task's worktree and local branch only when nothing is lost: clean, and HEAD on a remote branch (or
- *  the head of its merged / closed PR). Never a dirty one; the note says why it was kept. */
+/** Removes a finished task's worktree and local branch only when nothing is lost: clean (ignored files
+ *  included), and HEAD on a remote branch (or the head of its merged / closed PR). Never a dirty one; the note says why it was kept. */
 export async function closeTaskWorktree(
   sh: ShFn, t: { worktree: string; repoDir: string; branch: string }, prHead: string | null = null,
 ): Promise<{ removed: boolean; note?: string }> {
@@ -82,7 +85,7 @@ export async function closeTaskWorktree(
   clearStaleGitConfigLock(t.repoDir)
   const dirty = await worktreeDirtyPaths(sh, t.worktree)
   if (dirty === null) return { removed: false, note: `worktree kept: git status failed in ${t.worktree}` }
-  if (dirty.length) return { removed: false, note: `worktree kept: ${dirty.length} uncommitted change(s) in ${t.worktree}` }
+  if (dirty.length) return { removed: false, note: `worktree kept: ${dirty.length} uncommitted or ignored file(s) in ${t.worktree}` }
   await sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
   const pushed = await sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
   const head = prHead ? (await sh("git", ["-C", t.worktree, "rev-parse", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })).out.trim() : ""

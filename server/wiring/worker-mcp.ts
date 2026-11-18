@@ -195,9 +195,10 @@ function kickReceiptRelay(): void {
     .finally(() => { relaying = false; if (relayAgain) { relayAgain = false; kickReceiptRelay() } })
 }
 
-/** Boot (cli.ts), brain host: post every host's worker receipts into the brain thread until each is acked. */
+/** Boot (cli.ts), brain host: post every host's worker receipts into the brain thread until each is acked. Started after the
+ *  first session discovery, so a receipt the outbox replays at boot finds its live repo lead instead of falling to the thread. */
 export function startWorkerReceiptRelay(): void {
-  if (!brainEnabled() || process.env.NODE_ENV === "test") return
+  if (relayStarted || !brainEnabled() || process.env.NODE_ENV === "test") return
   relayStarted = true
   kickReceiptRelay()
   setInterval(kickReceiptRelay, RECEIPT_POLL_MS).unref?.()

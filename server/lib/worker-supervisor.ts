@@ -110,12 +110,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t): PersistedTaskRecord => ({
-      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid,
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid, receiptDue: t.receiptDue,
       turns: t.turns, turnsRead: t.turnsRead, dispatchTurn: t.dispatchTurn,
     })).concat(foreignRecords.filter((r) => !tasks.has(r.taskId))))
   }
 
   function enqueueReceipt(t: InternalTask, note: string | null = null): void { outbox.enqueue(toSnapshot(t), dispatchTurns(t), note) }
+  const cleanups = new Map<string, Promise<unknown>>() // a worktree close in flight: a follow-up dispatch / interrupt waits, no 409
 
   function loadPersistedTasks(): void {
     const now = deps.now()
@@ -172,7 +173,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       refreshResult(taskRecord)
       tasks.set(r.taskId, taskRecord)
       syncTaskSession(taskRecord)
-      if (wasRunning) enqueueReceipt(taskRecord)
+      if (wasRunning || r.receiptDue) { enqueueReceipt(taskRecord); dirty = true }
     }
     if (dirty) savePersistedTasks()
   }
@@ -223,7 +224,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     const wtKey = t.worktree.toLowerCase()
     if (t.status === "running" || inFlightDispatches.has(t.taskId) || inFlightWorktrees.has(wtKey)) return null
     inFlightDispatches.add(t.taskId); inFlightWorktrees.add(wtKey)
-    try { return await fn() } finally { inFlightDispatches.delete(t.taskId); inFlightWorktrees.delete(wtKey) }
+    const p = fn(); cleanups.set(t.taskId, p)
+    try { return await p } finally { cleanups.delete(t.taskId); inFlightDispatches.delete(t.taskId); inFlightWorktrees.delete(wtKey) }
   }
 
   for (const dir of new Set([...tasks.values()].map((t) => t.repoDir))) clearStaleGitConfigLock(dir)
@@ -235,7 +237,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const repo = typeof input.repo === "string" ? input.repo.trim() : ""
       if (!REPO_NAME_RE.test(repo)) return { ok: false, status: 400, error: "invalid_repo" }
       const prompt = typeof input.prompt === "string" ? input.prompt.trim() : ""
-      if (!prompt || prompt.length > PROMPT_MAX) return { ok: false, status: 400, error: "invalid_prompt" }
+      if (!prompt || prompt.length > PROMPT_MAX - WORKER_FOOTER.length - 2) return { ok: false, status: 400, error: "invalid_prompt" }
       const mode = input.mode?.trim() || "auto"
       if (!ALLOWED_MODES.has(mode)) return { ok: false, status: 400, error: "invalid_mode" }
       const agent = input.agent?.trim() || undefined
@@ -255,6 +257,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const supplied = input.inheritClaim ? existing?.handoffClaim ?? undefined : input.claim
       if (existing?.prLinkBound === true && existing.handoffClaim && supplied !== existing.handoffClaim) return { ok: false, status: 409, error: "claim_required" }
       const wtKey = (existing?.worktree ?? join(deps.home, "apps", "wt", repo, taskId)).toLowerCase()
+      const cleanup = cleanups.get(taskId); if (cleanup) await cleanup.catch(() => null)
       if (inFlightDispatches.has(taskId) || inFlightWorktrees.has(wtKey) || (existing && existing.status === "running")) {
         return { ok: false, status: 409, error: "task_already_running" }
       }
@@ -342,7 +345,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           handle = spawnWorker({
             cmd: invocation.cmd, args: invocation.args, cwd: task.worktree, env: buildWorkerEnv(process.env, taskId, task.builder, secrets),
             onStdoutLine(line) {
-              if (settled || task.activeTurn !== myTurn) return
+              if (settled || task.lingered || task.activeTurn !== myTurn) return // after the reaper's SIGTERM: shutdown noise (agy's is_error "interrupted")
               const ev = parseStreamJsonLine(line)
               if (!ev) return
               task.updatedAt = deps.now()
@@ -410,18 +413,20 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task); return
               }
               const finish = () => {
+                const noPr = task.status === "completed" && !task.prUrl; task.receiptDue = noPr // on disk before the git status below: a restart in between still queues the receipt
                 savePersistedTasks(); syncTaskSession(task); notifyWaiters(task)
                 try { deps.onTaskTerminal?.(toSnapshot(task), task.prLinkBound === true && !!task.handoffClaim) } catch { /* best effort */ }
                 const lingerNote = task.lingered ? `Ended its turn with background work still running: stopped ${Math.round(reapGraceMs / 1000)} s later, so nothing it says is still running will finish. Re-dispatch to finish it.` : null
-                if (task.status !== "completed" || task.prUrl) { enqueueReceipt(task, lingerNote); return }
+                if (!noPr) { enqueueReceipt(task, lingerNote); return }
                 // Completed with no PR: a clean worktree closes; a dirty one is kept and the receipt says so (a88c7bd9).
                 const snap = toSnapshot(task); const turns = dispatchTurns(task)
                 void worktreeDirtyPaths(deps.sh, task.worktree).catch(() => null).then(async (dirty) => {
-                  const keptNote = dirty?.length ? `No PR, and ${dirty.length} uncommitted change(s) left in ${task.worktree}: worktree kept. Resume the task to commit and open the PR.` : null
+                  const keptNote = dirty?.length ? `No PR, and ${dirty.length} uncommitted or ignored file(s) left in ${task.worktree}: worktree kept. Resume the task to commit and open the PR.` : null
                   outbox.enqueue(snap, turns, [lingerNote, keptNote].filter(Boolean).join("\n") || null)
+                  task.receiptDue = false; savePersistedTasks()
                   // Only the removal holds the reservation: a follow-up dispatched meanwhile keeps the worktree.
                   if (dirty && !dirty.length) await withReservation(task, () => closeTaskWorktree(deps.sh, task))
-                }).catch(() => outbox.enqueue(snap, turns, lingerNote))
+                }).catch(() => { if (task.receiptDue) { outbox.enqueue(snap, turns, lingerNote); task.receiptDue = false; savePersistedTasks() } })
               }
               const complete = (link: string | null) => {
                 const note = link === "timeout" ? " (PR link still pending)" : link && link !== "linked" && link !== "not_linked" ? ` (not linked: ${link})` : ""
@@ -519,6 +524,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const t = tasks.get(id)
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
       const wtKey = t.worktree.toLowerCase()
+      const cleanup = cleanups.get(id); if (cleanup) await cleanup.catch(() => null)
       if (inFlightDispatches.has(id) || inFlightWorktrees.has(wtKey)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
       inFlightDispatches.add(id); inFlightWorktrees.add(wtKey)
       try {
@@ -571,16 +577,14 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       return t ? { task: toSnapshot(t), turns: t.turns.map((x) => ({ ...x })) } : null
     },
 
-    /** Closes the worktree of every finished task whose PR is merged or closed, or that completed with no PR; never a dirty one. */
+    /** Closes the worktree of every finished task whose PR is merged or closed, or that completed with no PR; never a dirty or live one (gh outside the reservation). */
     async sweepWorktrees(): Promise<string[]> {
       const closed: string[] = []
       for (const t of [...tasks.values()]) {
-        if (t.status === "running" || !existsSync(t.worktree) || (!t.prUrl && t.status !== "completed")) continue
-        const out = await withReservation(t, async () => {
-          const pr = t.prUrl ? await finishedPrHead(deps.sh, t.prUrl, t.repoDir) : null
-          if (t.prUrl && !pr) return false
-          return (await closeTaskWorktree(deps.sh, t, pr?.head ?? null)).removed
-        }).catch(() => false)
+        if (t.status === "running" || t.handle || (t.pid !== null && isPidAlive(t.pid)) || !existsSync(t.worktree) || (!t.prUrl && t.status !== "completed")) continue
+        const pr = t.prUrl ? await finishedPrHead(deps.sh, t.prUrl, t.repoDir).catch(() => null) : null
+        if (t.prUrl && !pr) continue
+        const out = await withReservation(t, async () => (await closeTaskWorktree(deps.sh, t, pr?.head ?? null)).removed).catch(() => false)
         if (out) closed.push(t.taskId)
       }
       return closed

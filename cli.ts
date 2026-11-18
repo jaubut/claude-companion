@@ -229,8 +229,6 @@ startTrips()
 startMyTasksWatch()
 // Finished workers whose worktree is gone leave the live session list (boot pass + every 5 s).
 startWorkerSessionPrune()
-// Brain host: every host's worker turn receipts into the brain thread, retried until acked (Mac workers included).
-startWorkerReceiptRelay()
 // Idle (24 h) and done (1 h) sessions leave the drawer; the boot pass is the deploy-time prune.
 startDrawerArchive()
 const token = getAuthToken()
@@ -274,6 +272,9 @@ reapScrapeSessions().catch(() => []).then(() => discoverLiveClaudes()).then(({ r
   // after discovery gives live Codex TTY rows their real thread ids first, so
   // replayed feed events land in the same rows the user can inject into.
   ensureCodexFeedMonitor()
+  // Brain host: every host's worker turn receipts (the outbox replayed at boot first) to their repo lead or the brain
+  // thread, retried until acked. After discovery: a lead not yet listed would send its receipt to the thread instead.
+  startWorkerReceiptRelay()
 })
 
 const codexFeedFallback = setTimeout(ensureCodexFeedMonitor, 3000)
