@@ -90,7 +90,7 @@ function chainSegments(s: string): string[] {
   const flush = (): void => { out.push(cur); cur = ""; piped = false }
   for (let i = 0; i < s.length; i++) {
     const c = s[i]!
-    if (c === "\\") { add(c + (s[++i] ?? "")); continue }
+    if (c === "\\" && quote !== "'") { add(c + (s[++i] ?? "")); continue }
     if (quote) { if (c === quote) quote = ""; add(c); continue }
     if (c === "'" || c === '"') { quote = c; add(c); continue }
     if (c === "|") { if (s[i + 1] === "|") { flush(); i++ } else piped = true; continue }
@@ -101,7 +101,7 @@ function chainSegments(s: string): string[] {
   return out
 }
 const shellWords = (seg: string): string[] =>
-  (seg.match(/(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"?|'[^']*'?)+/g) ?? []).map((w) => w.replace(/\\(.)|"((?:[^"\\]|\\.)*)"?|'([^']*)'?/g, (_, e, d, q) => e ?? d ?? q))
+  (seg.match(/(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"?|'[^']*'?)+/gs) ?? []).map((w) => w.replace(/\\(.)|"((?:[^"\\]|\\.)*)"?|'([^']*)'?/gs, (_, e, d, q) => e ?? d ?? q))
 
 /** Drop leading `VAR=x`, `export`, `timeout 600`, `nice -n 5`, `sudo -u x`, `nohup`, `npx` … until the real command. */
 function stripWrappers(words: string[]): string[] {
@@ -109,8 +109,8 @@ function stripWrappers(words: string[]): string[] {
   for (;;) {
     const head = w[0] ? basename(w[0]) : ""
     if (head === "export" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0] ?? "")) { w.shift(); continue }
-    const valueFlags = WRAPPERS[head]
-    if (!valueFlags) return w
+    if (!Object.hasOwn(WRAPPERS, head)) return w
+    const valueFlags = WRAPPERS[head]!
     w.shift()
     while (w[0]?.startsWith("-")) if (valueFlags.has(w.shift()!)) w.shift()
     if (head === "timeout" && /^\d/.test(w[0] ?? "")) w.shift()
@@ -123,8 +123,12 @@ function lastCommand(script: string): string[] | null {
   for (const seg of chainSegments(script.replace(HEREDOC_RE, ""))) {
     let w = stripWrappers(shellWords(seg))
     if (/^(?:ba|z|da)?sh$/.test(w[0] ? basename(w[0]) : "")) {
-      const c = w.findIndex((x) => /^-[a-z]*c[a-z]*$/.test(x))
-      if (c >= 0) w = (w[c + 1] !== undefined ? lastCommand(w[c + 1]!) : null) ?? []
+      // Only the shell's own options: stop at `--` or the first non-option word (a script file and its arguments).
+      let c = 1
+      for (; /^[-+]./.test(w[c] ?? "") && w[c] !== "--" && !/^-[a-z]*c[a-z]*$/.test(w[c]!); c++) {
+        if (/^(?:[-+][oO]|--rcfile|--init-file)$/.test(w[c]!)) c++
+      }
+      if (/^-[a-z]*c[a-z]*$/.test(w[c] ?? "")) w = (w[c + 1] !== undefined ? lastCommand(w[c + 1]!) : null) ?? []
     }
     if (w.length && !NOISE_COMMANDS.has(basename(w[0]!))) found = w
   }
