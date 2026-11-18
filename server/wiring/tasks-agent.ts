@@ -11,7 +11,7 @@ import { tursoExec, tursoQuery, tursoTx } from "../lib/turso"
 import { broadcast } from "../state"
 import { orchEmit } from "./orchestrator"
 
-// Live Tasks agent (PRJ-CT4M WP5): Turso, companion.db, the read-only Google
+// Live Tasks agent (PRJ-CT4M WP5): Notes DB, companion.db, the read-only Google
 // Calendar, Haiku for subtask drafts, Opus for the chat tool.
 
 const SPLIT_MODEL = process.env.COMPANION_TASKS_SPLIT_MODEL || "claude-haiku-4-5"

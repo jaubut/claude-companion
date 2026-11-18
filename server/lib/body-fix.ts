@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 // A #Body card whose fix belongs to the Mac is recorded here with its owning
-// host and cwd. Approving it files a `pending` Turso row tagged
+// host and cwd. Approving it files a `pending` notes DB row tagged
 // requires_host=mac (wiring/proposals.ts), so only the Mac's dispatch-run claims
 // it (docs/one-stream-plan.md, Q1). Seams only: the store takes its Database.
 

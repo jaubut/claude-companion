@@ -27,7 +27,7 @@ import { TursoUnreachable } from "../lib/turso"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 
 // Orchestrator wiring (PRJ-OR1T): emit helpers, filing a proposal to the one
-// Turso queue (dispatch-run runs it; nothing here spawns a worker), and the brain.
+// Notes DB queue (dispatch-run runs it; nothing here spawns a worker), and the brain.
 
 // Orchestrator single-thread (PRJ-OR1T): push every new thread turn to all
 // clients so the one always-open chat stays live on every device.
@@ -76,7 +76,7 @@ function candidateCwds(): string[] {
 
 // ── Filing to the one queue (orchestrator-one-queue P2) ──
 
-/** Write context for the guarded Turso writes: host + channel go into the ledger meta. */
+/** Write context for the guarded notes DB writes: host + channel go into the ledger meta. */
 export async function writeCtx(dispatch: DispatchWiring, channel: string | null): Promise<WriteCtx> {
   return { exec: dispatch.exec, cols: await dispatch.columns(), host: HOST_INFO.name, channel, log: companionLog }
 }
@@ -100,11 +100,11 @@ function proposalDescription(t: OrchTask, channelName: string, runner?: "herdr")
 }
 
 /**
- * Approve → one Turso agent task: `queued` when it is Jeremie's
- * tap (byHand), else `pending` for the dashboard release stamp. The Turso id
+ * Approve → one notes DB agent task: `queued` when it is Jeremie's
+ * tap (byHand), else `pending` for the dashboard release stamp. The notes DB id
  * is stamped on the local row first, so a replayed approve (iOS outbox) reuses
  * it and INSERT OR IGNORE keeps it to one row; only then proposed → filed.
- * A Turso failure leaves the proposal proposed (and retryable): 503.
+ * A notes DB failure leaves the proposal proposed (and retryable): 503.
  */
 export async function fileProposal(
   taskId: string, opts: { agent?: string | null; noteId?: string | null; byHand?: boolean; requiresHost?: RequiresHost | null; runner?: "herdr" } = {},
@@ -146,7 +146,7 @@ export async function fileProposal(
   return { ok: true, dispatchTaskId: id, replay: false, queued, task: getTask(task.taskId)! }
 }
 
-// The Turso row exists: push its frame now (the next poll would, ≤ 20 s later).
+// The notes DB row exists: push its frame now (the next poll would, ≤ 20 s later).
 async function showFiled(id: string, dispatch: DispatchWiring): Promise<void> {
   try {
     const row = await getDispatchTask(dispatch.query, await dispatch.columns(), id)
@@ -155,7 +155,7 @@ async function showFiled(id: string, dispatch: DispatchWiring): Promise<void> {
   void dispatch.poll()
 }
 
-// A concurrent approve won the race: answer with its id (same Turso row).
+// A concurrent approve won the race: answer with its id (same notes DB row).
 function fileProposalReplay(taskId: string, queued: boolean): FileOutcome {
   const now = getTask(taskId)
   if (now?.status === "filed" && now.dispatchTaskId) return { ok: true, dispatchTaskId: now.dispatchTaskId, replay: true, queued, task: now }
@@ -215,7 +215,7 @@ export type BrainOutcome = { kind: "chat" } | { kind: "task"; noteId: string | n
 
 export interface BrainCatalog { projects: ProjectRef[]; catalog: Catalog }
 
-/** Every project (any status) + the repo map; [] projects when Turso is down. */
+/** Every project (any status) + the repo map; [] projects when notes DB is down. */
 export async function brainCatalog(dispatch: DispatchWiring = dispatchWiring): Promise<BrainCatalog> {
   const projects = await dispatch.allProjects().catch(() => [])
   return { projects, catalog: buildCatalog(projects, readRepoMapSource()) }

@@ -19,12 +19,12 @@
 //
 // Boundary trigger (lib/auto-compact-keep.ts): under the size threshold but
 // over AUTO_COMPACT_BOUNDARY_TOKENS (default 250k), a Stop also arms when a
-// unit of work just closed — a PR merged, a dispatch / Turso task completed,
+// unit of work just closed — a PR merged, a dispatch / Notes DB task completed,
 // or a short closing prompt ("nice", "merci") — once per closing (consumed at
 // the countdown). Same gates after that.
 //
 // The typed text is `/compact keep: …` built from durable state this session
-// touched (PRs, Turso notes + open tasks, STATE.md next lines), COMPACT_TEXT
+// touched (PRs, notes + open tasks, STATE.md next lines), COMPACT_TEXT
 // when none is found.
 //
 // One attempt per Stop; a new Stop or any user prompt / typing supersedes or
@@ -118,7 +118,7 @@ export interface AutoCompactDeps {
   eligible?(target: CompactTarget): boolean
   /** Boundary-trigger floor; absent or ≤ 0 = boundary trigger off. */
   boundaryThreshold?(): number
-  /** Resolve the session's durable pointers (gh / Turso / STATE.md); absent → COMPACT_TEXT. */
+  /** Resolve the session's durable pointers (gh / Notes DB / STATE.md); absent → COMPACT_TEXT. */
   keepState?(target: CompactTarget, snap: SessionSnapshot): Promise<KeepState | null>
   /** A compaction we injected completed. */
   recordCompaction?(done: CompactionDone): void

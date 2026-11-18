@@ -162,7 +162,7 @@ export function codeChecks(f: ExpenseFields, now: Date = new Date()): QaIssue[] 
   return [...checkArithmetic(f), ...checkTaxRates(f), ...checkDate(f, now), ...checkCurrency(f)]
 }
 
-// ── Duplicate check (read-only Turso query, injected) ──
+// ── Duplicate check (read-only notes DB query, injected) ──
 
 export type DupQuery = (date: string, excludeId: string) => Promise<Array<{ id: string; merchant: string; total: string }>>
 

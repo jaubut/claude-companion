@@ -10,11 +10,11 @@ import { jsonObject } from "../lib/json-body"
 //   POST /api/tasks/:id/due  {due}  → { ok, done, due }   (due: "YYYY-MM-DD" | null)
 // Every write and every change the 60 s watcher sees (dashboard edits, agents)
 // pushes `{ type: "tasks_changed" }` so the phone refetches. Auth = the /api/*
-// bearer gate. Turso failures → 503 turso_unreachable, never SQL or a stack.
+// bearer gate. Notes DB failures → 503 turso_unreachable, never SQL or a stack.
 
 export const CACHE_TTL_MS = 30_000
 export const WATCH_MS = 60_000
-// Real task ids in Turso: uuids, "task_capl_0", "mail-watcher:30f3d0c4f68221bc",
+// Real task ids in the notes DB: uuids, "task_capl_0", "mail-watcher:30f3d0c4f68221bc",
 // "projects/2026-06-23-mobile-mechanic#s10". The client percent-encodes the
 // segment; the SQL is parameterised, so this only bounds junk.
 const ID = /^[A-Za-z0-9_:/#.-]{3,128}$/
@@ -111,9 +111,9 @@ export function createMyTasks(deps: MyTasksDeps = {}) {
 const live = createMyTasks()
 export const handleMyTasksRoute = live.handle
 
-/** Boot (cli.ts): watch Turso for task edits made elsewhere (dashboard, agents, the other host). */
+/** Boot (cli.ts): watch notes DB for task edits made elsewhere (dashboard, agents, the other host). */
 export function startMyTasksWatch(): () => void {
-  const t = setInterval(() => { void live.watchTick().catch(() => { /* Turso blip: next tick */ }) }, WATCH_MS)
+  const t = setInterval(() => { void live.watchTick().catch(() => { /* Notes DB blip: next tick */ }) }, WATCH_MS)
   ;(t as unknown as { unref?: () => void }).unref?.()
   return () => clearInterval(t)
 }

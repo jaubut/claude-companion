@@ -14,7 +14,7 @@ import { type ExecFn, tursoQuery } from "../lib/turso"
 import { investigationStore } from "./body-investigate"
 import { liveSeams } from "./resolver"
 
-// `bun cli.ts resolver-dry-run`: the real triage sources (Turso read-only, the
+// `bun cli.ts resolver-dry-run`: the real triage sources (notes DB read-only, the
 // local companion.db — point COMPANION_DB_PATH at a COPY), the real read-only
 // Opus analysis and `gh` reads, and NOTHING executed: every write seam throws.
 // Prints what the resolver WOULD do per item.
@@ -50,7 +50,7 @@ export async function collectReadOnly(now: number = Date.now()): Promise<SourceI
 export async function resolverDryRun(opts: { limit: number; only?: string | null; concurrency?: number; log?: (m: string) => void } = { limit: 10 }): Promise<DryRunRow[]> {
   const cfg = resolverConfig({ ...process.env, COMPANION_RESOLVER: "1" }, () => false)
   const log = opts.log ?? (() => {})
-  const noExec: ExecFn = async () => { throw new Error("dry run: Turso write refused") }
+  const noExec: ExecFn = async () => { throw new Error("dry run: Notes DB write refused") }
   const dispatch = { query: tursoQuery, exec: noExec, columns: () => detectColumns(tursoQuery), cached: () => null, threadIdFor: () => "general" } as unknown as DispatchWiring
   const store = createResolverStore(new Database(":memory:"))
   const live = liveSeams({ dispatch, gh: realGh, execute: refuse("execute"), store })

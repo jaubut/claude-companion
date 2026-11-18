@@ -7,7 +7,7 @@ const RETIRED_PARK = /^(client(-origin)? PR|touches .+ — needs your review)/
 export const hardStopPark = (why: string): boolean => /tainted \(|human merge/i.test(why)
 export const retiredPark = (why: string): boolean => RETIRED_PARK.test(why) && !hardStopPark(why)
 
-/** Why this PR is parked as broken or held (empty = mergeable). Turso errors propagate. */
+/** Why this PR is parked as broken or held (empty = mergeable). Notes DB errors propagate. */
 export async function parked(exec: ExecFn, v: { url: string; labels: Array<{ name?: string }> }, humanApproved = false): Promise<{ reasons: string[]; taskIds: string[]; clientOrigin: boolean }> {
   const reasons: string[] = []
   // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.

@@ -27,11 +27,11 @@ const node = (kind: CanvasNode["kind"], ref = "", data: Record<string, unknown> 
   ({ id: "n", kind, ref, x: 0, y: 0, w: 1, h: 1, data, createdAt: 0, updatedAt: 0 })
 const fakeQuery = (rows: Row[], seen: unknown[][] = []): QueryFn => async (_sql, args) => { seen.push(args); return rows }
 
-test("context prompt: Turso task with its note, one line, no control bytes", async () => {
+test("context prompt: Notes DB task with its note, one line, no control bytes", async () => {
   const seen: unknown[][] = []
   const task = { text: "Fix the login", description: "step 1\n\n- step 2\x1b[31m", title: "Site", ref_code: "PRJ-AB12" }
   expect(await contextPrompt(node("task", "t1"), fakeQuery([task], seen)))
-    .toEqual({ ok: true, text: 'Canvas task (Turso task t1, note PRJ-AB12 "Site") — start working on it: Fix the login | step 1 | - step 2 [31m' })
+    .toEqual({ ok: true, text: 'Canvas task (task t1, note PRJ-AB12 "Site") — start working on it: Fix the login | step 1 | - step 2 [31m' })
   expect(seen).toEqual([["t1"]])
   expect(await contextPrompt(node("task", "gone"), fakeQuery([]))).toEqual({ ok: false, error: "source_not_found" })
   expect(await contextPrompt(node("task", "t2"), fakeQuery([{ text: " ", description: "", title: null, ref_code: null }])))

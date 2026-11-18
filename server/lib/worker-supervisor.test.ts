@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -12,6 +12,7 @@ import {
   buildWorkerEnv,
   createWorkerSupervisor,
   defaultResolveRepoDir,
+  defaultSpawnWorker,
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
@@ -563,6 +564,169 @@ describe("createWorkerSupervisor", () => {
       .toEqual({ sessionId: "agy-1", done: true, isError: true, resultText: "quota" })
   })
 
+  test("gemini: another Companion instance loading the state file leaves a live agy alone; a timeout reads as one, not agy's 'interrupted'", async () => {
+    const home = join(tmpdir(), `worker-sup-agy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    // Real agy 1.5.x: idles while a background task runs; on SIGTERM prints an ERROR result "interrupted" and exits 1.
+    const fakeAgy = join(home, "agy")
+    writeFileSync(fakeAgy, `#!/bin/sh
+trap 'printf "%s\\n" "{\\"event\\":\\"result\\",\\"result\\":{\\"conversation_id\\":\\"agy-conv-1\\",\\"status\\":\\"ERROR\\",\\"response\\":\\"\\",\\"error\\":\\"interrupted\\"}}"; echo "error: interrupted" >&2; exit 1' TERM
+printf "%s\\n" "{\\"event\\":\\"init\\",\\"conversation_id\\":\\"agy-conv-1\\",\\"init\\":{}}"
+echo "root agent idle; waiting for 1 background task(s) to finish" >&2
+sleep 30 & wait $!
+`)
+    chmodSync(fakeAgy, 0o755)
+    const makeSup = (selfPid?: number) => createWorkerSupervisor({
+      host: "zettlab", home, selfPid, now: () => Date.now(), uuid: () => "dddd1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => defaultSpawnWorker({ ...opts, cmd: fakeAgy }),
+    })
+    try {
+      const sup = makeSup()
+      expect((await sup.dispatchTask({ taskId: "gm-1", repo: "claude-companion", prompt: "inventory", family: "gemini", timeoutS: 3 })).ok).toBe(true)
+      for (let i = 0; i < 100 && sup.getTask("gm-1")?.sessionId !== "agy-conv-1"; i++) await Bun.sleep(20)
+      const pid = JSON.parse(readFileSync(join(home, ".claude", "state", "companion-worker-tasks.json"), "utf8"))[0].pid as number
+
+      // A `bun test` or dev server importing wiring/worker-mcp on the same host: it must not reap the live server's worker.
+      const other = makeSup(process.pid + 100_000)
+      expect(other.getTask("gm-1")).toBeNull()
+      expect(() => process.kill(pid, 0)).not.toThrow()
+
+      const done = await sup.awaitTask("gm-1", 10_000)
+      expect(done.ok && done.task.status).toBe("failed")
+      expect(done.ok && done.task.error).toBe("timed out after 3s: root agent idle; waiting for 1 background task(s) to finish")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("codex: no default model flag, never a claude-* id, and a resume keeps the task's family + model", async () => {
+    const home = join(tmpdir(), `worker-sup-codex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => "eeee1111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 7777, kill() {} } },
+    })
+    const finish = (i: number) => {
+      spawned[i]!.onStdoutLine(JSON.stringify({ type: "thread.started", thread_id: "cx-thread" }))
+      spawned[i]!.onExit(0, null)
+    }
+    try {
+      // First dispatch, no model: codex picks its own config default.
+      const fresh = await sup.dispatchTask({ taskId: "cx-default", repo: "claude-companion", prompt: "Fix it", family: "codex" })
+      expect(fresh.ok && fresh.task.model).toBeNull()
+      expect(spawned[0]!.cmd).toBe("codex")
+      expect(spawned[0]!.args).not.toContain("-m")
+      finish(0)
+      // Follow-up with nothing named stays codex (a null model must not fall back to claude).
+      await sup.dispatchTask({ taskId: "cx-default", repo: "claude-companion", prompt: "Again" })
+      expect(spawned[1]!.cmd).toBe("codex")
+      expect(spawned[1]!.args.slice(0, 2)).toEqual(["exec", "resume"])
+      expect(spawned[1]!.args).not.toContain("-m")
+      finish(1)
+
+      // A claude id on a codex dispatch is dropped, never passed to codex.
+      await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Build", family: "codex", model: "claude-opus-5-5" })
+      expect(spawned[2]!.args.join(" ")).not.toContain("claude")
+      finish(2)
+      sup.setTaskModel("cx-astra", "gpt-6-astra")
+
+      // Turn after completion: nothing named → recorded family + model.
+      const t2 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Follow up" })
+      expect(t2.ok && [t2.task.family, t2.task.model]).toEqual(["codex", "gpt-6-astra"])
+      expect(spawned[3]!.args).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-6-astra", "--", "cx-thread", "Follow up"])
+      finish(3)
+      // The turn-8 shape: family codex + a stale claude model → still the task's codex model.
+      const t3 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Turn 8", family: "codex", model: "claude-opus-5-5" })
+      expect(t3.ok && [t3.task.family, t3.task.model]).toEqual(["codex", "gpt-6-astra"])
+      expect(spawned[4]!.args).toContain("gpt-6-astra")
+      expect(spawned[4]!.args.join(" ")).not.toContain("claude")
+      finish(4)
+
+      // Switching family on resume (codex → gemini/agy) drops the stored codex model so agy never receives it.
+      const t4 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Switch to agy", family: "gemini" })
+      expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", null])
+      expect(spawned[5]!.cmd).toMatch(/(^|\/)agy$/)
+      expect(spawned[5]!.args).toEqual(["--print=Switch to agy", "--output-format", "stream-json", "--dangerously-skip-permissions"])
+      spawned[5]!.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-conv-1", init: { cwd: "/w" } }))
+      spawned[5]!.onExit(0, null)
+
+      // Even an unprefixed custom codex model (where modelFitsFamily cannot infer codex) is dropped on family change to agy or claude.
+      await sup.dispatchTask({ taskId: "cx-custom", repo: "claude-companion", prompt: "Custom codex", family: "codex", model: "spark-1" })
+      expect(spawned[6]!.args).toContain("spark-1")
+      finish(6)
+      const tCustomAgy = await sup.dispatchTask({ taskId: "cx-custom", repo: "claude-companion", prompt: "Now agy", family: "gemini", model: "gpt-5.4" })
+      expect(tCustomAgy.ok && [tCustomAgy.task.family, tCustomAgy.task.model]).toEqual(["gemini", null])
+      expect(spawned[7]!.cmd).toMatch(/(^|\/)agy$/)
+      expect(spawned[7]!.args).not.toContain("--model")
+      expect(spawned[7]!.args.join(" ")).not.toContain("spark-1")
+      expect(spawned[7]!.args.join(" ")).not.toContain("gpt-5.4")
+      spawned[7]!.onExit(0, null)
+
+      await sup.dispatchTask({ taskId: "cx-to-claude", repo: "claude-companion", prompt: "Codex first", family: "codex", model: "gpt-6-astra" })
+      finish(8)
+      const tClaude = await sup.dispatchTask({ taskId: "cx-to-claude", repo: "claude-companion", prompt: "Now claude", family: "claude" })
+      expect(tClaude.ok && tClaude.task.family).toBe("claude")
+      expect(tClaude.ok && tClaude.task.model).toMatch(/^claude-/)
+      expect(spawned[9]!.args.join(" ")).not.toContain("gpt-6-astra")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("claude: a picked model survives turn 3+ (no retry escalation); a routed one still escalates; the pin survives a reload", async () => {
+    const home = join(tmpdir(), `worker-sup-pin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const make = () => createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => "ffff1111-2222-4333-8444-555555555555",
+      trust: () => {}, reportJob: () => {}, loadAgentSecrets: async () => ({}),
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 7778, kill() {} } },
+    })
+    const finish = () => { const s = spawned.at(-1)!; s.onStdoutLine(JSON.stringify({ type: "system", subtype: "init", session_id: "s" })); s.onExit(0, null) }
+    // The phone-inject shape (routes/api.ts): a known task's follow-up names no family or model.
+    const inject = (sup: ReturnType<typeof make>, taskId: string, prompt: string) => sup.dispatchTask({ taskId, repo: "claude-companion", prompt, mode: "auto", inheritClaim: true })
+    const HAIKU = "claude-haiku-4-5-20251001"
+    try {
+      let sup = make()
+      await sup.dispatchTask({ taskId: "pin-1", repo: "claude-companion", prompt: "Build" }); finish()
+      sup.setTaskModel("pin-1", HAIKU)
+      for (const turn of [2, 3]) {
+        const t = await inject(sup, "pin-1", `Turn ${turn}`)
+        expect(t.ok && t.task.model).toBe(HAIKU)
+        expect(spawned.at(-1)!.args).toContain(HAIKU)
+        expect(spawned.at(-1)!.args.join(" ")).not.toContain("claude-opus-5-5")
+        finish()
+      }
+      sup = make()
+      const t4 = await inject(sup, "pin-1", "Turn 4 after restart")
+      expect(t4.ok && [t4.task.turnCount, t4.task.model]).toEqual([4, HAIKU])
+      finish()
+
+      // Never picked: the router's model keeps on turn 2 and escalates to Opus from turn 3.
+      await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build" }); finish()
+      const r2 = await inject(sup, "routed-1", "Turn 2"); finish()
+      expect(r2.ok && r2.task.model).toBe("claude-sonnet-5-5")
+      const r3 = await inject(sup, "routed-1", "Turn 3"); finish()
+      expect(r3.ok && r3.task.model).toBe("claude-opus-5-5")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("invokes onTaskTerminal when a turn completes or fails so the Brain wakes immediately", async () => {
     const home = join(tmpdir(), `worker-sup-term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
@@ -921,7 +1085,7 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("the session sync and terminal callbacks are told whether the task is claim-bound (gates the Turso status sync)", async () => {
+    test("the session sync and terminal callbacks are told whether the task is claim-bound (gates the notes DB status sync)", async () => {
       const home = tmpHome()
       const h = harness(home)
       try {
@@ -1051,7 +1215,7 @@ describe("createWorkerSupervisor", () => {
       }
     })
 
-    test("every family spawns with no Turso, db or Companion/broker secret, and the claude shim told not to load them", async () => {
+    test("every family spawns with no notes DB, db or Companion/broker secret, and the claude shim told not to load them", async () => {
       const home = tmpHome()
       const h = harness(home)
       const seeded = {

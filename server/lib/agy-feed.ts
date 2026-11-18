@@ -719,12 +719,20 @@ export function syncAgyOpenQuestion(
 
 const activeAgyProcs = new Set<string>()
 
+// Script-owned agy runs, by where they run or how their prompt starts: pr-shepherd and PR-review tmp worktrees, the weft
+// calendar agent (its tmp dir and prompt prefix). Hidden even if agy one day records a user-input step for them.
+const SCRIPTED_AGY_CWD = /^\/tmp\/(pr-shepherd-|cal-agy-|gemini-diff-)/
+const SCRIPTED_AGY_TITLE = "IMPORTANT: Ignore any files under ~/"
+function isScriptedAgy(c: { cwd?: string; title?: string }): boolean {
+  return SCRIPTED_AGY_CWD.test(c.cwd ?? "") || (c.title ?? "").startsWith(SCRIPTED_AGY_TITLE)
+}
+
 /**
  * May this conversation create or update a `headless:agy:` drawer row? Never one a worker card owns (the card
  * follows its task, not agy's status), and a print-mode one only once the phone has opened it as a thread.
  */
-export function agyThreadVisible(c: Pick<AgyConversationSummary, "id" | "headless">, existing: Pick<Session, "herdrPane"> | undefined): boolean {
-  if (existing?.herdrPane?.startsWith("headless:worker:") || isHeadlessSession(c.id)) return false
+export function agyThreadVisible(c: Pick<AgyConversationSummary, "id" | "headless"> & Partial<Pick<AgyConversationSummary, "cwd" | "title">>, existing: Pick<Session, "herdrPane"> | undefined): boolean {
+  if (existing?.herdrPane?.startsWith("headless:worker:") || isHeadlessSession(c.id) || isScriptedAgy(c)) return false
   return !c.headless || !!existing?.herdrPane?.startsWith("headless:agy:")
 }
 
@@ -1158,7 +1166,7 @@ export function deliverHeadlessAgyTurn(opts: {
   try {
     const proc = Bun.spawn(["agy", ...args], {
       cwd,
-      // A headless agy worker turn gets the scrubbed env (no Turso/db/Companion tokens); the Brain · Boost
+      // A headless agy worker turn gets the scrubbed env (no notes DB/db/Companion tokens); the Brain · Boost
       // orchestrator keeps the server env like the claude brain (wiring/brain-headless.ts).
       ...(opts.isBrain ? {} : { env: scrubAgentEnv(process.env) }),
       stdout: "pipe",

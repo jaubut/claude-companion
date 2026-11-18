@@ -45,7 +45,7 @@ describe("archiveReason", () => {
 
   test("Brain, Brain · Boost and leads are pinned", () => {
     for (const taskId of ["brain", "agy-brain", "lead:claude-companion"]) {
-      expect(archiveReason(row({ taskId, lastActiveAt: 0 }), NOW, POLICY, neverDone)).toBeNull()
+      expect(archiveReason(row({ taskId, lastActiveAt: 0 }), NOW, POLICY, () => 0)).toBeNull()
     }
   })
 
@@ -54,6 +54,12 @@ describe("archiveReason", () => {
     expect(archiveReason(w, NOW, POLICY, () => null)).toBeNull()
     expect(archiveReason(w, NOW, POLICY, () => NOW - 30 * 60_000)).toBeNull()
     expect(archiveReason(w, NOW, POLICY, () => NOW - 2 * H)).toBe("done")
+  })
+
+  test("a finished worker's conversation re-keyed by the agy poll leaves like its card", () => {
+    const a = row({ agent: "gemini", taskId: "t1", herdrPane: "headless:agy:x", firstSeenAt: NOW, lastActiveAt: NOW })
+    expect(archiveReason(a, NOW, POLICY, () => null)).toBeNull()
+    expect(archiveReason(a, NOW, POLICY, () => NOW - 2 * H)).toBe("done")
   })
 })
 
@@ -118,6 +124,15 @@ describe("agy print-mode conversations", () => {
     expect(agyThreadVisible({ id: "a", headless: true }, { herdrPane: "headless:agy:abc" })).toBe(true)
     expect(agyThreadVisible({ id: "a", headless: false }, { herdrPane: "headless:worker:t1" })).toBe(false)
     expect(agyThreadVisible({ id: "a", headless: true }, { herdrPane: "headless:worker:t1" })).toBe(false)
+  })
+
+  test("script-owned runs stay out even once opened or with user-input steps", () => {
+    const opened = { herdrPane: "headless:agy:abc" }
+    expect(agyThreadVisible({ id: "a", headless: false, cwd: "/tmp/pr-shepherd-IPLDVz/wt" }, opened)).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: false, cwd: "/tmp/cal-agy-w4i8xwvs" }, opened)).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: false, cwd: "/tmp/gemini-diff-yihcBJ" }, opened)).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: false, cwd: "/w", title: "IMPORTANT: Ignore any files under ~/tls-vault" }, opened)).toBe(false)
+    expect(agyThreadVisible({ id: "a", headless: false, cwd: "/tmp/notes", title: "Fix the build" }, opened)).toBe(true)
   })
 
   test("a worker task's conversation stays out after its card is gone, even with user-input steps (resumed)", () => {

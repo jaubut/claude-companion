@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17",
+  "generatedAt": "2026-11-18",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1266,
+          "lines": 1274,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -4694,7 +4694,7 @@
         },
         {
           "path": "lib/session-archive.ts",
-          "lines": 58,
+          "lines": 57,
           "kind": "lib",
           "exports": [
             "ArchivePolicy",
@@ -5111,6 +5111,34 @@
             "lib/command-menu.ts",
             "lib/tmux-pane.ts",
             "lib/discover.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/subscriptions.ts",
+          "lines": 214,
+          "kind": "lib",
+          "exports": [
+            "Subscription",
+            "claudePlan",
+            "claudeSubscription",
+            "CodexRead",
+            "parseCodexRollout",
+            "chatgptSubscription",
+            "subscriptions",
+            "resetSubscriptionsCache"
+          ],
+          "state": [
+            "let cache"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/gauge.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -6521,7 +6549,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 314,
+          "lines": 325,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6539,6 +6567,7 @@
             "buildWorkerEnv",
             "defaultLoadAgentSecrets",
             "resolveWorkerFamily",
+            "modelFitsFamily",
             "buildHeadlessClaudeArgs",
             "buildHeadlessCodexArgs",
             "normalizeAgyCliModelFlag",
@@ -6587,11 +6616,12 @@
         },
         {
           "path": "lib/worker-pid.ts",
-          "lines": 32,
+          "lines": 47,
           "kind": "lib",
           "exports": [
             "defaultIsPidAlive",
             "defaultKillPid",
+            "defaultGetParentPid",
             "defaultGetPidIdentity"
           ],
           "state": [],
@@ -6658,7 +6688,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 590,
+          "lines": 610,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6693,7 +6723,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 42,
+          "lines": 46,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -6716,7 +6746,7 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 592,
+          "lines": 594,
           "kind": "route-host",
           "exports": [
             "handleApiRoute",
@@ -7311,7 +7341,7 @@
         },
         {
           "path": "routes/gauge.ts",
-          "lines": 31,
+          "lines": 37,
           "kind": "route-host",
           "exports": [
             "handleGaugeRoute"
@@ -7329,12 +7359,18 @@
               "method": "GET",
               "path": "/api/gauge",
               "prefix": false
+            },
+            {
+              "method": "GET",
+              "path": "/api/subscriptions",
+              "prefix": false
             }
           ],
           "apiCalls": [],
           "imports": [
             "lib/auth.ts",
             "lib/gauge.ts",
+            "lib/subscriptions.ts",
             "lib/vault-guard.ts",
             "wiring/gauge.ts"
           ],
@@ -8325,7 +8361,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 270,
+          "lines": 274,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -14386,6 +14422,12 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "GaugeAccount": {
+          "module": "lib/gauge.ts",
+          "callers": [
+            "lib/subscriptions.ts"
+          ]
+        },
         "mayClearLine": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -15314,6 +15356,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "modelFitsFamily": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "buildHeadlessWorkerInvocation": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15360,6 +15408,12 @@
           ]
         },
         "defaultGetPidIdentity": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetParentPid": {
           "module": "lib/worker-pid.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -16523,6 +16577,7 @@
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge",
             "routes/gauge.ts#GET /api/gauge",
+            "routes/gauge.ts#GET /api/subscriptions",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/brain.ts"
           ]
@@ -16531,6 +16586,12 @@
           "module": "lib/gauge.ts",
           "callers": [
             "routes/gauge.ts#POST /hooks/gauge"
+          ]
+        },
+        "subscriptions": {
+          "module": "lib/subscriptions.ts",
+          "callers": [
+            "routes/gauge.ts#GET /api/subscriptions"
           ]
         },
         "GithubWebhookDispatcher": {

@@ -7,7 +7,7 @@ import type { QueryFn, Row } from "./turso"
 
 // brain-v2 (lib/dispatch-poller.ts): an announced transition also lands in the
 // brain thread as a dispatch card turn — role orchestrator, Turn.taskId null,
-// card.taskId the Turso id — while the old channel keeps its turn (until P3).
+// card.taskId the notes DB id — while the old channel keeps its turn (until P3).
 // Off the brain host (brainThread → null) nothing changes.
 
 const ID = "a".repeat(32)

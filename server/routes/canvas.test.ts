@@ -11,7 +11,7 @@ import { type SendResult, createCanvasRoute } from "./canvas"
 // broadcast to the real `clients` set, two real WebSocket clients.
 
 const store = createCanvasStore(new Database(":memory:"))
-// Turso's real `notes` table (sqlite_master, 2026-10-30) behind the route's QueryFn.
+// Notes DB's real `notes` table (sqlite_master, 2026-10-30) behind the route's QueryFn.
 const notes = new Database(":memory:")
 notes.exec(`CREATE TABLE notes (id TEXT PRIMARY KEY, folder TEXT NOT NULL, filename TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
   body TEXT DEFAULT '', updated_at TEXT DEFAULT (datetime('now')), ref_code TEXT DEFAULT NULL)`)

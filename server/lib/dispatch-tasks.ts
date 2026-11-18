@@ -6,8 +6,8 @@ import { dashboardBase } from "./dashboard-client"
 import type { Task, TaskStatus } from "./orchestrator-chat"
 import type { ExecFn, QueryFn, Row, SqlArg } from "./turso"
 
-// Turso `tasks` as the one work queue (orchestrator-one-queue). P1 = read path:
-// the dispatch task model, the shared task DTO (local + Turso), and the named
+// Notes DB `tasks` as the one work queue (orchestrator-one-queue). P1 = read path:
+// the dispatch task model, the shared task DTO (local + notes DB), and the named
 // read queries. P2 = the only Companion writes: file (as `pending`: the dashboard
 // release stamp queues it — one work stream, docs/one-stream-plan.md), cancel,
 // requeue, unblock — each a guarded compare-and-set plus one agent_activity row. Every function takes its QueryFn / ExecFn so tests inject a fake.
@@ -17,7 +17,7 @@ export type DispatchStatus = "pending" | "queued" | "running" | "blocked" | "pr"
 export type TaskSource = "dispatch" | "local" | "proposal"
 export type TaskMode = "headless" | "live"
 
-/** One Turso agent task, as read. `status` is the raw Turso state (never "pr"). */
+/** One notes DB agent task, as read. `status` is the raw notes DB state (never "pr"). */
 export interface DispatchTask {
   id: string
   noteId: string
@@ -34,7 +34,7 @@ export interface DispatchTask {
   projectRef: string | null
   createdAt: number
   updatedAt: number
-  /** Turso's updated_at text, verbatim — the dedupe key uses it, not the parsed ms. */
+  /** Notes DB's updated_at text, verbatim — the dedupe key uses it, not the parsed ms. */
   updatedAtRaw: string
 }
 
@@ -64,13 +64,13 @@ export interface TaskDto extends Partial<import("./dispatch-stage").StageFields>
   mode: TaskMode
   /** Always null (Stage 3b): shipped apps decode both; removed after one iOS release. */
   tmuxSocket?: string | null
-  /** Local proposals only: the Turso id it was filed as (status "filed"). */
+  /** Local proposals only: the notes DB id it was filed as (status "filed"). */
   dispatchTaskId?: string | null
-  /** Live Turso tasks (P4): the local 8-char id worker output frames and worker turns are tagged with. */
+  /** Live notes DB tasks (P4): the local 8-char id worker output frames and worker turns are tagged with. */
   localTaskId?: string | null
 }
 
-/** Optional Turso columns (added by P0); absent on an older schema. */
+/** Optional notes DB columns (added by P0); absent on an older schema. */
 export interface DispatchColumns {
   prUrl: boolean
   resultRef: boolean
@@ -85,7 +85,7 @@ export const BLOCKER_STATES: readonly DispatchStatus[] = ["blocked", "failed"]
 
 // ── mapping ──────────────────────────────────────────────────────────────────
 
-/** "pr" = completed with a PR URL; everything else is the Turso state as-is. */
+/** "pr" = completed with a PR URL; everything else is the notes DB state as-is. */
 export function effectiveStatus(t: Pick<DispatchTask, "status" | "prUrl">): DispatchStatus | null {
   return t.status === "completed" && t.prUrl ? "pr" : t.status
 }
@@ -117,7 +117,7 @@ export function seenKey(t: DispatchTask): string {
   return JSON.stringify([t.status, t.updatedAtRaw, t.done, t.prUrl, t.runId ?? null, t.owner])
 }
 
-/** Turso datetime('now') text ("YYYY-MM-DD HH:MM:SS", UTC) or ISO → epoch ms. */
+/** Notes DB datetime('now') text ("YYYY-MM-DD HH:MM:SS", UTC) or ISO → epoch ms. */
 export function parseTs(raw: unknown): number {
   if (typeof raw !== "string" || !raw) return 0
   const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) ? raw.replace(" ", "T") + (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? "" : "Z") : raw
@@ -159,7 +159,7 @@ function prSummary(t: DispatchTask): string | null {
   return `PR ${t.prUrl}${verdict}`
 }
 
-/** The local worker behind a live Turso row (P4): what iOS needs to open its side chat. */
+/** The local worker behind a live notes DB row (P4): what iOS needs to open its side chat. */
 export interface LiveIdentity {
   localTaskId: string
   sessionKey: string | null
@@ -350,12 +350,12 @@ export function resolveAgent(raw: string | null | undefined, allow: ReadonlySet<
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) && allow.has(slug) ? slug : null
 }
 
-/** A fresh Turso task id: 32 lowercase hex, disjoint from the 8-char local ids. */
+/** A fresh notes DB task id: 32 lowercase hex, disjoint from the 8-char local ids. */
 export function newDispatchId(): string {
   return randomUUID().replace(/-/g, "")
 }
 
-/** A Turso task id: 32-hex (Companion, dispatch tools) or a dashed UUID (dashboard). Local ids are 8 chars. */
+/** A notes DB task id: 32-hex (Companion, dispatch tools) or a dashed UUID (dashboard). Local ids are 8 chars. */
 export const DISPATCH_ID = /^[A-Za-z0-9-]{16,64}$/
 
 export interface WriteCtx {

@@ -9,7 +9,7 @@ import type { GhFn, GhResult } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
 // bin/pr-merge gate (wiring/brain-pr-merge.ts): every refusal and the merge,
-// gh faked at the process boundary, Turso a real sqlite with the prod columns.
+// gh faked at the process boundary, notes DB a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prmerge-")), "test.db")
 const { mergeAgentPr, hasRecentUserMergeApproval, hasRecentUserTaskCancelApproval, PR_MERGE_ACTION, MERGE_CAP } = await import("./brain-pr-merge")
@@ -24,9 +24,10 @@ const OLD = "0000000000000000000000000000000000000000"
 const BOT = "jaubut"
 const TASK = `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'jeremie', '${URL}');`
 
-const review = (who: "claude" | "codex", verdict: "APPROVE" | "CHANGES", sha = SHA, login = BOT) => ({
+const HEADING = { claude: "🤖 **Auto-review** (sonnet)", gemini: "♊ **Gemini review** (agy gemini-3-pro)", codex: "🧠 **Codex review** (sonnet)" }
+const review = (who: keyof typeof HEADING, verdict: "APPROVE" | "CHANGES", sha = SHA, login = BOT) => ({
   author: { login },
-  body: `${who === "claude" ? "🤖 **Auto-review**" : "🧠 **Codex review**"} (sonnet)\n\nLooks fine.\n\nVERDICT: ${verdict} <!-- reviewed-sha: ${sha} -->`,
+  body: `${HEADING[who]}\n\nLooks fine.\n\nVERDICT: ${verdict} <!-- reviewed-sha: ${sha} -->`,
 })
 
 function green(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -35,7 +36,7 @@ function green(over: Record<string, unknown> = {}): Record<string, unknown> {
     reviewDecision: "", url: URL, title: "feed: wrap long titles", body: "Fixes the card overflow.", author: { login: BOT },
     files: [{ path: "server/lib/feed-format.ts" }, { path: "server/lib/feed-format.test.ts" }], changedFiles: 2, labels: [],
     statusCheckRollup: [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }],
-    comments: [review("claude", "APPROVE"), review("codex", "APPROVE")],
+    comments: [review("claude", "APPROVE"), review("gemini", "APPROVE")],
     ...over,
   }
 }
@@ -126,7 +127,7 @@ describe("bin/pr-merge gate: refusals", () => {
   })
 
   for (const [what, marker] of [["high", [tier("high")]], ["no", []], ["a stale normal then high", [tier("normal"), tier("high")]], ["a stranger's normal", [{ ...tier("normal"), author: { login: "x" } }]]] as const) {
-    test(`${what} marker needs Codex too`, async () => {
+    test(`${what} marker needs Gemini too`, async () => {
       const out = await refused(green({ comments: [...marker, review("claude", "APPROVE")] }))
       expect([out.status, out.body.error]).toEqual([409, "not_approved"])
     })
@@ -191,6 +192,12 @@ describe("bin/pr-merge gate: refusals", () => {
     test("flag absent: a client-origin task with Claude APPROVE only merges, as before", async () => {
       expect((await run(claudeOnly, absent, CLIENT_TASK)).out.status).toBe(200)
     })
+    test("flag present, normal tier, Gemini APPROVE: merges", async () => {
+      const r = await run(green({ comments: [tier("normal"), review("gemini", "APPROVE")] }), flag)
+      expect([r.out.status, r.merged]).toEqual([200, 1])
+    })
+    test("flag present: Gemini APPROVE of an older head refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("gemini", "APPROVE", OLD)] }), flag)))
+
     test("flag present: client-origin with both reviews still merges, as today", async () => {
       const r = await run(green({ comments: [tier("normal"), review("claude", "APPROVE"), review("codex", "APPROVE")] }), flag, CLIENT_TASK)
       expect([r.out.status, r.merged]).toEqual([200, 1])
@@ -269,7 +276,17 @@ describe("bin/pr-merge gate: refusals", () => {
   const unapproved: Array<[string, Record<string, unknown>]> = [
     ["no reviews", { comments: [] }],
     ["Claude only", { comments: [review("claude", "APPROVE")] }],
+    ["Gemini only", { comments: [review("gemini", "APPROVE")] }],
     ["Codex only", { comments: [review("codex", "APPROVE")] }],
+    ["Gemini approved an older head", { comments: [review("claude", "APPROVE"), review("gemini", "APPROVE", OLD)] }],
+    ["Gemini CHANGES beside a Codex APPROVE", { comments: [review("claude", "APPROVE"), review("codex", "APPROVE"), review("gemini", "CHANGES")] }],
+    ["Codex CHANGES beside a Gemini APPROVE", { comments: [review("claude", "APPROVE"), review("gemini", "APPROVE"), review("codex", "CHANGES")] }],
+    ["a quoted Gemini heading mid-comment", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `note: ♊ **Gemini review** (agy) VERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }] }],
+    ["a blockquoted Gemini heading", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `>♊ **Gemini review** (agy gemini-3-pro)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }] }],
+    ["a spaced blockquoted Gemini heading", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `> ♊ **Gemini review** (agy gemini-3-pro)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }] }],
+    ["a code-indented Gemini heading", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `    ♊ **Gemini review** (agy gemini-3-pro)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }] }],
+    ["a fenced Gemini heading", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: "```\n♊ **Gemini review** (agy gemini-3-pro)\n```\nVERDICT: APPROVE <!-- reviewed-sha: " + SHA + " -->" }] }],
+    ["Gemini approvals posted by someone else", { comments: [review("claude", "APPROVE"), review("gemini", "APPROVE", SHA, "mallory")] }],
     ["Codex approved an older head", { comments: [review("claude", "APPROVE"), review("codex", "APPROVE", OLD)] }],
     ["CHANGES on this head beside two APPROVEs", { comments: [review("claude", "APPROVE"), review("codex", "APPROVE"), review("codex", "CHANGES")] }],
     ["approvals posted by someone else", { comments: [review("claude", "APPROVE", SHA, "mallory"), review("codex", "APPROVE", SHA, "mallory")] }],
@@ -278,6 +295,11 @@ describe("bin/pr-merge gate: refusals", () => {
     ["GitHub CHANGES_REQUESTED", { reviewDecision: "CHANGES_REQUESTED" }],
     ["Codex skipped (Claude APPROVE only, a skip note from Codex)", { comments: [review("claude", "APPROVE"), { author: { login: BOT }, body: `🧠 **Codex review** skipped: quota\n<!-- reviewed-sha: ${SHA} -->` }] }],
   ]
+  // TODO(gemini-cutover): drop with CODEX_HEADING in brain-pr-merge.ts.
+  test("transition: Claude + a Codex APPROVE on the head still merges", async () => {
+    expect((await mergeAgentPr(input, world(green({ comments: [review("claude", "APPROVE"), review("codex", "APPROVE")] })).deps)).status).toBe(200)
+  })
+
   for (const [what, over] of unapproved) {
     test(`409 not_approved: ${what}`, async () => {
       const out = await refused(green(over))

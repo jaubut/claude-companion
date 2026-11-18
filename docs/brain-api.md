@@ -1,6 +1,6 @@
 # Brain API (brain-v2, Phase 1)
 
-One supervised `brain` agent on the brain host (`COMPANION_BRAIN=1`, Zettlab). It plans, dispatches and follows up, and never builds. The server supervises, relays and records; the thread lives in sqlite. Spec: Turso RES-QDHU. Plan: STATE.md § Change Plan — brain-v2.
+One supervised `brain` agent on the brain host (`COMPANION_BRAIN=1`, Zettlab). It plans, dispatches and follows up, and never builds. The server supervises, relays and records; the thread lives in sqlite. Spec: note RES-QDHU. Plan: STATE.md § Change Plan — brain-v2.
 
 Every frame and field below is **additive**. Shipped iOS builds decode `brain` / `brain_trace` as `.unknown`, and a host without `COMPANION_BRAIN=1` sends none of them.
 
@@ -47,7 +47,7 @@ TraceRow {
 
 - `snapshot` (on connect) = the newest 300 rows in `seq` order. `row` = rows that just changed.
 - `seq` is global and monotonic; keep the max `seq` per id. Transitions: pending → running → done | error. A terminal row never reopens (a retry is a new id).
-- `agent:<proposalId>` uses the Companion proposal id (8 chars); `ref.taskId` is the Turso task id once filed.
+- `agent:<proposalId>` uses the Companion proposal id (8 chars); `ref.taskId` is the notes DB task id once filed.
 - `"needs-you"` is a virtual parent (no row): render its children under a "Needs you" group.
 - Unknown `kind` / `status` values must be tolerated (`trace.unknown-kind.json`).
 - `headless:<jobId>` (jobId = task id, `<taskId>:t<n>` from turn 2): one row per headless worker turn, `kind:"agent"`, `ref:{taskId, host}`. Title `<family> · <model> — <title>`; while `running`, detail = `<step> · <elapsed>` + newline + the latest summary, rewritten in place at most every 10 s and only when step or summary changed. It ends `done` / `error` with the PR ready / completed / blocked receipt text as detail (an interrupt ends it `error`). These rows are trace frames only and never wake the brain; the receipt turn still does.
@@ -60,7 +60,7 @@ turn.card? = {kind:"dispatch"|"voice"|"worker_blocked", source:"app", taskId?, a
 ```
 
 - `voice`: a user turn sent from the 🧠 composer with `voice` (below); `audioId` arrives later when the take is archived (the turn is re-sent with the same id).
-- `dispatch`: a receipt the poller writes into the brain thread (role `orchestrator`) when a task moves to blocked / PR / completed / done. `card.taskId` is the Turso id. **`turn.taskId` stays null** on card turns (shipped builds group taskId turns as worker output). The old channel still gets its turn until P3.
+- `dispatch`: a receipt the poller writes into the brain thread (role `orchestrator`) when a task moves to blocked / PR / completed / done. `card.taskId` is the notes DB id. **`turn.taskId` stays null** on card turns (shipped builds group taskId turns as worker output). The old channel still gets its turn until P3.
 - `worker_blocked`: a dispatch worker stuck on a dialog, with its options and `state` open | answered | expired. Contract: `docs/worker-blocked-api.md`.
 - Turns without a card serialize exactly as before (no `card` key).
 
@@ -98,7 +98,7 @@ All `/api/brain*` are Bearer-gated; every one answers 404 `brain_disabled` off t
 
 Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).transport === "loopback"`; a `tailscale serve` request is 403), `X-Companion-Task-Id: brain`, and `X-Companion-Pid` = the pid of the registered brain session whose session id the supervisor adopted. Else 403.
 
-- `noteId` missing → 422 `no_project`; unknown → 404; Turso down → 503; unknown agent → 400 `unknown_agent`.
+- `noteId` missing → 422 `no_project`; unknown → 404; Notes DB down → 503; unknown agent → 400 `unknown_agent`.
 - Dedupe on (`sourceTurnId`, sha256(prompt)): a repeat answers `{ok, proposalId, replay:true}` and creates nothing.
 - `handoff: true` files a row and queues nothing, without a proposal: `{ok, taskId, origin, replay, claim?}`. `origin` is what the row stored (`jeremie` or `unknown`, always `unknown` without an origin column); `replay:true` = this turn, note, prompt and repo were already filed. With a valid bare `repo` (lowercased; part of the id) and a row stored `jeremie`, `claim` is the handoff claim (`hc1.<kid>.<turnId>.<HMAC-SHA256 over task id, repo, turn>`, keys in `~/.claude-companion/handoff-claim.keys`, 0600, never in env; `lib/handoff-claim.ts`). `dispatch_task` needs it (`claim` argument, `bin/worker dispatch --claim`) before the worker's PR may link to the row; the bind, the PR link and the startup replay all verify it, and a worker dispatched without it reads origin unknown. A bad or missing repo files the row without a claim, never a refusal. Every dispatch must pass the claim, fix rounds included: the supervisor never inherits a stored claim (anyone holding the task id could dispatch), and a dispatch without it runs unbound. A task already bound refuses any dispatch without its exact claim (`409 claim_required`, nothing changed), except Jeremie's own phone inject into the worker session, which resumes with the stored claim server-side. A supplied claim is always verified itself; a refused one answers `claim: "claim_refused:<reason>"` and never falls back to the stored claim.
 - **The brain hands off** (Jeremie, 2026-10-29; replaced voice = consent): every proposal is approved at once (files `queued`, origin jeremie): `{ok, proposalId, dispatchTaskId, status:"queued"}`. No proposal turn, no Approve card, no `filed […]` turn in the brain thread: the agent row ("dispatched") is the receipt. If filing fails the proposal stays `proposed` (a card he can tap): `{ok, proposalId, status:"proposed", error}`.
@@ -108,7 +108,7 @@ Auth — all of: TCP peer loopback with no forwarded hop (`clientOrigin(...).tra
 The brain-workers reaper (`wiring/brain-workers.ts`, policy `lib/brain-workers.ts`) closes only herdr workspaces the brain owns. Ownership is the env on the pane's shell, read from `pane process-info` → `shell_pid`:
 
 - **brain**: label `brain` + `COMPANION_TASK_ID=brain`. Closed when it is not the live `brain` agent's workspace or a brain session's pane, has one pane and the shell is in front. Swept in `stopAgent` and right before every brain spawn; never by the periodic sweep.
-- **worker**: label `dispatch-<id8>` + `DISPATCH_TASK_ID=<id>` (matching) + a Companion proposal for that id in the brain thread. Closed when the live Turso phase is `pr`/`completed`/`done`/`failed`/`cancelled`, Turso `updated_at` is ≥ 2 min old, it has one pane, and herdr read it settled (agent `done`/`idle`, or no agent and the shell in front) on 2 consecutive sweeps (every 30 s). Anything unknown (env unreadable, Turso not polled yet, task not found) keeps.
+- **worker**: label `dispatch-<id8>` + `DISPATCH_TASK_ID=<id>` (matching) + a Companion proposal for that id in the brain thread. Closed when the live notes DB phase is `pr`/`completed`/`done`/`failed`/`cancelled`, notes DB `updated_at` is ≥ 2 min old, it has one pane, and herdr read it settled (agent `done`/`idle`, or no agent and the shell in front) on 2 consecutive sweeps (every 30 s). Anything unknown (env unreadable, notes DB not polled yet, task not found) keeps.
 
 `workspace get` is re-read (one pane, same label) right before every `workspace close`.
 
@@ -140,7 +140,7 @@ Any bare jaubut repo name (`leadSlug` in `lib/brain.ts`) with a checkout on this
 
 ### Dead agent PRs (`/hooks/brain/pr-close`)
 
-`wiring/brain-pr-close.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word. Closed only when it is open, its head is `dispatch/*` (never `deps/*`, `agent/chores*` or a human branch) and at least one holds: `mergeable` CONFLICTING · superseded (its task's `dispatch_pr_url` is another PR) · its task done or cancelled · its newest shepherd park (`pr:needs-human`, not lifted by a later `pr:unpark`) says the fix budget is spent (`CI still failing after N fixes`, `merge conflict unresolved after N attempts`, `review verdict CHANGES after N fix runs`). Then `gh pr close --comment "Closed by the brain: <reason>"` (secrets redacted, branch kept), state read back CLOSED, an `agent_activity` row `brain:pr-close` (meta: repo, pr, url, branch, reason, evidence) and an event turn in the brain thread.
+`wiring/brain-pr-close.ts` reads the PR from GitHub (`gh pr view`) and the notes DB, never from the brain's word. Closed only when it is open, its head is `dispatch/*` (never `deps/*`, `agent/chores*` or a human branch) and at least one holds: `mergeable` CONFLICTING · superseded (its task's `dispatch_pr_url` is another PR) · its task done or cancelled · its newest shepherd park (`pr:needs-human`, not lifted by a later `pr:unpark`) says the fix budget is spent (`CI still failing after N fixes`, `merge conflict unresolved after N attempts`, `review verdict CHANGES after N fix runs`). Then `gh pr close --comment "Closed by the brain: <reason>"` (secrets redacted, branch kept), state read back CLOSED, an `agent_activity` row `brain:pr-close` (meta: repo, pr, url, branch, reason, evidence) and an event turn in the brain thread.
 
 | answer | when |
 |---|---|
@@ -154,7 +154,7 @@ Any bare jaubut repo name (`leadSlug` in `lib/brain.ts`) with a checkout on this
 
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
-`wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and Turso, never from the brain's word, and refuses on any doubt. It checks, in order:
+`wiring/brain-pr-merge.ts` reads the PR from GitHub (`gh pr view`) and the notes DB, never from the brain's word, and refuses on any doubt. It checks, in order:
 1. The PR is open.
 2. **The merge gate** (`lib/merge-gate.ts`, the same call the tap makes) reads the PR live and asks claude-config's `tools/pr-gate.ts`, with `approved: false`. It takes no branch, so no head is exempt: a `sync/*` PR gets a named stop before `not_agent_branch`. A stop outranks `draft`. If the gate can't load or read, or fails its self-check, the merge is refused with 409 `gate_unavailable`; there is no fallback.
 3. The PR is not a draft, and its head is `dispatch/*`.
@@ -162,9 +162,9 @@ Any bare jaubut repo name (`leadSlug` in `lib/brain.ts`) with a checkout on this
 
    The MFA / human-review gate was retired on 2026-10-31. Money, billing, MFA or config paths, title, body or labels no longer refuse here; the hard stops are the merge gate's (step 2). A web, client, internal or unset task origin no longer refuses on its own. The shepherd's ordinary human-review parks no longer refuse either (`client-origin PR`, `touches … — needs your review`). A tainted park (`tainted (…)`) or one whose reason says `human merge` is never retired, whatever prefix it carries, and a live one refuses with 403 `parked`.
 5. **not_green** refuses unless `mergeable` is MERGEABLE, `mergeStateStatus` is CLEAN, and every check passed, with at least one SUCCESS.
-6. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Codex (`🧠 **Codex review**`) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED. The newest `<!-- review-tier: x -->` comment by the PR's author lowers the bar: `normal` needs only the Claude APPROVE; `low` needs no review when every file is `docs/*.md`, `README.md`, `*.test.ts` or `architecture.{json,md}`, checked here because anyone can post the marker. `high`, no marker, or `low` on other files needs both.
+6. **not_approved** refuses unless both a Claude (`🤖 **Auto-review**`) and a Gemini (`♊ **Gemini review** (agy …`, at the very start of the comment) comment say `VERDICT: APPROVE`, stamped `<!-- reviewed-sha: <head> -->` and posted by the PR's author. During the Gemini cutover a Codex (`🧠 **Codex review**`) APPROVE still counts as the second reviewer. It also refuses on any CHANGES on that head, or a GitHub CHANGES_REQUESTED. The newest `<!-- review-tier: x -->` comment by the PR's author lowers the bar: `normal` needs only the Claude APPROVE; `low` needs no review when every file is `docs/*.md`, `README.md`, `*.test.ts` or `architecture.{json,md}`, checked here because anyone can post the marker. `high`, no marker, or `low` on other files needs both.
 
-   Temporary, `rm` the file to restore: while `~/.claude/state/claude-review-paused` exists (checked on every call), a `normal`-tier PR with no `client` task origin or `client-origin` label needs the Codex APPROVE instead of the Claude one (still no CHANGES from either reviewer). High, unmarked, low-on-code and client-origin PRs need both.
+   Temporary, `rm` the file to restore: while `~/.claude/state/claude-review-paused` exists (checked on every call), a `normal`-tier PR with no `client` task origin or `client-origin` label needs the Gemini (or, during the cutover, Codex) APPROVE instead of the Claude one (still no CHANGES from either reviewer). High, unmarked, low-on-code and client-origin PRs need both.
 7. **merge_cap** refuses after 10 brain merges in 24 h.
 
 The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <checked head>`. The state is read back as MERGED, then an `agent_activity` row `brain:pr-merge` is written (meta: repo, pr, url, branch, head, title, reason, tasks; the machine digest lists these) and an event turn goes to the brain thread.
@@ -176,7 +176,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 403 `human-merge-path` / `tainted-sensitive` / `prod-schema` / `hold-label` (+`action`, `reason`, `head`) | the merge gate's hard stops; a human merges on GitHub, or removes the label |
 | 403 `not_agent_branch` (+`branch`) · 403 `parked` (+`reasons`) | broken or held |
 | 404 `pr_not_found` | gh cannot read it |
-| 409 `gate_unavailable` (+`detail`) | the gate can't answer here (missing, broken, gh or Turso failing): a host fault, not the PR's |
+| 409 `gate_unavailable` (+`detail`) | the gate can't answer here (missing, broken, gh or notes DB failing): a host fault, not the PR's |
 | 409 `head_moved` | the head changed during the check; ask again |
 | 409 `base_moved` | the base branch changed during the check, or by the last read before the merge (a retarget changes the diff, not the head); `gate_unavailable` if that read fails; ask again |
 | 409 `client_gone` | the caller hung up before the merge, nothing merged. It reaches nobody, it shows in the log |
@@ -186,7 +186,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 
 ### Stale agent PRs (`/hooks/brain/pr-update-branch`)
 
-Dispatch workers cannot create merge commits, so a dispatch PR with stale CI waits on the brain. `wiring/brain-pr-update-branch.ts` reads the PR from GitHub (`gh pr view`), never from the brain's word. Repo, pr and reason get the same input checks as pr-merge. It refuses unless the PR is open, its head is `dispatch/*` and `mergeable` is not CONFLICTING. The shared `wiring/brain-pr-park.ts` helper checks linked tasks and shepherd activity in Turso: client origin (task origin or the advisory `client-origin` label), a live park (including tainted or human-merge parks), or a hold refuses before updating. A Turso read failure also refuses. The same retired review parks and newer unparks as pr-merge apply; client-origin PRs always refuse an update, even when pr-merge could merge them. Then `gh pr update-branch` without `--rebase`: a merge commit on the PR branch, never a rebase, never a force. The new head is read back (up to 5 reads, 1 s apart), then an `agent_activity` row `brain:pr-update-branch` is written (meta: repo, pr, url, branch, from, head, reason) and an event turn goes to the brain thread.
+Dispatch workers cannot create merge commits, so a dispatch PR with stale CI waits on the brain. `wiring/brain-pr-update-branch.ts` reads the PR from GitHub (`gh pr view`), never from the brain's word. Repo, pr and reason get the same input checks as pr-merge. It refuses unless the PR is open, its head is `dispatch/*` and `mergeable` is not CONFLICTING. The shared `wiring/brain-pr-park.ts` helper checks linked tasks and shepherd activity in the notes DB: client origin (task origin or the advisory `client-origin` label), a live park (including tainted or human-merge parks), or a hold refuses before updating. A notes DB read failure also refuses. The same retired review parks and newer unparks as pr-merge apply; client-origin PRs always refuse an update, even when pr-merge could merge them. Then `gh pr update-branch` without `--rebase`: a merge commit on the PR branch, never a rebase, never a force. The new head is read back (up to 5 reads, 1 s apart), then an `agent_activity` row `brain:pr-update-branch` is written (meta: repo, pr, url, branch, from, head, reason) and an event turn goes to the brain thread.
 
 The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `not_approved` until the review cascade has reviewed it.
 
@@ -208,9 +208,9 @@ The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `n
 
 ### Obsolete tasks (`/hooks/brain/task-cancel`)
 
-`wiring/brain-task-cancel.ts` cancels a task the brain proposed. It decides from Turso and the server's own proposal row, never from the brain's word.
+`wiring/brain-task-cancel.ts` cancels a task the brain proposed. It decides from the notes DB and the server's own proposal row, never from the brain's word.
 
-- **The brain's own:** `getTaskByDispatchId(<id read from Turso>)` must give `threadId` `brain` and status `filed`. That row is written only behind `bin/propose`, or by an Opus rescope of such a proposal. `tasks` has no proposer column and brain filings carry origin `jeremie`, so the Turso row can't tell; the description marker can be forged by a prompt. The store is host-local: a task from another host or a rebuilt store refuses.
+- **The brain's own:** `getTaskByDispatchId(<id read from the notes DB>)` must give `threadId` `brain` and status `filed`. That row is written only behind `bin/propose`, or by an Opus rescope of such a proposal. `tasks` has no proposer column and brain filings carry origin `jeremie`, so the notes DB row can't tell; the description marker can be forged by a prompt. The store is host-local: a task from another host or a rebuilt store refuses.
 - **Only `queued`, `blocked` and `failed`.** A running task is refused outright: no lease exists, so nothing can prove its worker is gone.
 - **One transaction:** a compare-and-set on status, assignee, owner and PR URL, plus its `agent_activity` row (`brain:task-cancel`, meta: from, reason, priorBlocker, prUrl, prState). Both or neither; a row that moved answers `changed` with nothing written. The row ends `cancelled`, done=1, with `Cancelled by the brain: <reason>` in `dispatch_blocker`.
 - **After the commit:** an event turn in the brain thread, its title and reason sanitised and quoted as data. A failed turn is logged and still answers 200. The phone shows no reason: the task DTO carries a blocker only for blocked and failed rows.
@@ -245,7 +245,7 @@ Every step writes an `agent_activity` row (`agent_slug` auto-deploy, action `dep
 
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow Turso read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|pr-update-branch|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow notes DB read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|pr-update-branch|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).

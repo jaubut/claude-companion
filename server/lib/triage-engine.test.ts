@@ -195,7 +195,7 @@ describe("choose", () => {
     expect((await e.choose({ id: "task:t1", optionId: "a" })).body).toMatchObject({ error: "stale" })
   })
 
-  test("503 when Turso is unreachable; executor errors keep their status", async () => {
+  test("503 when notes DB is unreachable; executor errors keep their status", async () => {
     const e = await ready()
     currentThrows = new TursoUnreachable("timeout")
     expect(await e.choose({ id: "task:t1", optionId: "a" })).toMatchObject({ status: 503, body: { error: "turso_unreachable" } })

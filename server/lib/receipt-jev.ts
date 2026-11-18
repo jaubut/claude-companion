@@ -29,7 +29,7 @@ function jevUrl(): string {
   return (process.env.COMPANION_JEV_URL || "https://api.typesafe.ai/v1/systemone").trim()
 }
 
-// ── Chart: Turso `coa` 5xxx expense rows (names win) ∪ the in-use base chart ──
+// ── Chart: Notes DB `coa` 5xxx expense rows (names win) ∪ the in-use base chart ──
 
 let chartCache: { at: number; chart: ChartEntry[] } | null = null
 

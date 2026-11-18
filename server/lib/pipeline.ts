@@ -55,7 +55,7 @@ export function pipelineItem(t: DispatchTask, ledger: Row[], now: number): Pipel
   }
 }
 
-/** The list, newest first: two Turso reads (tasks, then the PR ledger). Throws TursoUnreachable like any query. */
+/** The list, newest first: two notes DB reads (tasks, then the PR ledger). Throws TursoUnreachable like any query. */
 export async function listPipeline(query: QueryFn, cols: DispatchColumns, now: number): Promise<PipelineItem[]> {
   const tasks = await listDispatchTasks(query, cols)
   const ledger = await listPrLedger(query, tasks)

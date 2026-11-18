@@ -5,7 +5,7 @@ import { clip } from "./triage"
 // Repo view (docs/orchestrator-triage-api.md#repo-view): the repo chip on a
 // Needs you card opens one summary of the repo's open PRs, each in plain
 // words, plus ONE "Get an agent on it" for the blocked ones. Pure: the gh
-// list, the shepherd's parks and the Turso lookups are wiring/repo-view.ts.
+// list, the shepherd's parks and the notes DB lookups are wiring/repo-view.ts.
 
 export type RepoPrStatus = "ready" | "checks_failing" | "conflict" | "parked" | "review" | "checks_running" | "behind" | "draft"
 

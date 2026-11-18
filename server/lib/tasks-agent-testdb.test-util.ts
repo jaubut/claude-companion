@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import type { ExecFn, QueryFn, Row, SqlArg, TxFn } from "./turso"
 import { TursoUnreachable } from "./turso"
 
-// Test-only: a real SQLite (bun:sqlite, in memory) with the Turso `tasks`,
+// Test-only: a real SQLite (bun:sqlite, in memory) with the notes DB `tasks`,
 // `notes` and `agent_activity` schemas, exposed as QueryFn / ExecFn — so the
 // tasks agent's SQL (json_extract, RETURNING, CAS updates) runs for real.
 

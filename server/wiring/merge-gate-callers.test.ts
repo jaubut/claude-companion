@@ -10,7 +10,7 @@ import { type GhFn, GhUnreachable, mergePr } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
 // The acceptance matrix: bin/pr-merge and the Companion tap call one gate, loaded by the real loader. gh is faked at
-// the process boundary, Turso is a real sqlite with the prod columns. It runs on stub tools (CI has no
+// the process boundary, notes DB is a real sqlite with the prod columns. It runs on stub tools (CI has no
 // ~/.claude/tools) and again on the real files on any host that has them, so a stub that drifts fails there.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-gate-callers-")), "test.db")
@@ -23,9 +23,9 @@ const BOT = "jaubut"
 const TASK = "abcd1234-0000"
 
 interface PrShape { files?: Array<string | [string, string]>; labels?: string[]; head?: string; draft?: boolean; state?: string; mergeable?: string; mergeState?: string; afterMerge?: { mergeable: string; head: string } | null; moved?: string; retarget?: "during-gate" | "after-gate" | "blind"; leaves?: boolean }
-const review = (who: "claude" | "codex") => ({
+const review = (who: "claude" | "gemini") => ({
   author: { login: BOT },
-  body: `${who === "claude" ? "🤖 **Auto-review**" : "🧠 **Codex review**"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
+  body: `${who === "claude" ? "🤖 **Auto-review**" : "♊ **Gemini review** (agy"} (sonnet)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->`,
 })
 
 function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoDown?: boolean; ghThrows?: boolean } = {}) {
@@ -81,7 +81,7 @@ function world(shape: PrShape, origin: string | null = "jeremie", opts: { tursoD
     return out({
       state, isDraft: shape.draft ?? false, headRefName: "dispatch/abcd1234", headRefOid: head, baseRefName: base, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "",
       url: URL, title: "t", author: { login: BOT }, labels: (shape.labels ?? []).map((name) => ({ name })), statusCheckRollup: rollup,
-      comments: [review("claude"), review("codex")], files: files.map(([path]) => ({ path })),
+      comments: [review("claude"), review("gemini")], files: files.map(([path]) => ({ path })),
     })
   }
   return { db, gh, exec, calls, signal: client.signal, approvals: () => db.query("SELECT target_id, meta FROM agent_activity WHERE action = 'pr:approved-merge'").all() as Array<{ meta: string }> }
@@ -154,7 +154,7 @@ function matrix(toolsFor: () => string): void {
         expect(await run(w, none)).toMatchObject({ status: 409, error: "gate_unavailable" })
         expect(merges(w)).toHaveLength(0)
       })
-      test("fail-closed: Turso down inside the gate", async () => {
+      test("fail-closed: Notes DB down inside the gate", async () => {
         const w = world({}, "jeremie", { tursoDown: true })
         expect(await run(w, gate)).toMatchObject({ status: 409, error: "gate_unavailable" })
         expect(merges(w)).toHaveLength(0)

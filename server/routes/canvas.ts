@@ -169,7 +169,7 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
         return e ? bad(`edge_${e.state}`, 409) : bad("not_found", 404)
       }
       frame("edge", { edge: claimed })
-      // A throw (Turso down) must still settle the claim, or the edge stays `sending` until a restart.
+      // A throw (notes DB down) must still settle the claim, or the edge stays `sending` until a restart.
       const r = await deps.send(claimed).catch((): SendResult => ({ ok: false, status: 503, error: "send_failed" }))
       const edge = deps.store.settleEdge(sendId, r.ok ? r : { ok: false, error: r.error }, now())
       if (edge) frame("edge", { edge })
@@ -184,7 +184,7 @@ export function createCanvasRoute(deps: CanvasRouteDeps) {
       if (!key && !brain) return bad("missing_target")
       let nodes = deps.references(brain ? { brain } : { key })
       if (path !== LINKED) {
-        // A Turso note id has a slash (projects/2026-…): send it percent-encoded, decoded whole here.
+        // A note id has a slash (projects/2026-…): send it percent-encoded, decoded whole here.
         let one = ""
         try { one = decodeURIComponent(path.slice(LINKED.length + 1)) } catch { /* stays "" */ }
         nodes = nodes.filter((n) => one !== "" && (referenceRef(n) === one || n.id === one))

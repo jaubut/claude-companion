@@ -10,10 +10,14 @@ export const workerStateFile = (home: string): string => join(home, ".claude", "
 
 export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   repoDir: string; pid?: number | null; pidIdentity?: string | null; sessionStarted?: boolean
-  /** bindTask's answer for this id: only true with a handoffClaim links the PR to the Turso row. Absent / null = not answered yet. */
+  /** bindTask's answer for this id: only true with a handoffClaim links the PR to the notes DB row. Absent / null = not answered yet. */
   prLinkBound?: boolean | null
   /** The claim it was bound with (or a pending one): never in a snapshot, so no tool result or callback carries it. */
   handoffClaim?: string | null
+  /** The model was chosen (dispatch `model` or the picker via setTaskModel), not routed: later turns keep it, no retry escalation. */
+  modelPinned?: boolean
+  /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
+  ownerPid?: number | null
 }
 
 /** Best effort: a failed write keeps the previous file. */

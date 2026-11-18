@@ -7,7 +7,7 @@ import type { GhFn, GhResult } from "../lib/triage-pr"
 import type { ExecFn, Row } from "../lib/turso"
 
 // bin/pr-update-branch gate (wiring/brain-pr-update-branch.ts): every refusal and
-// the update, gh faked at the process boundary, Turso a real sqlite with the prod columns.
+// the update, gh faked at the process boundary, notes DB a real sqlite with the prod columns.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prupdate-")), "test.db")
 const { updateAgentPr, PR_UPDATE_ACTION } = await import("./brain-pr-update-branch")

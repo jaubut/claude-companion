@@ -27,7 +27,7 @@ export interface TripServiceDeps {
   ingest: (payload: Record<string, unknown>) => Promise<IngestOutcome>
   /** Dashboard PATCH. Throws DashboardUnreachable / DashboardKeyMissing. */
   patch: (id: string, body: Record<string, unknown>) => Promise<{ status: number; json: Record<string, unknown> | null }>
-  /** Read-only Turso row for coords (history). null when absent or unreadable. */
+  /** Read-only notes DB row for coords (history). null when absent or unreadable. */
   readRow: (id: string) => Promise<TripRow | null>
   /** An upload went in `unclassified` (dashboard id): the autofile sweep takes it from here. */
   onUnclassified?: (tripId: string) => void

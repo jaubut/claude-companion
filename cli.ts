@@ -219,7 +219,7 @@ startMediaSweeper()
 startRecordsExpiry()
 // Receipt QA frames/push + queue resume (worker inert upstream or with COMPANION_RECEIPT_QA=off).
 startReceiptQa()
-// Turso dispatch poller (orchestrator-one-queue): every 20 s + /hooks/dispatch-event nudges.
+// Notes DB dispatch poller (orchestrator-one-queue): every 20 s + /hooks/dispatch-event nudges.
 dispatchWiring.start()
 // Body auto-investigation: close runs a restart interrupted, sweep in 60 s, then every 10 min.
 startBodyInvestigate()

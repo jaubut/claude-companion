@@ -47,7 +47,7 @@ async function reach(): Promise<void> {
     } catch (e) {
       const why = e instanceof TursoUnreachable ? e.message : "unexpected error"
       if (/http 40[13]$/.test(why)) throw refuse("tls-test token rejected", "TURSO_TEST_AUTH_TOKEN expired or was revoked; the PR that added the integration job has the rotation commands")
-      if (attempt === 3) throw refuse("Turso unreachable", `${why}. A Turso outage, not a code failure: rerun this job`)
+      if (attempt === 3) throw refuse("Notes DB unreachable", `${why}. A notes DB outage, not a code failure: rerun this job`)
       await Bun.sleep(attempt * 2000)
     }
   }

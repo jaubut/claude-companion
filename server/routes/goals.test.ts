@@ -86,7 +86,7 @@ describe("GET /api/goals", () => {
     expect(body.projects).toHaveLength(PROJECT_CAP)
   })
 
-  test("cache: second call within TTL skips Turso; after TTL or ?fresh=1 it refetches", async () => {
+  test("cache: second call within TTL skips notes DB; after TTL or ?fresh=1 it refetches", async () => {
     let t = 1_000
     const { query, calls } = fakeDb([note(1)], [])
     const h = createGoalsHandler({ query, now: () => t })
@@ -102,7 +102,7 @@ describe("GET /api/goals", () => {
     expect(calls).toHaveLength(6)
   })
 
-  test("Turso failure → 503 turso_unreachable, no SQL, no stack; failure is not cached", async () => {
+  test("Notes DB failure → 503 turso_unreachable, no SQL, no stack; failure is not cached", async () => {
     let fail = true
     const ok = fakeDb([note(1)], [])
     const query: QueryFn = async (sql, args) => {

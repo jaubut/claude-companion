@@ -57,7 +57,7 @@ export const canvasStore: CanvasStore = {
   settleEdge: (id, result, now) => openStore().settleEdge(id, result, now),
 }
 
-// P6 Context edge send: the server reads the source (Turso task / note, or the
+// P6 Context edge send: the server reads the source (notes DB task / note, or the
 // sticky's text) at send time and types it into the agent node's session through
 // the same guarded path as a phone inject (deliverInject: refusals, pane lock,
 // submit confirmation). Local sessions only: a node bound to the other host's

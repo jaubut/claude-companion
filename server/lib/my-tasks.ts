@@ -1,7 +1,7 @@
 import type { ExecFn, QueryFn, Row } from "./turso"
 
 // Jeremie's own tasks as a cascade: urgency section → project (the task's note)
-// → task → subtasks (PRJ-CT4M WP1). Turso `tasks` is the only store; the phone
+// → task → subtasks (PRJ-CT4M WP1). Notes DB `tasks` is the only store; the phone
 // never holds the token. "Mine" = the human assignees below (bare `human` is the
 // pre-2026-06 form of human:jeremie). The dashboard stores "no date" and "no
 // parent" as '' (never NULL) — both are normalized here. Days are local to

@@ -5,7 +5,7 @@ import { type ActionKind, KIND_HELP, type SourceItem, allowedActions } from "./t
 
 // The Opus resolver's prompts (lib/resolver.ts decides what runs; this file
 // only says what Opus may propose and what JSON it returns). Evidence the
-// server gathered (Turso task / note / activity, `gh pr view|diff|checks`) is
+// server gathered (notes DB task / note / activity, `gh pr view|diff|checks`) is
 // inlined; the run itself is read-only (wiring/resolver.ts → readonly-claude).
 
 export interface EvidenceBlock { label: string; text: string }

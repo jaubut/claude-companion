@@ -9,7 +9,7 @@ import { orchEmit } from "./orchestrator"
 
 // bin/pr-close (POST /hooks/brain/pr-close): the brain closes a DEAD agent PR
 // so dispatch-run's per-repo cap (DISPATCH_FEATURE_CAP) frees a slot. Every
-// check is made here, from GitHub and Turso, never from the brain's word:
+// check is made here, from GitHub and the notes DB, never from the brain's word:
 //   open · head `dispatch/*` (never deps/*, agent/chores*, a human branch) ·
 //   and dead: CONFLICTING, superseded by the task's newer PR, task done or
 //   cancelled, or parked by the PR shepherd with its fix budget spent.
@@ -44,7 +44,7 @@ async function view(gh: GhFn, p: PrCloseInput): Promise<PrView | Out> {
   }
 }
 
-/** Why this PR is dead (empty = alive). Turso errors propagate. */
+/** Why this PR is dead (empty = alive). Notes DB errors propagate. */
 export async function deadReasons(exec: ExecFn, pr: PrView): Promise<{ reasons: string[]; taskId: string | null }> {
   const reasons: string[] = []
   if (pr.mergeable === "CONFLICTING") reasons.push("conflicting")

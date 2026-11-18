@@ -33,11 +33,11 @@ const DEFAULT_FAMILY_MODELS = {
 /** How long a "PR ready" turn waits for its PR link before it reads completed. */
 const LINK_DEADLINE_MS = 20_000
 
-/** Track last synced Turso state per taskId so we don't spam identical SQL updates on every progress event. */
+/** Track last synced notes DB state per taskId so we don't spam identical SQL updates on every progress event. */
 const lastTursoSync = new Map<string, string>()
 
 /**
- * Keep the Turso `tasks` row's dispatch status in sync when a headless worker starts or finishes. Only a task bound by
+ * Keep the notes DB `tasks` row's dispatch status in sync when a headless worker starts or finishes. Only a task bound by
  * a verified handoff claim writes its row: a worker dispatched under a borrowed id never touches it. The PR url is not
  * written here: `dispatch_pr_url` is what pr-shepherd and merge-gate read origin through, so only the claim-checked
  * link (lib/worker-pr-link.ts) sets it.

@@ -2,11 +2,11 @@
 //
 // SessionScan walks a session transcript once (incrementally, fed by the same
 // chunked scan as BackgroundScan) and remembers what this session DID to
-// durable state: PRs it touched (`gh pr …`), Turso notes / tasks it wrote,
+// durable state: PRs it touched (`gh pr …`), notes / tasks it wrote,
 // tasks it completed, PRs it merged, and the last human prompts. From that:
 //   - closedSince(): did a unit of work just close (PR merged, task completed,
 //     or a short closing prompt like "nice" / "merci")? → the boundary trigger;
-//   - snapshot(): the raw pointers the wiring resolves against gh / Turso /
+//   - snapshot(): the raw pointers the wiring resolves against gh / Notes DB /
 //     STATE.md, then buildKeep() turns into a one-line `/compact keep: …`.
 // Pure; no I/O.
 
@@ -199,7 +199,7 @@ export function buildKeep(s: KeepState | null, max = KEEP_MAX): string {
   for (const n of s.notes.slice(0, 4)) {
     const name = [n.id, n.ref && `(${n.ref})`].filter(Boolean).join(" ")
     const tasks = n.openTasks.slice(0, 5).map((t) => oneLine(t, 80))
-    parts.push(`Turso note ${name}${tasks.length ? ` open tasks: ${tasks.join(" | ")}` : ""}`)
+    parts.push(`Note ${name}${tasks.length ? ` open tasks: ${tasks.join(" | ")}` : ""}`)
   }
   if (s.next.length) parts.push(`STATE.md next: ${s.next.slice(0, 5).map((l) => oneLine(l, 160)).join(" | ")}`)
   if (s.human.length) parts.push(`pending human steps: ${s.human.slice(0, 5).map((l) => oneLine(l, 100)).join(" | ")}`)

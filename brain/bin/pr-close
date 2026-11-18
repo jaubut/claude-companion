@@ -3,7 +3,7 @@
 #
 #   bin/pr-close --repo <owner/name> --pr <n> --reason "<why it is dead>"
 #
-# The server re-checks everything on GitHub and Turso: open, head dispatch/*
+# The server re-checks everything on GitHub and the notes DB: open, head dispatch/*
 # (403 not_agent_branch otherwise) and dead — conflicting, superseded, task
 # done/cancelled, or parked by the shepherd with its fix budget spent
 # (409 not_dead otherwise). Comments "Closed by the brain: <reason>", keeps

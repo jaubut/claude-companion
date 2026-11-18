@@ -8,7 +8,7 @@ import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 import { TursoUnreachable } from "../lib/turso"
 
 // orchestrator-one-queue P2 (write path) + P3 (#Body triage), route level.
-// Real Companion sqlite (isolated COMPANION_DB_PATH); "Turso" is an in-memory
+// Real Companion sqlite (isolated COMPANION_DB_PATH); "notes DB" is an in-memory
 // bun:sqlite with the production tasks / notes / agent_activity columns, behind
 // the QueryFn / ExecFn seams — so INSERT OR IGNORE, guarded UPDATEs and affected
 // row counts behave as on libSQL. Temp HOME holds the agent allowlist.
@@ -28,7 +28,7 @@ let channels: typeof import("../lib/orchestrator-channels")
 let orch: typeof import("../wiring/orchestrator")
 let sqlite: typeof import("../lib/orchestrator-db")["db"]
 
-// ── fake Turso ───────────────────────────────────────────────────────────────
+// ── fake notes DB ───────────────────────────────────────────────────────────────
 
 const turso = new Database(":memory:")
 turso.exec(`
@@ -151,10 +151,10 @@ beforeEach(() => {
   sqlite.exec("UPDATE orchestrator_channels SET note_id = NULL, note_title = NULL, note_ref = NULL")
 })
 
-// ── approve → Turso ──────────────────────────────────────────────────────────
+// ── approve → notes DB ──────────────────────────────────────────────────────────
 
 describe("POST /api/orchestrator/proposal/<id>/approve", () => {
-  test("files one pending Turso task (the dashboard stamp queues it); a replay returns the same id and inserts nothing", async () => {
+  test("files one pending notes DB task (the dashboard stamp queues it); a replay returns the same id and inserts nothing", async () => {
     const { handler, frames } = makeWiring()
     const ch = channels.createChannel("Approve A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
@@ -182,12 +182,12 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
     const again = await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/approve`)
     expect(again).toMatchObject({ status: 200, json: { ok: true, dispatchTaskId: id, replay: true } })
     expect(turso.query("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 })
-    expect(inserts).toBe(1) // the replay never reached Turso
+    expect(inserts).toBe(1) // the replay never reached the notes DB
     expect(activity(id)).toHaveLength(1)
   })
 
   // One work stream (docs/one-stream-plan.md): approve is a filer, never a runner.
-  test("approve → exactly 1 pending tasks row and 0 direct claims, {mode:\"live\"} included; passes the Turso queue guard", async () => {
+  test("approve → exactly 1 pending tasks row and 0 direct claims, {mode:\"live\"} included; passes the notes DB queue guard", async () => {
     turso.exec(`CREATE TABLE IF NOT EXISTS task_stamps (task_id TEXT, kind TEXT);
       CREATE TRIGGER guard_ins BEFORE INSERT ON tasks WHEN lower(trim(NEW.dispatch_status)) = 'queued'
         AND NOT EXISTS (SELECT 1 FROM task_stamps s WHERE s.task_id = NEW.id AND s.kind = 'release')
@@ -223,7 +223,7 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
     expect(tursoTask(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
   })
 
-  test("fileProposal twice, concurrently and after a Turso failure: still one row, same id", async () => {
+  test("fileProposal twice, concurrently and after a notes DB failure: still one row, same id", async () => {
     const { w } = makeWiring()
     const p = chat.createProposal("Do X", "", "why", "general", { noteId: "projects/dash" })
     down = true
@@ -253,7 +253,7 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
     expect(tursoTask(ok.json.dispatchTaskId)).toMatchObject({ note_id: "projects/pel", assignee: "agent:researcher" })
   })
 
-  test("reject stays local: no Turso row", async () => {
+  test("reject stays local: no notes DB row", async () => {
     const { handler } = makeWiring()
     const p = chat.createProposal("Nope", "", "why", "general", { noteId: "projects/dash" })
     expect((await call(handler, "POST", `/api/orchestrator/proposal/${p.taskId}/reject`)).json).toMatchObject({ ok: true, status: "rejected" })
@@ -264,7 +264,7 @@ describe("POST /api/orchestrator/proposal/<id>/approve", () => {
 
 // One work stream Q3: no auto-dispatch toggle. A brain proposal always waits for a tap.
 describe("brain proposals (no auto-dispatch)", () => {
-  test("a brain proposal files nothing to Turso; the card waits for a tap", async () => {
+  test("a brain proposal files nothing to the notes DB; the card waits for a tap", async () => {
     const { w } = makeWiring()
     const ch = channels.createChannel("Auto A")
     channels.setChannelNote(ch.id, { noteId: "projects/dash", title: "TLS Dashboard", ref: "PRJ-WCLS" })
@@ -350,7 +350,7 @@ describe("POST /api/orchestrator/task/<id>/cancel", () => {
     expect(tursoTask(id)).toMatchObject({ dispatch_status: "cancelled", done: 1 })
   })
 
-  test("completed → 409 conflict; unknown → 404; Turso down → 503", async () => {
+  test("completed → 409 conflict; unknown → 404; Notes DB down → 503", async () => {
     const { handler } = makeWiring()
     const id = tid()
     seedTask(id, { dispatch_status: "completed" })
@@ -479,7 +479,7 @@ describe("POST /api/orchestrator/dispatch", () => {
 // ── one pipeline list (one-stream slice D) ───────────────────────────────────
 
 describe("GET /api/orchestrator/pipeline", () => {
-  test("one state per task, read from Turso; approveUrl only on pending_approval; shepherd only on pr_open", async () => {
+  test("one state per task, read from the notes DB; approveUrl only on pending_approval; shepherd only on pr_open", async () => {
     const { handler } = makeWiring()
     const pr = (n: number) => `https://github.com/jaubut/dash/pull/${n}`
     const ids = {
@@ -515,7 +515,7 @@ describe("GET /api/orchestrator/pipeline", () => {
     expect(by.get(ids.merged)).toMatchObject({ prUrl: pr(2), shepherd: null })
   })
 
-  test("Turso down → 503 turso_unreachable", async () => {
+  test("Notes DB down → 503 turso_unreachable", async () => {
     const { handler } = makeWiring()
     down = true
     expect(await call(handler, "GET", "/api/orchestrator/pipeline")).toMatchObject({ status: 503, json: { ok: false, error: "turso_unreachable" } })

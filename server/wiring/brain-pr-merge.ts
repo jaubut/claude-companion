@@ -16,7 +16,7 @@ export { retiredPark } from "./brain-pr-park"
 
 // bin/pr-merge (POST /hooks/brain/pr-merge): the brain merges a ROUTINE agent
 // PR. The brain's word counts for nothing: every check is made here, from
-// GitHub and Turso, and any doubt refuses. In order:
+// GitHub and the notes DB, and any doubt refuses. In order:
 //   open
 //   merge gate (403 <stop>, 409 gate_unavailable / head_moved / base_moved, lib/merge-gate.ts):
 //     before draft and the branch check, so no head is exempt, sync/* included
@@ -27,13 +27,13 @@ export { retiredPark } from "./brain-pr-park"
 //     twice-approved agent PR). A tainted park or one that says `human merge`
 //     is never retired, including with a client-origin prefix.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
-//   not_approved (409): Claude AND Codex auto-review comments with VERDICT:
+//   not_approved (409): Claude AND Gemini auto-review comments with VERDICT:
 //     APPROVE stamped with the current head sha, from the PR's author (the
 //     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
 //   merge_cap (429): ≤ MERGE_CAP brain merges in 24 h
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
 //     TEMPORARY: while the flag file ~/.claude/state/claude-review-paused exists (read on every call), a
-//     `normal` tier PR needs the Codex APPROVE instead of Claude's (no CHANGES from either reviewer);
+//     `normal` tier PR needs the Gemini APPROVE instead of Claude's (no CHANGES from either reviewer);
 //     a client-origin one needs both.
 //   caller still there (409 client_gone): nobody would hear the answer, so nothing merges
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
@@ -45,6 +45,10 @@ const REASON_MAX = 300
 export const MERGE_CAP = 10
 
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
+// Pinned, from the first character: a quote (`>`) or code indent never counts as the heading.
+const GEMINI_HEADING = /^♊️? \*\*Gemini review\*\* \(agy\b/u
+// TODO(gemini-cutover): drop once no open PR is waiting on a Codex review; until then a Codex
+// verdict on the current head stands in for the second reviewer.
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
 /** Files the marker's low tier may cover here: a comment is writable by any agent, so the server checks. Narrower than the shepherd's rule: agent instructions (.md) need a review. */
 const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|md)$/
@@ -189,16 +193,16 @@ function notApproved(v: PrView, claudePaused = false, clientOrigin = false): str
   if (!login || !v.headRefOid) return ["no PR author or head sha"]
   const head = v.comments.filter((c) => c.author?.login === login && String(c.body ?? "").includes(reviewedSha(v.headRefOid))).map((c) => String(c.body))
   const claude = head.filter((b) => CLAUDE_HEADING.test(b))
-  const codex = head.filter((b) => CODEX_HEADING.test(b))
-  if ([...claude, ...codex].some((b) => /VERDICT:\s*CHANGES/i.test(b))) out.push("CHANGES on this head")
+  const second = head.filter((b) => GEMINI_HEADING.test(b) || CODEX_HEADING.test(b))
+  if ([...claude, ...second].some((b) => /VERDICT:\s*CHANGES/i.test(b))) out.push("CHANGES on this head")
   if (v.reviewDecision === "CHANGES_REQUESTED") out.push("GitHub review CHANGES_REQUESTED")
   // The shepherd's newest tier marker (claude-config PR 230); no marker counts as high.
   const tier = v.comments.filter((c) => c.author?.login === login).map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
   if (tier === "low" && v.files.length > 0 && v.files.length < LOW_FILE_LIMIT && v.files.every((f) => LOW_FILE.test(String(f.path)))) return out
-  // Paused: a normal tier needs Codex; a client-origin one keeps Claude too (both).
-  const codexOnly = claudePaused && tier === "normal" && !clientOrigin
-  if (!codexOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if ((tier !== "normal" || claudePaused) && !codex.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Codex APPROVE on this head")
+  // Paused: a normal tier needs the second reviewer (Gemini); a client-origin one keeps Claude too (both).
+  const secondOnly = claudePaused && tier === "normal" && !clientOrigin
+  if (!secondOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
+  if ((tier !== "normal" || claudePaused) && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Gemini (or Codex) APPROVE on this head")
   return out
 }
 

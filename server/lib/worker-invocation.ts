@@ -193,12 +193,14 @@ export function parseAgentEnv(text: string): Record<string, string> {
 
 /**
  * The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. `secrets` (Claude workers: the agent
- * secrets from tls-agent-env) are merged BEFORE the scrub, so a Turso / Companion / Phase key in them never gets through.
+ * secrets from tls-agent-env) are merged BEFORE the scrub, so a notes DB / Companion / Phase key in them never gets through.
  */
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string, secrets: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = scrubAgentEnv({ ...baseEnv, ...secrets })
   env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
   env.COMPANION_HEADLESS = "1"; env.COMPANION_ORIGIN = "worker"
+  // Nobody answers a prompt in a headless worker: an API-enable [y/N] from gcloud hung a gemini worker's background task for the whole turn.
+  env.CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
   return env
 }
 
@@ -229,6 +231,15 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
   if (/^(gemini[- ]|orchestrator)/.test(rawModel)) return "gemini"
   return "claude"
+}
+
+/** False when `model` names another family's model (a `claude-*` id handed to codex/agy or a codex id handed to agy). */
+export function modelFitsFamily(model: string, family: WorkerFamily): boolean {
+  const m = model.trim().toLowerCase()
+  const implied = /^(claude-|opus|sonnet|haiku|fable)/.test(m) ? "claude"
+    : /^(gpt-|o1\b|o3\b|o4\b|codex)/.test(m) ? "codex"
+    : /^(gemini|orchestrator)/.test(m) ? "gemini" : null
+  return implied === null || implied === family
 }
 
 /** Build the headless `claude -p` argv with `--` before positional prompt so `-...` prompts are never parsed as flags. */

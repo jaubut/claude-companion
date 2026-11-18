@@ -8,10 +8,10 @@ import type { GhFn } from "../lib/triage-pr"
 
 // Repo cards, route level (needs-you-repo-yes-no, 2026-10-15; moved out of
 // triage.test.ts for the file cap): the real wiring behind GET and
-// POST /api/orchestrator/repos/<repo>/(yes|no) — guarded Turso writes (the
+// POST /api/orchestrator/repos/<repo>/(yes|no) — guarded notes DB writes (the
 // pr:unpark row), the repo runner with its live seams. Same harness shape as
 // triage.test.ts: isolated COMPANION_DB_PATH (shared across route test files
-// by Bun's module cache — own channel, own ids), "Turso" = in-memory
+// by Bun's module cache — own channel, own ids), "notes DB" = in-memory
 // bun:sqlite, a fake gh, the model off (deterministic fallback cards).
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-triage-repos-")), "companion.db")
@@ -35,7 +35,7 @@ let invLib: typeof import("../lib/body-investigate")
 let sqlite: typeof import("../lib/orchestrator-db")["db"]
 let channelId: string
 
-// ── fake Turso ───────────────────────────────────────────────────────────────
+// ── fake notes DB ───────────────────────────────────────────────────────────────
 
 const turso = new Database(":memory:")
 turso.exec(`

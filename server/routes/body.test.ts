@@ -8,7 +8,7 @@ import type { TokenRange, TokensResponse, TokensSnapshot } from "../lib/body-tok
 import { type QueryFn, TursoUnreachable } from "../lib/turso"
 
 // Route level: real orchestrator store (isolated sqlite), fake push sender,
-// captured WS frames, fake Turso through the QueryFn seam. The 401 lives in
+// captured WS frames, fake notes DB through the QueryFn seam. The 401 lives in
 // the server's /api/* gate.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-")), "test.db")
@@ -205,7 +205,7 @@ describe("GET /api/body + /api/body/component/:id", () => {
     expect((await call(handler, "GET", "/api/body/component/%E0%A4%A"))?.status).toBe(400)
   })
 
-  test("Turso down → 503 turso_unreachable", async () => {
+  test("Notes DB down → 503 turso_unreachable", async () => {
     const down: QueryFn = async () => { throw new TursoUnreachable("network") }
     const handler = routes.createBodyHandler({ query: down, snapshot: { get: async () => { throw new TursoUnreachable("network") } } })
     for (const path of ["/api/body", "/api/body/component/a:b"]) {
@@ -239,7 +239,7 @@ describe("GET /api/body/tokens", () => {
     expect(seen).toEqual([["30d", { fresh: true }], ["today", { fresh: false }], ["7d", { fresh: false }]])
   })
 
-  test("bad range → 400; Turso down → 503; POST → null", async () => {
+  test("bad range → 400; Notes DB down → 503; POST → null", async () => {
     const tokens: TokensSnapshot = { get: async () => { throw new TursoUnreachable("network") } }
     const handler = routes.createBodyHandler({ tokens, query: async () => [] })
     const bad = await call(handler, "GET", "/api/body/tokens?range=1y")
@@ -273,7 +273,7 @@ describe("brain digest wiring", () => {
     expect(contextLines("Body monitor: 1 dead")[1]).toBe("Body monitor: 1 dead")
   })
 
-  test("unreachable Turso becomes a one-line note, never a throw", async () => {
+  test("unreachable notes DB becomes a one-line note, never a throw", async () => {
     const bad: BodySnapshot = { get: async () => { throw new TursoUnreachable("network") } }
     expect(await wiring.bodyDigestFor("body", "system status", bad)).toStartWith("Body monitor: unreachable")
   })

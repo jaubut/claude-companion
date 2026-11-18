@@ -7,15 +7,15 @@ import type { QueryFn } from "./turso"
 // up business or personal with no confidence gate; Jeremie approves per
 // quarter on the dashboard. One sweep, single-flight, on a 10-min tick and when
 // an upload went in unclassified:
-//   1. the Turso backlog (unclassified, last 400 days, oldest first, 50 per
+//   1. the notes DB backlog (unclassified, last 400 days, oldest first, 50 per
 //      sweep, one at a time — each PATCH re-prices the year) → classify →
 //      service.autofile (machine PATCH). An `unclassified` answer is retried after
 //      1 h; 409 already_classified / 423 quarter_locked are skipped for good.
 //   2. the human sync: trips Jeremie flipped on the dashboard since the
 //      watermark → service.recordHuman (idempotent), only for trips this server
 //      classified (they have a log row).
-// State is in memory: a restart re-reads Turso and re-syncs the last 30 days.
-// Guards: a Turso read failure (e.g. no `approval_id` column before the
+// State is in memory: a restart re-reads the notes DB and re-syncs the last 30 days.
+// Guards: a notes DB read failure (e.g. no `approval_id` column before the
 // dashboard schema) pauses the sweep with one log line; a PATCH reply without
 // `classifiedBy` means an old dashboard that would record the machine as
 // human, so the sweep stops until restart.
@@ -100,7 +100,7 @@ export function createTripAutofile(deps: TripAutofileDeps) {
       if (!refused) await syncHuman(stats)
     } catch (e) {
       const why = (e as Error)?.message ?? String(e)
-      if (paused === null) log(`[trips] autofile paused: Turso read failed (${why}); the dashboard's approval_id column may not exist yet`)
+      if (paused === null) log(`[trips] autofile paused: Notes DB read failed (${why}); the dashboard's approval_id column may not exist yet`)
       paused = why
       return stats
     }

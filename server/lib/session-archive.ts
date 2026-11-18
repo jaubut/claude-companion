@@ -14,18 +14,17 @@ export interface ArchivePolicy { idleMs: number; doneMs: number }
 
 const DEFAULT_POLICY: ArchivePolicy = { idleMs: 24 * HOUR_MS, doneMs: HOUR_MS }
 
-/** When a worker card's task finished, or null while it runs (or for a non-worker row). */
+/** When a worker task finished, null while it runs, 0 for a task id the supervisor does not know. */
 export type WorkerDoneAt = (taskId: string) => number | null
 
 /** Why `s` should leave the drawer now, or null to keep it. */
 export function archiveReason(s: Session, now: number, policy: ArchivePolicy, workerDoneAt: WorkerDoneAt): string | null {
   const worker = s.herdrPane?.startsWith(WORKER_PANE) ?? false
-  // brain, Brain · Boost, repo leads: orchestrator-owned and pinned
-  if (s.taskId && !worker) return null
-  if (worker) {
-    const doneAt = workerDoneAt(s.taskId || s.herdrPane!.slice(WORKER_PANE.length))
-    return doneAt !== null && now - doneAt >= policy.doneMs ? "done" : null
-  }
+  const doneAt = s.taskId || worker ? workerDoneAt(s.taskId || s.herdrPane!.slice(WORKER_PANE.length)) : 0
+  // brain, Brain · Boost, repo leads: orchestrator-owned and pinned (no worker task behind them, doneAt 0)
+  if (s.taskId && !worker && doneAt === 0) return null
+  // a worker card, or a worker's agy conversation the agy poll re-recorded (it keeps the sticky taskId)
+  if (worker || s.taskId) return doneAt !== null && now - doneAt >= policy.doneMs ? "done" : null
   if (s.agentStatus === "busy" || s.waitingSince > 0) return null
   // never one Jeremie started in the last 24 h
   if (now - s.firstSeenAt < 24 * HOUR_MS) return null

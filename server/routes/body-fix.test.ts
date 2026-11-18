@@ -6,10 +6,10 @@ import { join } from "node:path"
 import type { ExecFn, QueryFn, Row, SqlArg } from "../lib/turso"
 
 // Mac body fixes in the one work stream (docs/one-stream-plan.md, Q1): approving
-// a Mac card files ONE `pending` Turso row tagged requires_host=mac, so only the
+// a Mac card files ONE `pending` notes DB row tagged requires_host=mac, so only the
 // Mac's dispatch-run claims it once Jeremie stamps it on the dashboard. No peer
 // forward, no live claim. Real Companion sqlite (isolated COMPANION_DB_PATH),
-// "Turso" = in-memory bun:sqlite behind the QueryFn / ExecFn seams.
+// "notes DB" = in-memory bun:sqlite behind the QueryFn / ExecFn seams.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-body-fix-")), "test.db")
 

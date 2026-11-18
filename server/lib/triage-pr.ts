@@ -230,7 +230,7 @@ async function approveOrMerge(deps: MergeDeps, t: PrTarget): Promise<ExecOutcome
   } catch {
     // A throw here would reach iOS as a 503, which it queues and re-sends with the card hidden: the re-send would gate
     // and land whatever the head is by then. A 409 is final, and iOS reads this code as "check GitHub".
-    return { kind: "error", status: 409, error: "merge_unverified", extra: { detail: "gh or Turso failed after the gate" } }
+    return { kind: "error", status: 409, error: "merge_unverified", extra: { detail: "gh or notes DB failed after the gate" } }
   }
 }
 

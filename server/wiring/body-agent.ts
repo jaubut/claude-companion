@@ -19,11 +19,11 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 import { fileProposal } from "./orchestrator"
 
 // POST /api/body/component/:id/agent — "Get an agent on it" (lib/body-agent.ts).
-// The tap files ONE Turso agent task (a #Body proposal row filed at once),
+// The tap files ONE notes DB agent task (a #Body proposal row filed at once),
 // tagged requires_host=<owning host> so only that host's dispatch-run claims
 // it. The tap is Jeremie's own approval (2026-10-25): origin `jeremie`, so it
 // goes straight to `queued`. It asks for dispatch-run's herdr runner, so
-// the run is a session Jeremie can watch in Companion, not a headless -p. Only a Turso without the origin column leaves it
+// the run is a session Jeremie can watch in Companion, not a headless -p. Only a notes DB without the origin column leaves it
 // `pending` for the dashboard stamp (docs/one-stream-plan.md).
 // One open run per component (409 already_running), a component in state ok
 // needs an instruction, every start logs agent_activity `body:agent`.
@@ -32,7 +32,7 @@ export interface BodyAgentDeps {
   store: BodyAgentStore
   localHost: () => BodyHost
   now: () => number
-  /** null = no such component; throws when Turso is down. */
+  /** null = no such component; throws when notes DB is down. */
   detail: (id: string, dispatch: DispatchWiring) => Promise<BodyComponentDetail | null>
   investigation: (id: string) => InvestigationRecord | null
   fixCard: (taskId: string) => FixCard | null
@@ -69,7 +69,7 @@ const turso = (e: unknown): Response => {
   return err(503, "turso_unreachable")
 }
 
-/** Open = the last run's Turso row is still pending / queued / running / blocked. */
+/** Open = the last run's notes DB row is still pending / queued / running / blocked. */
 async function openRun(componentId: string, dispatch: DispatchWiring): Promise<Response | null> {
   const run = deps.store.latest(componentId)
   if (!run) return null

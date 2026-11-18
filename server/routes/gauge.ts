@@ -1,5 +1,6 @@
 import { checkBearer } from "../lib/auth"
 import { parseModReport } from "../lib/gauge"
+import { subscriptions } from "../lib/subscriptions"
 import { isLoopback, peerOf } from "../lib/vault-guard"
 import { gauge } from "../wiring/gauge"
 
@@ -11,6 +12,8 @@ import { gauge } from "../wiring/gauge"
 //        upstream — each host gauges its own sessions.
 //   GET  /api/gauge  → { ok, account | null, sessions: [{ sessionKey, ctxTokens, ctxWindow, ctxPercent, source, at }] }
 //        Bearer-gated like every /api/*. Live updates ride the `gauge` WS frame.
+//   GET  /api/subscriptions → { ok, subscriptions: [{ provider, plan, windows, status, updatedAt }] }
+//        Claude / ChatGPT / Gemini plan usage for the widget (lib/subscriptions.ts, docs/subscriptions-api.md).
 // The Stop-hook transcript fallback and the session-end drop live in routes/hooks.ts.
 export async function handleGaugeRoute(req: Request, url: URL): Promise<Response | null> {
   if (url.pathname === "/hooks/gauge" && req.method === "POST") {
@@ -25,6 +28,9 @@ export async function handleGaugeRoute(req: Request, url: URL): Promise<Response
   }
   if (url.pathname === "/api/gauge" && req.method === "GET") {
     return Response.json(gauge.snapshot())
+  }
+  if (url.pathname === "/api/subscriptions" && req.method === "GET") {
+    return Response.json({ ok: true, subscriptions: subscriptions(gauge.snapshot().account) })
   }
   return null
 }

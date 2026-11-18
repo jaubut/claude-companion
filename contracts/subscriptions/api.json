@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "subscriptions": [
+    {
+      "provider": "claude",
+      "plan": "Max 20x",
+      "windows": [
+        { "label": "5h", "usedPct": 12, "resetsAt": "2026-11-17T14:00:00Z" },
+        { "label": "weekly", "usedPct": 64, "resetsAt": "2026-11-20T13:00:00Z" }
+      ],
+      "status": "ok",
+      "updatedAt": "2026-11-17T10:29:00.000Z"
+    },
+    {
+      "provider": "chatgpt",
+      "plan": "Pro Lite",
+      "windows": [
+        { "label": "weekly", "usedPct": 55, "resetsAt": "2026-11-18T15:30:13.000Z" }
+      ],
+      "status": "ok",
+      "updatedAt": "2026-11-17T10:20:26.343Z"
+    },
+    {
+      "provider": "gemini",
+      "plan": null,
+      "windows": [],
+      "status": "unknown",
+      "updatedAt": null
+    }
+  ]
+}

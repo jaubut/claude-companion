@@ -31,7 +31,7 @@ export interface RepoRunnerDeps {
   revise: (src: SourceItem, title: string, prompt: string, why: string) => Promise<string | null>
   /** One Opus call; null = no answer. */
   rework: (prompt: string) => Promise<string | null>
-  /** Throws when Turso is unreachable (checked before any row is written). */
+  /** Throws when notes DB is unreachable (checked before any row is written). */
   probe: () => Promise<void>
   /** One orchestrator turn per run (#General). */
   turn: (text: string) => void

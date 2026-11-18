@@ -56,7 +56,7 @@ chat — one line, ≤ 1500 chars:
 - `PRs:` every PR this session touched with `gh pr <verb> <n|url>` (open first,
   ≤ 6), state read live from `gh pr view <url> --json state` when the repo is
   known, else the last state seen in the transcript;
-- `Turso note <id> (<ref_code>) open tasks: …` for the notes / tasks this
+- `Note <id> (<ref_code>) open tasks: …` for the notes / tasks this
   session wrote (`UPDATE|INSERT … notes|tasks`, `/api/note|task`,
   `file-dev-task.sh`, `dispatch.sh`; ≤ 4 notes, ≤ 5 tasks each);
 - `STATE.md next:` lines of the session cwd's STATE.md (cwd up to the git

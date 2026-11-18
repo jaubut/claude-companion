@@ -1,9 +1,9 @@
 import { type QueryFn, type Row, TursoUnreachable, tursoQuery } from "../lib/turso"
 
 // GET /api/goals — read-only proxy of active projects + their next open tasks
-// from Turso (Phase 19 step 6, RES-B9CL). The phone never holds the Turso
+// from the notes DB (Phase 19 step 6, RES-B9CL). The phone never holds the notes DB
 // token; auth is the `/api/*` bearer gate in companion-server.ts. Responses
-// are cached in memory for 60 s per server; `?fresh=1` bypasses. Any Turso
+// are cached in memory for 60 s per server; `?fresh=1` bypasses. Any notes DB
 // failure maps to 503 `{ error: "turso_unreachable" }` — never a stack, never
 // the SQL. Never log the URL: a `?token=` query would land in the log.
 

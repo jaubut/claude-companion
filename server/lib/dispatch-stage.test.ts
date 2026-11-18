@@ -5,7 +5,7 @@ import { type DispatchTask, fromRow, phaseOf, seenKey } from "./dispatch-tasks"
 import type { QueryFn, Row } from "./turso"
 
 // Pipeline stage derivation (brain-tab-queue-graph F1): pure rules, then the
-// poller end to end against a fake Turso carrying tasks + shepherd ledger rows.
+// poller end to end against a fake notes DB carrying tasks + shepherd ledger rows.
 
 const PR = "https://github.com/jaubut/dash/pull/42"
 const row = (over: Row = {}): Row => ({
