@@ -6764,7 +6764,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 602,
+          "lines": 604,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -6880,7 +6880,7 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 107,
+          "lines": 129,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",

@@ -28,15 +28,17 @@ function sameRealPath(a: string, b: string): boolean {
   try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
 }
 
-/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's, else created. */
+/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's (the task's own
+ *  on whatever branch it is checked out; that branch is returned), else created on `prevBranch` (the branch a closed
+ *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. */
 export async function ensureWorktree(
   sh: ShFn, home: string, others: Iterable<{ taskId: string; repo: string; worktree: string }>,
-  repoDir: string, repo: string, taskId: string, ownedByTask: boolean,
+  repoDir: string, repo: string, taskId: string, ownedByTask: boolean, prevBranch?: string,
 ): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
   clearStaleGitConfigLock(repoDir)
   const wtRoot = join(home, "apps", "wt", repo)
   const worktree = join(wtRoot, taskId)
-  const branch = `dispatch/${taskId}`
+  let branch = `dispatch/${taskId}`
   for (const other of others) {
     if ((other.taskId !== taskId || other.repo !== repo) && other.worktree.toLowerCase() === worktree.toLowerCase()) {
       return { ok: false, error: `worktree collision with ${other.repo}/${other.taskId}` }
@@ -51,17 +53,27 @@ export async function ensureWorktree(
     const curBranch = await sh("git", ["-C", worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: worktree, timeoutMs: 10_000 })
     if (!curBranch.ok) return { ok: false, error: "existing worktree is not on a branch" }
     const bOut = curBranch.out.trim()
-    if (bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
-    return { ok: true, worktree, branch }
+    // Not this task's worktree (fresh dispatch): another branch there is someone else's work, refused.
+    if (!ownedByTask && bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
+    // The task's own on another branch (a PR's branch the worker was asked to update, a stacked dispatch/<id>-c): reused as-is, never switched, stashed or reset.
+    return { ok: true, worktree, branch: bOut && bOut !== "origin/main" ? bOut : branch }
   }
   mkdirSync(wtRoot, { recursive: true })
   const sym = await sh("git", ["-C", repoDir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { cwd: repoDir, timeoutMs: 15_000 })
   const baseRef = sym.ok && sym.out.trim() ? sym.out.trim() : "origin/main"
   const baseBranch = baseRef.replace(/^origin\//, "")
   await sh("git", ["-C", repoDir, "fetch", "-q", "origin", baseBranch], { cwd: repoDir, timeoutMs: 30_000 })
-  const hasBranch = (await sh("git", ["-C", repoDir, "show-ref", "-q", "--verify", `refs/heads/${branch}`], { cwd: repoDir, timeoutMs: 10_000 })).ok
+  const local = async (b: string) => (await sh("git", ["-C", repoDir, "show-ref", "-q", "--verify", `refs/heads/${b}`], { cwd: repoDir, timeoutMs: 10_000 })).ok
   // A closed worktree's branch was deleted locally, not on origin: a follow-up turn picks up its pushed commits, never main.
-  const pushed = !hasBranch && (await sh("git", ["-C", repoDir, "fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: repoDir, timeoutMs: 30_000 })).ok
+  const remote = async (b: string) => (await sh("git", ["-C", repoDir, "fetch", "-q", "origin", `+refs/heads/${b}:refs/remotes/origin/${b}`], { cwd: repoDir, timeoutMs: 30_000 })).ok
+  // The worker had switched or stacked before the worktree closed: resume on that branch, not a stale dispatch/<taskId>.
+  // Never the base branch (checked out in repoDir; the worker's commits there are on origin already).
+  const candidates = prevBranch && prevBranch !== branch && prevBranch !== baseBranch ? [prevBranch, branch] : [branch]
+  let hasBranch = false; let pushed = false
+  for (const b of candidates) {
+    branch = b; hasBranch = await local(b); pushed = !hasBranch && await remote(b)
+    if (hasBranch || pushed) break
+  }
   const wtRes = hasBranch
     ? await sh("git", ["-C", repoDir, "worktree", "add", "-q", worktree, branch], { cwd: repoDir, timeoutMs: 30_000 })
     : await sh("git", ["-C", repoDir, "worktree", "add", "-q", "-b", branch, worktree, pushed ? `origin/${branch}` : baseRef], { cwd: repoDir, timeoutMs: 30_000 })
@@ -77,7 +89,9 @@ export async function worktreeDirtyPaths(sh: ShFn, worktree: string): Promise<st
 }
 
 /** Removes a finished task's worktree and local branch only when nothing is lost: clean (ignored files
- *  included), and HEAD on a remote branch (or the head of its merged / closed PR). Never a dirty one; the note says why it was kept. */
+ *  included), and HEAD on a remote branch (or the head of its merged / closed PR). Never a dirty one; the note says why it was kept.
+ *  Records the branch the worktree was on in `t.branch`, so a resume recreates it there. Only dispatch/* branches are
+ *  ever deleted: repoDir is the host's primary checkout, a PR's or the user's branch there is not the task's to drop. */
 export async function closeTaskWorktree(
   sh: ShFn, t: { worktree: string; repoDir: string; branch: string }, prHead: string | null = null,
 ): Promise<{ removed: boolean; note?: string }> {
@@ -86,13 +100,21 @@ export async function closeTaskWorktree(
   const dirty = await worktreeDirtyPaths(sh, t.worktree)
   if (dirty === null) return { removed: false, note: `worktree kept: git status failed in ${t.worktree}` }
   if (dirty.length) return { removed: false, note: `worktree kept: ${dirty.length} uncommitted or ignored file(s) in ${t.worktree}` }
+  // The branch the worktree is on now (a worker may have switched or stacked), not the one recorded at dispatch.
+  const cur = await sh("git", ["-C", t.worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
+  const branch = cur.ok && cur.out.trim() ? cur.out.trim() : t.branch
   await sh("git", ["-C", t.worktree, "fetch", "-q", "origin"], { cwd: t.worktree, timeoutMs: 20_000 })
   const pushed = await sh("git", ["-C", t.worktree, "branch", "-r", "--contains", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })
   const head = prHead ? (await sh("git", ["-C", t.worktree, "rev-parse", "HEAD"], { cwd: t.worktree, timeoutMs: 10_000 })).out.trim() : ""
   if (!(pushed.ok && pushed.out.trim()) && !(prHead && head === prHead)) return { removed: false, note: `worktree kept: HEAD is not pushed to any remote branch (${t.worktree})` }
   const rm = await sh("git", ["-C", t.repoDir, "worktree", "remove", t.worktree], { cwd: t.repoDir, timeoutMs: 20_000 })
   if (!rm.ok) return { removed: false, note: `worktree kept: ${(rm.err || rm.out).trim().slice(0, 160)}` }
-  await sh("git", ["-C", t.repoDir, "branch", "-D", t.branch], { cwd: t.repoDir, timeoutMs: 10_000 })
+  const stale = t.branch !== branch && t.branch.startsWith("dispatch/") ? t.branch : null
+  t.branch = branch
+  if (branch.startsWith("dispatch/")) await sh("git", ["-C", t.repoDir, "branch", "-D", "--", branch], { cwd: t.repoDir, timeoutMs: 10_000 })
+  // The dispatch branch the worker switched away from: dropped once its commits are on a remote branch, never a stale base for a resume.
+  const staleOnRemote = stale && (await sh("git", ["-C", t.repoDir, "branch", "-r", "--contains", `refs/heads/${stale}`], { cwd: t.repoDir, timeoutMs: 10_000 })).out.trim()
+  if (stale && staleOnRemote) await sh("git", ["-C", t.repoDir, "branch", "-D", "--", stale], { cwd: t.repoDir, timeoutMs: 10_000 })
   return { removed: true }
 }
 

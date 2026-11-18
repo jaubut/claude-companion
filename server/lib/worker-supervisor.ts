@@ -272,9 +272,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(deps.sh, deps.home, repo)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
-        const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing)
+        const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing, existing?.branch)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
+        const otherBranch = existing && wt.branch !== `dispatch/${taskId}` ? wt.branch : null
         const familyChanged = !!existing && existing.family !== family
         // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
         // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
@@ -324,7 +325,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
 
         clearTimers(task)
-        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim
+        task.prLinkBound = prLinkBound; task.handoffClaim = handoffClaim; task.branch = wt.branch
         task.title = title; task.family = family; task.model = effectiveModel; task.modelPinned = !!explicitModel; task.sessionId = sessionId
         if (familyChanged) task.sessionStarted = false
         task.status = "running"; task.turnCount = myTurn; task.activeTurn = myTurn; task.jobId = myJobId
@@ -336,7 +337,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         deps.reportJob({ event: "task", id: myJobId, title: task.title, builder: task.builder, step: task.step, pct: task.pct, progress: progressOf(task) })
 
         const dCtx = deps.designContext?.().trim() ?? ""
-        const effectivePrompt = prompt.startsWith("/") ? prompt : `${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
+        const branchNote = otherBranch ? `[Resumed worktree is on branch ${otherBranch}, not dispatch/${taskId}: keep working on it, uncommitted work is intact.]\n\n` : ""
+        const effectivePrompt = prompt.startsWith("/") ? prompt : `${branchNote}${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let lastOutputAt = deps.now()
@@ -429,7 +431,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
                   outbox.enqueue(snap, turns, [lingerNote, keptNote].filter(Boolean).join("\n") || null)
                   task.receiptDue = false; savePersistedTasks()
                   // Only the removal holds the reservation: a follow-up dispatched meanwhile keeps the worktree.
-                  if (dirty && !dirty.length) await withReservation(task, () => closeTaskWorktree(deps.sh, task))
+                  if (dirty && !dirty.length && (await withReservation(task, () => closeTaskWorktree(deps.sh, task)))?.removed) savePersistedTasks()
                 }).catch(() => { if (task.receiptDue) { outbox.enqueue(snap, turns, lingerNote); task.receiptDue = false; savePersistedTasks() } })
               }
               const complete = (link: string | null) => {
@@ -548,7 +550,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const exited = await reconcileSurvivingProcess(t)
         if (!exited) return { ok: true, task: toSnapshot(t), worktreeRemoved: false, note: "worktree kept: worker process has not exited yet" }
 
-        const { removed: worktreeRemoved, note } = opts.closeWorktree ? await closeTaskWorktree(deps.sh, t) : { removed: false, note: undefined }
+        const { removed: worktreeRemoved, note } = opts.closeWorktree ? await closeTaskWorktree(deps.sh, t).finally(savePersistedTasks) : { removed: false, note: undefined }
         return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
       } finally {
         inFlightDispatches.delete(id); inFlightWorktrees.delete(wtKey)
@@ -584,7 +586,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const pr = t.prUrl ? await finishedPrHead(deps.sh, t.prUrl, t.repoDir).catch(() => null) : null
         if (t.prUrl && !pr) continue
         const out = await withReservation(t, async () => (await closeTaskWorktree(deps.sh, t, pr?.head ?? null)).removed).catch(() => false)
-        if (out) closed.push(t.taskId)
+        if (out) { closed.push(t.taskId); savePersistedTasks() }
       }
       return closed
     },

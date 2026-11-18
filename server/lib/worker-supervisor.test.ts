@@ -1287,6 +1287,39 @@ sleep 30 & wait $!
     }
   })
 
+  test("resuming a task whose worktree is on another branch is accepted: conversation resumed, branch recorded, prompt names it", async () => {
+    const home = join(tmpdir(), `worker-sup-branch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const gitCalls: string[][] = []
+    let onBranch = "dispatch/task-b"
+    const sup = createWorkerSupervisor({
+      host: "mac", home, now: () => 1700000000000, uuid: () => "cccc1111-2222-4333-8444-555555555555", trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        gitCalls.push(args)
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: args.includes("symbolic-ref") && args.includes("HEAD") ? `${onBranch}\n` : "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill() {} } },
+    })
+    try {
+      await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Start" })
+      spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }))
+      spawned[0]!.onExit(0, null)
+      onBranch = "dispatch/task-b-c"
+      gitCalls.length = 0
+      const r = await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Continue" })
+      expect(r.ok).toBe(true)
+      expect(spawned[1]!.args).toContain("--resume")
+      expect(spawned[1]!.args.at(-1)).toContain("worktree is on branch dispatch/task-b-c, not dispatch/task-b")
+      expect(sup.getTask("task-b")!.branch).toBe("dispatch/task-b-c")
+      // Nothing mutating ran against the worktree: no checkout, switch, stash, reset or worktree add/remove.
+      expect(gitCalls.filter((a) => a.some((x) => ["checkout", "switch", "stash", "reset", "add", "remove", "clean"].includes(x)))).toEqual([])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("a background-notification turn after the report never replaces it; every turn stays in full history (fd0fea0d)", async () => {
     const home = join(tmpdir(), `worker-sup-turns-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
