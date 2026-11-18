@@ -178,6 +178,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-stuck-events.ts` | 136 | lib | 4 |  |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/transcript-backfill.ts` | 131 | lib | 6 |  |
+| `lib/worker-worktree.ts` | 129 | lib | 6 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
@@ -192,7 +193,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
-| `lib/worker-worktree.ts` | 111 | lib | 6 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |

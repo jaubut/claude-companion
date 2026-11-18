@@ -89,6 +89,59 @@ test("a worktree on another branch is reused as-is on resume: its branch is retu
     mkdirSync(join(home, "apps", "wt", "repo", "plain"), { recursive: true })
     const plain = await ensureWorktree(realSh, home, [], repoDir, "repo", "plain", true)
     expect(plain.ok).toBe(false)
+
+    // A fresh dispatch (not the task's own) never adopts a worktree on an unrelated branch.
+    expect(await ensureWorktree(realSh, home, [], repoDir, "repo", "t2", false)).toEqual({ ok: false, error: "existing worktree branch mismatch: dispatch/t2-c" })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// Real git: closing a worktree the worker had switched off dispatch/<id> records that branch, and the resume recreates it there.
+test("a closed worktree on a stacked branch resumes on it; the stale dispatch/<id> is dropped; a non-dispatch branch is never deleted", async () => {
+  const home = mkdtempSync(join(tmpdir(), "worker-wt-close-"))
+  const git = async (cwd: string, ...args: string[]) => {
+    const r = await realSh("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd, timeoutMs: 20_000 })
+    if (!r.ok) throw new Error(`git ${args.join(" ")}: ${r.err}`)
+    return r.out.trim()
+  }
+  const commitPush = async (cwd: string, file: string) => {
+    writeFileSync(join(cwd, file), `${file}\n`)
+    await git(cwd, "add", file)
+    await git(cwd, "commit", "-q", "-m", file)
+    await git(cwd, "push", "-q", "origin", "HEAD")
+  }
+  try {
+    const origin = join(home, "origin.git")
+    const repoDir = join(home, "repo")
+    await git(home, "init", "-q", "--bare", "-b", "main", origin)
+    await git(home, "clone", "-q", origin, repoDir)
+    await commitPush(repoDir, "a.txt")
+
+    const wt = await ensureWorktree(realSh, home, [], repoDir, "repo", "t3", false)
+    if (!wt.ok) throw new Error(wt.error)
+    await git(wt.worktree, "push", "-q", "origin", wt.branch)
+    await git(wt.worktree, "checkout", "-q", "-b", "dispatch/t3-c")
+    await commitPush(wt.worktree, "stacked.txt")
+
+    const t = { worktree: wt.worktree, repoDir, branch: wt.branch }
+    expect(await closeTaskWorktree(realSh, t)).toEqual({ removed: true })
+    expect(t.branch).toBe("dispatch/t3-c")
+    expect(await git(repoDir, "branch", "--list", "dispatch/*")).toBe("")
+
+    const again = await ensureWorktree(realSh, home, [], repoDir, "repo", "t3", true, t.branch)
+    if (!again.ok) throw new Error(again.error)
+    expect(again.branch).toBe("dispatch/t3-c")
+    expect(existsSync(join(again.worktree, "stacked.txt"))).toBe(true)
+
+    await git(again.worktree, "checkout", "-q", "-b", "feature/pr-branch")
+    await commitPush(again.worktree, "pr.txt")
+    expect(await closeTaskWorktree(realSh, t)).toEqual({ removed: true })
+    expect(t.branch).toBe("feature/pr-branch")
+    expect(await git(repoDir, "branch", "--list", "feature/pr-branch")).toContain("feature/pr-branch")
+
+    const third = await ensureWorktree(realSh, home, [], repoDir, "repo", "t3", true, t.branch)
+    expect(third).toEqual({ ok: true, worktree: again.worktree, branch: "feature/pr-branch" })
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

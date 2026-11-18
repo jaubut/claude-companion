@@ -6880,7 +6880,7 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 111,
+          "lines": 129,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",
