@@ -18,8 +18,8 @@ import {
 } from "./worker-supervisor"
 import { WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { workerReceipt } from "./worker-pr-link"
-import { listSessions } from "./sessions"
-import { recordWorkerSession } from "./worker-session"
+import { listSessions, removeSessionByKey } from "./sessions"
+import { recordWorkerSession, workerOwnsConvo } from "./worker-session"
 
 describe("parseStreamJsonLine", () => {
   test("parses assistant tool_use, text with PR URL, result, and ignores malformed JSON", () => {
@@ -1319,8 +1319,15 @@ sleep 30
       await sup.dispatchTask({ taskId: ids[2]!, repo: "claude-companion", prompt: "build", family: "claude" })
       fakes[1]!.onStdoutLine(JSON.stringify({ type: "system", subtype: "init", session_id: "placeholder-3" }))
       expect(live(ids[2]!)).toEqual(["placeholder-3"])
+
+      // Discovery / the agy poller must not re-card a worker's conversation as headless:agy, even a retired id.
+      expect(workerOwnsConvo("agy-real-1", "/elsewhere", listSessions(), "/nohome")).toBe(true)
+      expect(workerOwnsConvo("placeholder-1", sup.getTask(ids[0]!)!.worktree, listSessions(), "/nohome")).toBe(true)
+      expect(workerOwnsConvo("pruned", join(home, "apps", "wt", "claude-companion", "gone"), [], home)).toBe(true)
+      expect(workerOwnsConvo("mine", "/elsewhere", listSessions(), "/nohome")).toBe(false)
     } finally {
       await sup.interruptTask(ids[0]!)
+      for (const s of listSessions()) if (ids.includes(s.taskId)) removeSessionByKey(s.key)
       rmSync(home, { recursive: true, force: true })
     }
   })

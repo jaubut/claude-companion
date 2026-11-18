@@ -17,6 +17,7 @@ import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
 import { validHerdrPane } from "./herdr"
+import { workerOwnsConvo } from "./worker-session"
 import {
   type AgyConversationSummary,
   AGY_BRAIN_PANE,
@@ -568,7 +569,9 @@ async function discoverOnce(): Promise<{ registered: number }> {
     if (liveAgyIds.has(c.id) || (brainSid && c.id === brainSid)) continue
     // Only register headlessly if no tty-backed or pinned brain session already owns this sessionId
     const { listSessions } = await import("./sessions")
-    if (listSessions().some((s) => s.sessionId === c.id && (!!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE || s.herdrPane?.startsWith("headless:worker:")))) continue
+    const sessions = listSessions()
+    if (workerOwnsConvo(c.id, c.cwd, sessions)) continue
+    if (sessions.some((s) => s.sessionId === c.id && (!!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE))) continue
     recordSession({
       agent: "gemini",
       cwd: c.cwd,

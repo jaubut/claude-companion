@@ -1,5 +1,17 @@
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "./sessions"
 import type { SupervisedTaskSnapshot } from "./worker-supervisor"
+
+/**
+ * Whether a recent agy conversation belongs to a supervised worker, so discovery / the agy poller must not card it as
+ * `headless:agy:<id>`. A worker's cwd is its own worktree under ~/apps/wt, which also covers a conversation id the
+ * worker already retired (placeholder, family switch, pruned finished task).
+ */
+export function workerOwnsConvo(id: string, cwd: string, sessions: Session[], home = homedir()): boolean {
+  if (cwd.startsWith(join(home, "apps", "wt") + "/")) return true
+  return sessions.some((s) => !!s.herdrPane?.startsWith("headless:worker:") && (s.sessionId === id || s.cwd === cwd))
+}
 
 /**
  * The drawer card of a headless worker task. One task = one live session: the supervisor registers the card under its

@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite"
 import { appendFeedEvent, getFeed, type FeedEvent } from "./feed"
 import { syncExternalToolActivity, clearExternalSessionActivity } from "./activity"
 import { getSessionByKey, listSessions, recordSession } from "./sessions"
+import { workerOwnsConvo } from "./worker-session"
 import { clampLong, summarize, verbFor, extractToolResult } from "./tool-format"
 import { addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, type QuestionAnswer, type QuestionItem } from "./questions"
 import { withPickerIO } from "./keyboard-inject"
@@ -797,6 +798,7 @@ async function pollAgyOnce(home = homedir()): Promise<void> {
       }
       continue
     }
+    if (workerOwnsConvo(c.id, c.cwd, currentSessions, home)) continue
     const existing = currentSessions.find((s) => s.sessionId === c.id)
     if (!existing || existing.agentStatus !== c.status || existing.title !== c.title) {
       recordSession({
