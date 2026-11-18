@@ -1,0 +1,50 @@
+name: Archmap
+
+# PRs no longer commit the architecture map (CI only lints boundaries).
+# After every push to main, regenerate it and commit it back if it changed.
+# No loop: GITHUB_TOKEN pushes never trigger workflows, the commit carries
+# [skip ci], and the actor guard + paths-ignore skip a map-only push anyway.
+on:
+  push:
+    branches: [main]
+    paths-ignore: [architecture.json, architecture.md, architecture.refs.json]
+
+concurrency:
+  group: archmap-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # --check ignores the generatedAt date, so a new day alone never commits.
+      # The iOS ref is not checked out here; the generator reuses the committed
+      # architecture.refs.json snapshot for it.
+      - name: Regenerate and commit if stale
+        run: |
+          if bun run tools/archmap/cli.ts . --check --quiet; then exit 0; fi
+          bun run tools/archmap/cli.ts . --quiet
+          git add -A -- architecture.json architecture.md architecture.refs.json
+          git diff --cached --quiet && exit 0
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m 'chore(archmap): regenerate [skip ci]'
+          # main moved since checkout: the newer push's run regenerates from its tip.
+          git push origin HEAD:main || echo '::notice::main moved; the next archmap run will regenerate'
