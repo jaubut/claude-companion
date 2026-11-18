@@ -9,6 +9,7 @@
 // Fingerprint: cwd + binary + version + mtimes of every file the list is built
 // from, so the cache re-runs only when one of them changed.
 
+import { tmuxArgv } from "./tmux-pane"
 import { createHash } from "node:crypto"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
@@ -25,6 +26,25 @@ export function tmuxNoServer(r: TmuxResult): boolean {
   return r.code === 1 && (/no server running/i.test(err) || /error connecting to .*\(No such file or directory\)/i.test(err))
 }
 export type TmuxRunner = (args: string[]) => Promise<TmuxResult>
+
+// Spawn tmux, bounded. A wedged tmux must not hold the enumeration forever; a
+// killed call reads as code -1 ("unknown"), never as a real tmux exit code.
+export const defaultTmux: TmuxRunner = async (args) => {
+  try {
+    const p = Bun.spawn([...tmuxArgv(), ...args], { stdout: "pipe", stderr: "pipe" })
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; try { p.kill() } catch { /* gone */ } }, 5_000)
+    try {
+      const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+      const code = await p.exited
+      return { code: timedOut ? -1 : code, stdout, stderr }
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return { code: -1, stdout: "" }
+  }
+}
 
 // How the hidden claude is launched — resolved ONCE per enumeration and used
 // for both `--version` (the fingerprint) and the tmux launch, so the two can
