@@ -1018,7 +1018,7 @@
         },
         {
           "path": "lib/brain-trace.ts",
-          "lines": 212,
+          "lines": 215,
           "kind": "lib",
           "exports": [
             "TraceKind",
@@ -1045,7 +1045,8 @@
           "apiCalls": [],
           "imports": [
             "lib/orchestrator-db.ts",
-            "lib/dispatch-tasks.ts"
+            "lib/dispatch-tasks.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1175,7 +1176,7 @@
         },
         {
           "path": "lib/builder-jobs.ts",
-          "lines": 167,
+          "lines": 174,
           "kind": "lib",
           "exports": [
             "STALE_MS",
@@ -1197,7 +1198,9 @@
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
-          "imports": [],
+          "imports": [
+            "lib/worker-invocation.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -6551,7 +6554,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 369,
+          "lines": 454,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6562,11 +6565,20 @@
             "ALLOWED_FAMILIES",
             "WORKER_TURN_RULE",
             "WORKER_SHIP_RULE",
+            "WORKER_PLAN_RULE",
             "WORKER_FOOTER",
             "DEFAULT_REAP_GRACE_MS",
             "WorkerTaskStatus",
             "workerAgentStatus",
+            "PlanProgress",
+            "WorkerProgress",
+            "progressOf",
+            "applyProgressEvent",
             "StreamJsonEvent",
+            "STEP_LABEL_MAX",
+            "clipLabel",
+            "commandLabel",
+            "planProgress",
             "parseStreamJsonLine",
             "scrubAgentEnv",
             "parseAgentEnv",
@@ -6585,7 +6597,9 @@
             "SpawnWorkerOpts",
             "defaultSpawnWorker"
           ],
-          "state": [],
+          "state": [
+            "SUBCOMMAND_TOOLS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -6682,12 +6696,14 @@
         },
         {
           "path": "lib/worker-progress-trace.ts",
-          "lines": 85,
+          "lines": 116,
           "kind": "lib",
           "exports": [
+            "THROTTLE_MS",
             "WorkerProgressTraceDeps",
             "receiptText",
-            "createWorkerProgressTrace"
+            "createWorkerProgressTrace",
+            "throttleJobReports"
           ],
           "state": [],
           "emits": [],
@@ -6696,6 +6712,7 @@
           "apiCalls": [],
           "imports": [
             "lib/brain-trace.ts",
+            "lib/builder-jobs.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts"
           ],
@@ -11544,6 +11561,14 @@
             "lib/body-tokens.ts"
           ]
         },
+        "WorkerProgress": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/brain-trace.ts",
+            "lib/builder-jobs.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "DispatchTask": {
           "module": "lib/dispatch-tasks.ts",
           "callers": [
@@ -15456,6 +15481,13 @@
             "wiring/events.ts"
           ]
         },
+        "BuilderReport": {
+          "module": "lib/builder-jobs.ts",
+          "callers": [
+            "lib/worker-progress-trace.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "loadReceipts": {
           "module": "lib/worker-task-store.ts",
           "callers": [
@@ -15548,6 +15580,12 @@
             "lib/worker-turns.ts"
           ]
         },
+        "PlanProgress": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "StreamJsonEvent": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15561,6 +15599,18 @@
           ]
         },
         "SpawnWorkerOpts": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "progressOf": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "applyProgressEvent": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -15622,12 +15672,6 @@
         },
         "defaultSpawnWorker": {
           "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "BuilderReport": {
-          "module": "lib/builder-jobs.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -20272,6 +20316,12 @@
         },
         "createWorkerSupervisor": {
           "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "throttleJobReports": {
+          "module": "lib/worker-progress-trace.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

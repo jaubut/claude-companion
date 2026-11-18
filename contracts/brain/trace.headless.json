@@ -1,0 +1,30 @@
+{
+  "type": "brain_trace",
+  "op": "row",
+  "rows": [
+    {
+      "id": "headless:0123456789abcdef0123456789abcdef",
+      "parentId": null,
+      "turnId": null,
+      "kind": "agent",
+      "status": "running",
+      "title": "claude · claude-sonnet-5-5 — Worker progress bar",
+      "detail": "Writing the parser (3/8) · 1m 40s\nParser done, wiring the frame next.",
+      "ref": {
+        "taskId": "0123456789abcdef0123456789abcdef",
+        "host": "zettlab",
+        "progress": {
+          "done": 3,
+          "total": 8,
+          "label": "Writing the parser",
+          "source": "todos",
+          "startedAt": 1793145631000,
+          "elapsedMs": 100000
+        }
+      },
+      "startedAt": 1793145631000,
+      "endedAt": null,
+      "seq": 7
+    }
+  ]
+}

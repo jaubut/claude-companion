@@ -59,7 +59,7 @@ describe("parseStreamJsonLine", () => {
       },
     }))
     expect(bashEv).toEqual({
-      step: "Running bun test server/lib/foo.test.ts",
+      step: "Running tests",
       assistantText: "Opened https://github.com/jaubut/claude-companion/pull/305 for review.",
       prUrl: "https://github.com/jaubut/claude-companion/pull/305",
     })
@@ -556,7 +556,7 @@ describe("createWorkerSupervisor", () => {
     // Antigravity (agy) stream events
     expect(parseStreamJsonLine(JSON.stringify({ event: "init", conversation_id: "agy-1", init: { cwd: "/w" } }))).toEqual({ sessionId: "agy-1" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "bun test" } } } })))
-      .toEqual({ sessionId: "agy-1", step: "Running bun test" })
+      .toEqual({ sessionId: "agy-1", step: "Running tests" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "step_update", step_update: { conversation_id: "agy-1", state: "ACTIVE", step_type: "tool", tool_name: "write_to_file", tool_info: { parameters: { TargetFile: "/w/index.ts" } } } })))
       .toEqual({ sessionId: "agy-1", step: "Editing index.ts" })
     expect(parseStreamJsonLine(JSON.stringify({ event: "result", result: { conversation_id: "agy-1", status: "SUCCESS", response: "PR ready at https://github.com/jaubut/claude-companion/pull/501\n" } }))).toEqual({

@@ -50,7 +50,7 @@ TraceRow {
 - `agent:<proposalId>` uses the Companion proposal id (8 chars); `ref.taskId` is the notes DB task id once filed.
 - `"needs-you"` is a virtual parent (no row): render its children under a "Needs you" group.
 - Unknown `kind` / `status` values must be tolerated (`trace.unknown-kind.json`).
-- `headless:<jobId>` (jobId = task id, `<taskId>:t<n>` from turn 2): one row per headless worker turn, `kind:"agent"`, `ref:{taskId, host}`. Title `<family> · <model> — <title>`; while `running`, detail = `<step> · <elapsed>` + newline + the latest summary, rewritten in place at most every 10 s and only when step or summary changed. It ends `done` / `error` with the PR ready / completed / blocked receipt text as detail (an interrupt ends it `error`). These rows are trace frames only and never wake the brain; the receipt turn still does.
+- `headless:<jobId>` (jobId = task id, `<taskId>:t<n>` from turn 2): one row per headless worker turn, `kind:"agent"`, `ref:{taskId, host, progress}` (`progress` = `{done, total, label, source: "todos"|"plan"|"none", startedAt, elapsedMs}`, contracts/README.md § builder-jobs). Title `<family> · <model> — <title>`; while `running`, detail = `<step>[ (<done>/<total>)] · <elapsed>` + newline + the latest summary, rewritten in place at most every 1 s and only when step, plan or summary changed. It ends `done` / `error` with the PR ready / completed / blocked receipt text as detail (an interrupt ends it `error`). These rows are trace frames only and never wake the brain; the receipt turn still does.
 - `worker` (`trace.worker.json`): one plain "Closed worker" row, status `done`, written when the brain-workers reaper closes a brain task's herdr workspace. Shipped builds map it to `.other`.
 
 ### `orchestrator` turn `card`

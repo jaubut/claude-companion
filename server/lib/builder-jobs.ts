@@ -13,6 +13,8 @@
 // No update for STALE_MS → `stale: true` (frame re-sent); DROP_MS → dropped.
 // Not persisted: a restart loses the list, the next PROGRESS recreates the job.
 
+import type { WorkerProgress } from "./worker-invocation"
+
 export const STALE_MS = 10 * 60_000
 export const DROP_MS = 2 * 60 * 60_000
 export const MAX_JOBS = 16
@@ -27,6 +29,8 @@ export interface BuilderReport {
   builder: string | null
   pct: number | null
   step: string | null
+  /** Headless workers only (worker-supervisor): the plan-based bar. The relay never sends it. */
+  progress?: WorkerProgress | null
 }
 
 export interface BuilderJobItem {
@@ -36,6 +40,8 @@ export interface BuilderJobItem {
   /** 0-100, or null = indeterminate (spinner). */
   pct: number | null
   step: string | null
+  /** Headless worker jobs: done / total of the worker's own plan, step label, elapsed. null = relay job or none yet. */
+  progress: WorkerProgress | null
   startedAt: number
   updatedAt: number
   stale: boolean
@@ -101,6 +107,7 @@ export class BuilderJobStore {
         // A TASK re-send keeps the progress; a PROGRESS without pct is indeterminate.
         pct: r.event === "progress" ? r.pct : prev?.pct ?? null,
         step: r.event === "progress" ? r.step : prev?.step ?? null,
+        progress: r.progress ?? prev?.progress ?? null,
         startedAt: prev?.startedAt ?? now,
         updatedAt: now,
       })

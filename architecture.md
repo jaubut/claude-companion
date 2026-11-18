@@ -36,6 +36,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/link-media.ts` | 460 | lib | 18 | state: inflight: Map |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
+| `lib/worker-invocation.ts` | 454 | lib | 39 | state: SUBCOMMAND_TOOLS: Set |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
@@ -52,7 +53,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/design-state.ts` | 382 | lib | 9 | state: ALLOWED_SCALES: Set, let activePromptProvider |
-| `lib/worker-invocation.ts` | 369 | lib | 30 |  |
 | `lib/herdr.ts` | 367 | lib | 34 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
@@ -115,10 +115,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/question-driver.ts` | 217 | lib | 9 |  |
 | `lib/trip-store.ts` | 217 | lib | 13 |  |
 | `lib/dialogs.ts` | 216 | lib | 7 |  |
+| `lib/brain-trace.ts` | 215 | lib | 14 | state: TERMINAL: Set |
 | `lib/subscriptions.ts` | 214 | lib | 8 | state: let cache |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
-| `lib/brain-trace.ts` | 212 | lib | 14 | state: TERMINAL: Set |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `wiring/brain-headless.ts` | 211 | lib | 4 |  |
@@ -143,13 +143,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
 | `lib/scrape-registry.ts` | 175 | lib | 13 | state: panes: Map, ttys: Map, let tmuxServer, let nameSeq |
+| `lib/builder-jobs.ts` | 174 | lib | 11 | state: EVENTS: Set |
 | `lib/body-alert.ts` | 173 | lib | 13 |  |
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |
 | `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
-| `lib/builder-jobs.ts` | 167 | lib | 11 | state: EVENTS: Set |
 | `lib/tool-format.ts` | 166 | lib | 6 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
@@ -188,6 +188,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
+| `lib/worker-progress-trace.ts` | 116 | lib | 5 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
@@ -217,7 +218,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `state.ts` | 89 | lib | 9 |  |
 | `lib/status-answer.ts` | 88 | lib | 3 |  |
 | `lib/trip-geocode.ts` | 87 | lib | 8 |  |
-| `lib/worker-progress-trace.ts` | 85 | lib | 3 |  |
 | `lib/git-config-lock.ts` | 83 | lib | 3 | state: let libc |
 | `lib/idempotency.ts` | 83 | lib | 4 | state: entries: Map |
 | `lib/secret-redact.ts` | 82 | lib | 4 | state: let sourceOverride, let cache |
@@ -612,6 +612,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getAuthToken()` | `lib/auth.ts` | `lib/body-investigate-engine.ts`, `lib/vault-upstream.ts`, `routes/capture.ts` |
 | `InvestigationResult()` | `lib/body-investigate.ts` | `lib/body-investigator.ts`, `lib/resolver-work.ts`, `wiring/resolver.ts` |
 | `runReadonlyClaude()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `lib/quick-look.ts`, `wiring/resolver.ts` |
+| `WorkerProgress()` | `lib/worker-invocation.ts` | `lib/brain-trace.ts`, `lib/builder-jobs.ts`, `lib/worker-supervisor.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/canvas.ts`, `lib/transcript.ts`, `wiring/events.ts` |
 | `herdrSendText()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
 | `AGY_BRAIN_TASK_ID()` | `lib/agy-feed.ts` | `lib/discover.ts`, `routes/model.ts`, `routes/model.ts#POST /api/model/set` |
@@ -820,6 +821,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `BRAIN_TAKE_PREFIX()` | `lib/brain.ts` | `lib/voice-memo.ts`, `routes/capture.ts` |
 | `defaultKillPid()` | `lib/worker-pid.ts` | `lib/worker-invocation.ts`, `lib/worker-supervisor.ts` |
 | `workerReceipt()` | `lib/worker-pr-link.ts` | `lib/worker-mcp.ts`, `lib/worker-progress-trace.ts` |
+| `BuilderReport()` | `lib/builder-jobs.ts` | `lib/worker-progress-trace.ts`, `lib/worker-supervisor.ts` |
 | `reportTurn()` | `lib/worker-task-store.ts` | `lib/worker-receipt-outbox.ts`, `lib/worker-turns.ts` |
 | `workerStateFile()` | `lib/worker-task-store.ts` | `lib/worker-supervisor.ts`, `wiring/worker-mcp.ts` |
 | `PersistedTaskRecord()` | `lib/worker-task-store.ts` | `lib/worker-supervisor.ts`, `lib/worker-turns.ts` |
