@@ -25,6 +25,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
+| `lib/worker-invocation.ts` | 535 | lib | 39 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
@@ -36,7 +37,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/link-media.ts` | 460 | lib | 18 | state: inflight: Map |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/worker-invocation.ts` | 454 | lib | 39 | state: SUBCOMMAND_TOOLS: Set |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
@@ -80,13 +80,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 277 | lib | 47 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
-| `wiring/brain-pr-merge.ts` | 267 | lib | 4 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
 | `lib/question-hook.ts` | 272 | lib | 7 |  |
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
+| `wiring/brain-pr-merge.ts` | 268 | lib | 4 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 262 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
