@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17",
+  "generatedAt": "2026-11-18",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -6653,6 +6653,26 @@
           "externals": []
         },
         {
+          "path": "lib/worker-session.ts",
+          "lines": 31,
+          "kind": "lib",
+          "exports": [
+            "recordWorkerSession"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts",
+            "lib/worker-supervisor.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-supervisor.ts",
           "lines": 610,
           "kind": "lib",
@@ -9573,7 +9593,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 155,
+          "lines": 140,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
@@ -9603,6 +9623,7 @@
             "lib/worker-mcp.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
+            "lib/worker-session.ts",
             "lib/worker-supervisor.ts",
             "state.ts",
             "wiring/brain.ts",
@@ -9849,6 +9870,7 @@
             "lib/discover.ts",
             "lib/session-prune-gone.ts",
             "lib/session-resolve.ts",
+            "lib/worker-session.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/shell/close",
             "routes/api.ts#* /api/status",
@@ -10332,6 +10354,7 @@
             "lib/question-hook.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "lib/worker-session.ts",
             "routes/brain.ts",
             "routes/command.ts",
             "routes/hooks.ts",
@@ -10570,6 +10593,7 @@
             "lib/agy-feed.ts",
             "lib/discover.ts",
             "lib/rehydrate.ts",
+            "lib/worker-session.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use",
@@ -10580,8 +10604,7 @@
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts#POST /api/model/set",
             "wiring/brain-headless.ts",
-            "wiring/brain.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/brain.ts"
           ]
         },
         "getFeed": {
@@ -14124,6 +14147,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/session-prune-gone.ts",
+            "lib/worker-session.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end"
           ]
@@ -15162,6 +15186,7 @@
           "module": "lib/worker-supervisor.ts",
           "callers": [
             "lib/worker-progress-trace.ts",
+            "lib/worker-session.ts",
             "lib/worker-task-store.ts",
             "wiring/github-webhook.ts",
             "wiring/worker-mcp.ts"
@@ -15211,6 +15236,15 @@
           "callers": [
             "lib/worker-progress-trace.ts",
             "wiring/brain-workers.ts",
+            "wiring/events.ts"
+          ]
+        },
+        "setSessionModel": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/worker-session.ts",
+            "routes/model.ts#POST /api/model/set",
+            "wiring/brain-headless.ts",
             "wiring/events.ts"
           ]
         },
@@ -16869,15 +16903,6 @@
           "module": "lib/agy-feed.ts",
           "callers": [
             "routes/model.ts#POST /api/model/set"
-          ]
-        },
-        "setSessionModel": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/model.ts#POST /api/model/set",
-            "wiring/brain-headless.ts",
-            "wiring/events.ts",
-            "wiring/worker-mcp.ts"
           ]
         },
         "setKeys": {
@@ -19876,6 +19901,12 @@
         },
         "createWorkerSupervisor": {
           "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "recordWorkerSession": {
+          "module": "lib/worker-session.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]
