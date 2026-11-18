@@ -20,6 +20,8 @@ import {
 import { WORKER_FOOTER, WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
 import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
+import { listSessions, removeSessionByKey } from "./sessions"
+import { recordWorkerSession, workerOwnsConvo } from "./worker-session"
 
 describe("parseStreamJsonLine", () => {
   test("parses assistant tool_use, text with PR URL, result, and ignores malformed JSON", () => {
@@ -129,6 +131,8 @@ describe("parseStreamJsonLine", () => {
     expect(env.COMPANION_PEER_ZETTLAB_URL).toBeUndefined()
     expect(env.DISPATCH_TASK_ID).toBe("task-1")
     expect(env.CLAUDE_NO_AGENT_ENV).toBe("1")
+    expect(env.COMPANION_HEADLESS).toBe("1")
+    expect(env.COMPANION_ORIGIN).toBe("worker")
   })
 })
 
@@ -1470,5 +1474,55 @@ sleep 30 & wait $!
       expect(text.match(/frame\.io/g)).toHaveLength(1) // a link already shown isn't repeated
       expect(text).toEndWith("Full report, every turn: bin/worker get --task 54f3b9d9 --host mac")
     })
+  })
+
+  test("one worker task = one live session: the placeholder id is retired when agy / codex mint the real one", async () => {
+    const home = join(tmpdir(), `worker-sup-ghost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    // Fake agy: announces its own conversation id, then works for a while.
+    const fakeAgy = join(home, "agy")
+    writeFileSync(fakeAgy, `#!/bin/sh
+printf "%s\\n" "{\\"event\\":\\"init\\",\\"conversation_id\\":\\"agy-real-1\\",\\"init\\":{}}"
+sleep 30
+`)
+    chmodSync(fakeAgy, 0o755)
+    const fakes: SpawnWorkerOpts[] = []
+    const ids = ["ghost-gm", "ghost-cx", "ghost-cl"]
+    let n = 0
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => Date.now(), uuid: () => `placeholder-${++n}`, trust: () => {}, reportJob: () => {},
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) mkdirSync(args[args.indexOf("add") + (args.includes("-b") ? 4 : 2)]!, { recursive: true })
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      syncSession: (t, pid) => { recordWorkerSession(t, pid, "") },
+      spawnWorker: (opts) => opts.cmd.endsWith("agy") ? defaultSpawnWorker({ ...opts, cmd: fakeAgy }) : (fakes.push(opts), { pid: process.pid, kill() {} }),
+    })
+    const live = (taskId: string) => listSessions().filter((s) => s.taskId === taskId).map((s) => s.sessionId)
+    try {
+      expect((await sup.dispatchTask({ taskId: ids[0]!, repo: "claude-companion", prompt: "build", family: "gemini" })).ok).toBe(true)
+      expect(live(ids[0]!)).toEqual(["placeholder-1"])
+      for (let i = 0; i < 100 && sup.getTask(ids[0]!)?.sessionId !== "agy-real-1"; i++) await Bun.sleep(20)
+      expect(live(ids[0]!)).toEqual(["agy-real-1"])
+
+      await sup.dispatchTask({ taskId: ids[1]!, repo: "claude-companion", prompt: "build", family: "codex" })
+      fakes[0]!.onStdoutLine(JSON.stringify({ type: "thread.started", thread_id: "cx-real-1" }))
+      expect(live(ids[1]!)).toEqual(["cx-real-1"])
+      // Claude takes the supervisor's id as --session-id, so it never changes.
+
+      await sup.dispatchTask({ taskId: ids[2]!, repo: "claude-companion", prompt: "build", family: "claude" })
+      fakes[1]!.onStdoutLine(JSON.stringify({ type: "system", subtype: "init", session_id: "placeholder-3" }))
+      expect(live(ids[2]!)).toEqual(["placeholder-3"])
+
+      // Discovery / the agy poller must not re-card a worker's conversation as headless:agy, even a retired id.
+      expect(workerOwnsConvo("agy-real-1", "/elsewhere", listSessions(), "/nohome")).toBe(true)
+      expect(workerOwnsConvo("placeholder-1", sup.getTask(ids[0]!)!.worktree, listSessions(), "/nohome")).toBe(true)
+      expect(workerOwnsConvo("pruned", join(home, "apps", "wt", "claude-companion", "gone"), [], home)).toBe(true)
+      expect(workerOwnsConvo("mine", "/elsewhere", listSessions(), "/nohome")).toBe(false)
+    } finally {
+      await sup.interruptTask(ids[0]!)
+      for (const s of listSessions()) if (ids.includes(s.taskId)) removeSessionByKey(s.key)
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

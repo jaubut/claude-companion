@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17",
+  "generatedAt": "2026-11-18",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -201,7 +201,7 @@
         },
         {
           "path": "lib/agy-feed.ts",
-          "lines": 1250,
+          "lines": 1276,
           "kind": "lib",
           "exports": [
             "AGY_BRAIN_KEY",
@@ -231,6 +231,7 @@
             "readRecentAgyConversations",
             "resetAgyFeedStateForTests",
             "syncAgyOpenQuestion",
+            "agyThreadVisible",
             "isAgyBrainRunning",
             "ensureAgyBrainSession",
             "startAgyFeedMonitor",
@@ -257,6 +258,7 @@
             "lib/feed.ts",
             "lib/activity.ts",
             "lib/sessions.ts",
+            "lib/worker-session.ts",
             "lib/tool-format.ts",
             "lib/questions.ts",
             "lib/keyboard-inject.ts",
@@ -1797,7 +1799,7 @@
         },
         {
           "path": "lib/discover.ts",
-          "lines": 588,
+          "lines": 608,
           "kind": "lib",
           "exports": [
             "isNoTty",
@@ -1837,7 +1839,9 @@
             "lib/dispatch-worker.ts",
             "lib/tmux-pane.ts",
             "lib/log.ts",
+            "lib/session-titles.ts",
             "lib/herdr.ts",
+            "lib/worker-session.ts",
             "lib/agy-feed.ts"
           ],
           "listeners": [],
@@ -2034,10 +2038,11 @@
         },
         {
           "path": "lib/dispatch-worker.ts",
-          "lines": 55,
+          "lines": 60,
           "kind": "lib",
           "exports": [
             "DISPATCH_WORKER_ENV",
+            "COMPANION_HEADLESS_ENV",
             "envHasDispatchWorker",
             "resetDispatchWorkerCache",
             "isDispatchWorkerPid",
@@ -4228,7 +4233,7 @@
         },
         {
           "path": "lib/rehydrate.ts",
-          "lines": 76,
+          "lines": 79,
           "kind": "lib",
           "exports": [
             "rehydrateSessions"
@@ -4239,6 +4244,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/recent-sessions.ts",
             "lib/sessions.ts"
           ],
           "listeners": [],
@@ -4689,6 +4695,30 @@
           "externals": []
         },
         {
+          "path": "lib/session-archive.ts",
+          "lines": 57,
+          "kind": "lib",
+          "exports": [
+            "ArchivePolicy",
+            "WorkerDoneAt",
+            "archiveReason",
+            "archiveStaleSessions",
+            "startSessionArchive"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/ended-sessions.ts",
+            "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-identity.ts",
           "lines": 59,
           "kind": "lib",
@@ -4832,10 +4862,12 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 599,
+          "lines": 630,
           "kind": "lib",
           "exports": [
             "Session",
+            "markHeadlessSession",
+            "isHeadlessSession",
             "RecordOptions",
             "recordSession",
             "setTitleResolver",
@@ -4851,6 +4883,7 @@
             "getSessionByKey",
             "resolveSession",
             "removeSessionByCwd",
+            "archiveSession",
             "removeSessionByKey",
             "removeSessionByTty",
             "removeSessionByTmuxPane",
@@ -4860,6 +4893,8 @@
           ],
           "state": [
             "sessions: Map",
+            "archived: Map",
+            "headlessIds: Set",
             "listeners: Set",
             "let pruneTimer",
             "let titleResolver",
@@ -6516,7 +6551,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 364,
+          "lines": 369,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6530,6 +6565,7 @@
             "WORKER_FOOTER",
             "DEFAULT_REAP_GRACE_MS",
             "WorkerTaskStatus",
+            "workerAgentStatus",
             "StreamJsonEvent",
             "parseStreamJsonLine",
             "scrubAgentEnv",
@@ -6682,6 +6718,28 @@
           "imports": [
             "lib/worker-supervisor.ts",
             "lib/worker-task-store.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-session.ts",
+          "lines": 45,
+          "kind": "lib",
+          "exports": [
+            "workerOwnsConvo",
+            "recordWorkerSession"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/sessions.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-supervisor.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9669,12 +9727,14 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 202,
+          "lines": 210,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
+            "supervisorStateFile",
             "workerSupervisor",
             "startWorkerSessionPrune",
+            "startDrawerArchive",
             "replayWorkerPrLinks",
             "startWorkerReceiptRelay",
             "workerMcp"
@@ -9695,6 +9755,7 @@
             "lib/live-repo.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/session-archive.ts",
             "lib/session-prune-gone.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
@@ -9703,6 +9764,7 @@
             "lib/worker-mcp.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
+            "lib/worker-session.ts",
             "lib/worker-supervisor.ts",
             "lib/worker-task-store.ts",
             "state.ts",
@@ -9948,8 +10010,10 @@
             "lib/agy-feed.ts",
             "lib/codex-feed.ts",
             "lib/discover.ts",
+            "lib/session-archive.ts",
             "lib/session-prune-gone.ts",
             "lib/session-resolve.ts",
+            "lib/worker-session.ts",
             "routes/api.ts#POST /api/spawn-session",
             "routes/api.ts#POST /api/shell/close",
             "routes/api.ts#* /api/status",
@@ -10431,8 +10495,10 @@
             "lib/model-control.ts",
             "lib/orphan-question.ts",
             "lib/question-hook.ts",
+            "lib/session-archive.ts",
             "lib/session-identity.ts",
             "lib/session-removal-log.ts",
+            "lib/worker-session.ts",
             "routes/brain.ts",
             "routes/command.ts",
             "routes/hooks.ts",
@@ -10652,6 +10718,16 @@
             "lib/question-hook.ts"
           ]
         },
+        "isHeadlessSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
+          ]
+        },
         "getSessionByKey": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -10671,6 +10747,7 @@
             "lib/agy-feed.ts",
             "lib/discover.ts",
             "lib/rehydrate.ts",
+            "lib/worker-session.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/post-tool-use",
@@ -10681,8 +10758,14 @@
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/model.ts#POST /api/model/set",
             "wiring/brain-headless.ts",
-            "wiring/brain.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/brain.ts"
+          ]
+        },
+        "workerOwnsConvo": {
+          "module": "lib/worker-session.ts",
+          "callers": [
+            "lib/agy-feed.ts",
+            "lib/discover.ts"
           ]
         },
         "getFeed": {
@@ -12066,6 +12149,12 @@
             "routes/model.ts#POST /api/model/set"
           ]
         },
+        "agyThreadVisible": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/discover.ts"
+          ]
+        },
         "ensureAgyBrainSession": {
           "module": "lib/agy-feed.ts",
           "callers": [
@@ -12107,6 +12196,17 @@
           "module": "lib/dispatch-worker.ts",
           "callers": [
             "lib/discover.ts"
+          ]
+        },
+        "transcriptPath": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/discover.ts",
+            "lib/orphan-question.ts",
+            "lib/transcript-backfill.ts",
+            "wiring/auto-compact.ts",
+            "wiring/brain-headless.ts",
+            "wiring/events.ts"
           ]
         },
         "PaneRef": {
@@ -12536,6 +12636,7 @@
           "module": "lib/ended-sessions.ts",
           "callers": [
             "lib/herdr-workspace.ts",
+            "lib/session-archive.ts",
             "lib/shell-sessions.ts",
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
@@ -13087,16 +13188,6 @@
           "module": "lib/question-driver.ts",
           "callers": [
             "lib/orphan-question.ts"
-          ]
-        },
-        "transcriptPath": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "lib/orphan-question.ts",
-            "lib/transcript-backfill.ts",
-            "wiring/auto-compact.ts",
-            "wiring/brain-headless.ts",
-            "wiring/events.ts"
           ]
         },
         "pickerShowsQuestions": {
@@ -13778,6 +13869,12 @@
             "lib/records-expiry.ts"
           ]
         },
+        "parseHead": {
+          "module": "lib/recent-sessions.ts",
+          "callers": [
+            "lib/rehydrate.ts"
+          ]
+        },
         "TriageSource": {
           "module": "lib/triage.ts",
           "callers": [
@@ -14190,6 +14287,18 @@
             "lib/sent-files.ts"
           ]
         },
+        "EndedStore": {
+          "module": "lib/ended-sessions.ts",
+          "callers": [
+            "lib/session-archive.ts"
+          ]
+        },
+        "archiveSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/session-archive.ts"
+          ]
+        },
         "runTmux": {
           "module": "lib/key-gate.ts",
           "callers": [
@@ -14226,6 +14335,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/session-prune-gone.ts",
+            "lib/worker-session.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end"
           ]
@@ -15300,6 +15410,7 @@
           "callers": [
             "lib/worker-progress-trace.ts",
             "lib/worker-receipt-outbox.ts",
+            "lib/worker-session.ts",
             "lib/worker-task-store.ts",
             "wiring/github-webhook.ts",
             "wiring/worker-mcp.ts"
@@ -15370,6 +15481,27 @@
           "module": "lib/worker-task-store.ts",
           "callers": [
             "lib/worker-receipt-outbox.ts"
+          ]
+        },
+        "markHeadlessSession": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/worker-session.ts"
+          ]
+        },
+        "workerAgentStatus": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-session.ts"
+          ]
+        },
+        "setSessionModel": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "lib/worker-session.ts",
+            "routes/model.ts#POST /api/model/set",
+            "wiring/brain-headless.ts",
+            "wiring/events.ts"
           ]
         },
         "ALLOWED_MODES": {
@@ -17154,15 +17286,6 @@
           "module": "lib/agy-feed.ts",
           "callers": [
             "routes/model.ts#POST /api/model/set"
-          ]
-        },
-        "setSessionModel": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/model.ts#POST /api/model/set",
-            "wiring/brain-headless.ts",
-            "wiring/events.ts",
-            "wiring/worker-mcp.ts"
           ]
         },
         "setKeys": {
@@ -20153,6 +20276,12 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "recordWorkerSession": {
+          "module": "lib/worker-session.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "bindWorkerTask": {
           "module": "lib/worker-pr-link.ts",
           "callers": [
@@ -20167,6 +20296,12 @@
         },
         "startGoneSessionPrune": {
           "module": "lib/session-prune-gone.ts",
+          "callers": [
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "startSessionArchive": {
+          "module": "lib/session-archive.ts",
           "callers": [
             "wiring/worker-mcp.ts"
           ]

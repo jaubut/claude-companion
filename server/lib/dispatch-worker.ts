@@ -9,11 +9,16 @@
 // runner's problem (its blocked-grace timeout), never the lock screen's.
 
 export const DISPATCH_WORKER_ENV = "DISPATCH_WORKER"
+// The generic marker for any agent spawned non-interactively (headless workers,
+// weft programs, scripts): set COMPANION_HEADLESS=1 in its env and it is never a
+// drawer thread, never pushes, never opens a card. COMPANION_ORIGIN (worker,
+// weft, …) names the spawner for logs only.
+export const COMPANION_HEADLESS_ENV = "COMPANION_HEADLESS"
 
-// A process environment (NAME=value entries) that marks a dispatch worker.
+// A process environment (NAME=value entries) that marks a dispatch worker or a headless agent.
 export function envHasDispatchWorker(entries: Iterable<string>): boolean {
   for (const e of entries) {
-    if (e === `${DISPATCH_WORKER_ENV}=1`) return true
+    if (e === `${DISPATCH_WORKER_ENV}=1` || e === `${COMPANION_HEADLESS_ENV}=1`) return true
   }
   return false
 }

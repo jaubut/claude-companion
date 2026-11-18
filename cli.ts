@@ -202,7 +202,7 @@ import { startBodyInvestigate } from "./server/wiring/body-investigate"
 import { startTriage } from "./server/wiring/triage"
 import { startTrips } from "./server/wiring/trips"
 import { startMyTasksWatch } from "./server/routes/my-tasks"
-import { startWorkerReceiptRelay, startWorkerSessionPrune } from "./server/wiring/worker-mcp"
+import { startDrawerArchive, startWorkerReceiptRelay, startWorkerSessionPrune } from "./server/wiring/worker-mcp"
 
 const PORT = Number(process.env.COMPANION_PORT) || 4245
 
@@ -231,6 +231,8 @@ startMyTasksWatch()
 startWorkerSessionPrune()
 // Brain host: every host's worker turn receipts into the brain thread, retried until acked (Mac workers included).
 startWorkerReceiptRelay()
+// Idle (24 h) and done (1 h) sessions leave the drawer; the boot pass is the deploy-time prune.
+startDrawerArchive()
 const token = getAuthToken()
 
 const dim = "\x1b[2m"

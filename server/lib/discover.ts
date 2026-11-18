@@ -7,20 +7,24 @@
 // Process scanning catches those too.
 
 import { readdir, stat, readFile } from "node:fs/promises"
+import { statSync } from "node:fs"
 import { join, basename } from "node:path"
 import { homedir } from "node:os"
 import { Database } from "bun:sqlite"
-import { recordSession } from "./sessions"
+import { listSessions, recordSession } from "./sessions"
 import { drainRemovalCount } from "./session-removal-log"
 import { envHasScrapeVar, isScrapeTarget } from "./scrape-registry"
 import { isDispatchWorkerPid } from "./dispatch-worker"
 import { type PaneRef, mapTtysToPanes, tmuxSocketFromEnv } from "./tmux-pane"
 import { companionLog } from "./log"
+import { transcriptPath } from "./session-titles"
 import { validHerdrPane } from "./herdr"
+import { workerOwnsConvo } from "./worker-session"
 import {
   type AgyConversationSummary,
   AGY_BRAIN_PANE,
   AGY_BRAIN_TASK_ID,
+  agyThreadVisible,
   ensureAgyBrainSession,
   readAgyBrainState,
   readAgyModel,
@@ -44,6 +48,7 @@ interface CodexThreadRef {
   title: string
   first_user_message: string
   createdAtMs: number
+  updatedAtMs: number
 }
 
 async function run(cmd: string, args: string[]): Promise<string> {
@@ -182,6 +187,11 @@ async function findTermProgramForPid(pid: string): Promise<string> {
     current = ppid
   }
   return ""
+}
+
+// When the session's transcript last changed: its last real activity. undefined when unreadable.
+function transcriptMtimeMs(cwd: string, sessionId: string): number | undefined {
+  try { return statSync(transcriptPath(cwd, sessionId)).mtimeMs } catch { return undefined }
 }
 
 async function findClaudeSessionIdForCwd(cwd: string): Promise<string> {
@@ -346,7 +356,8 @@ async function findCodexThreadForPid(pid: string, cwd: string, command: string):
             id,
             title,
             first_user_message,
-            coalesce(created_at_ms, created_at * 1000) as createdAtMs
+            coalesce(created_at_ms, created_at * 1000) as createdAtMs,
+            coalesce(updated_at_ms, updated_at * 1000) as updatedAtMs
           from threads
           where id = ? and source = 'cli' and archived = 0
           limit 1
@@ -362,7 +373,8 @@ async function findCodexThreadForPid(pid: string, cwd: string, command: string):
           id,
           title,
           first_user_message,
-          coalesce(created_at_ms, created_at * 1000) as createdAtMs
+          coalesce(created_at_ms, created_at * 1000) as createdAtMs,
+          coalesce(updated_at_ms, updated_at * 1000) as updatedAtMs
         from threads
         where source = 'cli'
           and archived = 0
@@ -497,6 +509,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
           title: convo?.title,
           label: agyThreadLabel(convo, p.tty),
           firstSeenAt: startedAt || undefined,
+          lastActiveAt: convo?.updatedAtMs || undefined,
           agentStatus: convo?.status ?? "idle",
           model: agyModel,
         }, { provisional: true, sessionIdConfirmed: !!sessionId })
@@ -517,6 +530,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
           tmuxSocket: ref.socket,
           herdrPane: herdrPaneFromEnv(env),
           label: thread ? codexThreadLabel(thread, p.tty) : undefined,
+          lastActiveAt: thread?.updatedAtMs || undefined,
         }, { provisional: true })
       } else {
         const [file, env] = await Promise.all([readClaudeSessionFile(p.pid), processEnvEntries(p.pid)])
@@ -532,6 +546,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
               tmuxSocket: ref.socket,
               herdrPane,
               firstSeenAt: file.startedAt || undefined,
+              lastActiveAt: transcriptMtimeMs(cwd, file.sessionId!),
               agentStatus: file.status ?? "",
               waitingFor: file.waitingFor ?? "",
             },
@@ -542,6 +557,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
           recordSession(
             {
               agent: p.agent, cwd, sessionId, tty: p.tty, pid: p.pid, termProgram, firstSeenAt: startedAt || undefined,
+              lastActiveAt: sessionId ? transcriptMtimeMs(cwd, sessionId) : undefined,
               tmuxPane: ref.pane, tmuxSocket: ref.socket, herdrPane,
             },
             { provisional: true, sessionIdConfirmed: false },
@@ -567,8 +583,11 @@ async function discoverOnce(): Promise<{ registered: number }> {
   for (const c of recentAgy.slice(0, 5)) {
     if (liveAgyIds.has(c.id) || (brainSid && c.id === brainSid)) continue
     // Only register headlessly if no tty-backed or pinned brain session already owns this sessionId
-    const { listSessions } = await import("./sessions")
-    if (listSessions().some((s) => s.sessionId === c.id && (!!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE))) continue
+    const sessions = listSessions()
+    if (workerOwnsConvo(c.id, c.cwd, sessions)) continue
+    const owners = sessions.filter((s) => s.sessionId === c.id)
+    if (owners.some((s) => !!s.tty || s.taskId === AGY_BRAIN_TASK_ID || s.herdrPane === AGY_BRAIN_PANE)) continue
+    if (!agyThreadVisible(c, owners[0])) continue
     recordSession({
       agent: "gemini",
       cwd: c.cwd,
@@ -577,6 +596,7 @@ async function discoverOnce(): Promise<{ registered: number }> {
       title: c.title,
       label: c.title,
       firstSeenAt: c.updatedAtMs || undefined,
+      lastActiveAt: c.updatedAtMs || undefined,
       agentStatus: c.status,
       model: agyModel,
       pid: String(process.pid),
