@@ -429,6 +429,27 @@ Jeremie decided three product calls: `terminal_owned` refuses (fork stays a foll
 
 **Out of scope:** the follow-ups (a)-(g) above, worker-supervisor changes (602, untouched), the brain's own runner, codex phone approvals, and iOS build 60 itself (P4 is a separate iOS plan).
 
+**Amendments after the P1 build (PR #340 drift check, 2026-11-18)**
+1. Claude desk turns add `--permission-prompt-tool stdio`. Verify 1b showed AskUserQuestion isn't offered in `-p` without it. The permission/env paragraph above now reads: mode `default` plus `--permission-prompt-tool stdio`.
+2. P1 ships behind `COMPANION_DESK_HEADLESS=1`, default off.
+   - The flag gates: the pane→desk switch for tty/pane rows, desk spawn and resume, the `/exit` and pid-dead adopter, and untargeted inject's `410 no_target`. With the flag off, untargeted inject keeps the old most-recent pick.
+   - Always on: command list/suggest from the catalog, the `model.ts` set fix, `/api/session/interrupt`, and the Escape shim for desk and brain rows.
+   - "Done when" is met only with the flag on. The flip, with Verify 4/5/8/10 on the phone, is a P1 step that must pass before P2 starts.
+3. Codex.
+   - Codex spawn stays on the pane path until P3, because `codex exec` can't preassign a session id. P3 removes the pane path, and codex spawn becomes "first send creates" (follow-up (h)).
+   - Codex desk turns run in mode `default`, with no explicit sandbox flag.
+4. The `sessions.ts` "tty clears sticky desk marker" edit isn't needed. A tty-bearing hook derives `<agent>:tty:` and the sid collapse already drops the desk row. This is covered by the `sessions.test.ts` collapse case.
+5. `deliverInject` moves to `wiring/desk-deliver.ts`. `routes/api.ts` keeps a re-export so `companion-server.ts` (owned by P3) stays untouched. P3 switches that import and drops the re-export.
+6. ws `input`: `deliver_failed` → `osascript_failed` stays for build 59 while the pane path lives. It's retired in P3 along with the pane path.
+7. Exports and state added beyond the Files rows (all P1 owner, same files):
+   - `desk-runner.ts`: `DESK_PANE_PREFIX, QUEUE_CAP, QUEUE_TTL_MS, KILL_GRACE_MS, DeskAgent, deskEnabled, isDeskRow, DeskSendResult, DeskSendInput, DeskDeps, deskEnv, defaultTerminalHolds`, plus module state `secretsOnce` (the agent secrets, loaded once). The state file also stores `models` (per-session model choice, Analyst B) and `rows` (desk rows for boot restore).
+   - `command-catalog.ts`: `PROBE_TIMEOUT_MS, STALE_MS, INIT_REQUEST, Probe, defaultProbe, CatalogEntry, CommandCatalog, createCommandCatalog`.
+   - `desk-deliver.ts`: `interruptSession`.
+   - `orphan-question.ts`: `deskAnswerText, sweepDeskOrphanQuestion`.
+8. Test files changed in P1 (owner P1): `lib/orphan-question.test.ts`, `lib/question-hook.test.ts`, `routes/hooks-question.test.ts`, `wiring/canvas.test.ts`, `lib/session-archive.test.ts`, `lib/sessions.test.ts`.
+9. These regression tests move to P3, because the pane path they pin stays alive under the flag: the rewrites of `canvas-pick-delivery.test.ts`, `api-resume.test.ts` ("ended row dropped and broadcast" needs the ended store, deleted in P3), `dialogs.test.ts` Escape, and `inject-worker-autoresume` imports. Also the `api-idempotency` real-handler case, the ws `input` test, and `session-prune-gone`.
+10. Line counts: `sessions.ts` is 630 → 654 (the plan said ~625), still under follow-up (g). `api.ts` 507, `model.ts` 321, `dialogs.ts` 119 and `ws.ts` 194 reach their targets only once P3 deletes the pane branches.
+
 ### Change Plan — handoff-claim (2026-11-12)
 **Request:** TASK 34e8dfe58e35004a621a3cef8eb501c3, the security follow-up to #309. (1) `bin/propose --handoff` on a Jeremie turn gets a server-signed claim (task id, repo, turn id, HMAC with a server secret). `bin/worker dispatch` and the worker PR link require a valid claim for that exact id and repo; anything else stays origin unknown and is never linked. (2) Headless workers (claude -p, codex exec, gemini) run without notes DB/db credentials. The 3 other taint reasons stay as they are. Tests first. High review tier, human merge.
 **Done when:**
