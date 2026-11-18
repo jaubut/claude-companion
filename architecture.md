@@ -8,14 +8,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 285 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630), `lib/worker-supervisor.ts` (602)
+⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (630), `lib/worker-supervisor.ts` (604)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1276 ⚠ 1276 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `lib/sessions.ts` | 630 ⚠ 630 > cap 600 | lib | 25 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
-| `lib/worker-supervisor.ts` | 602 ⚠ 602 > cap 600 | lib | 6 |  |
+| `lib/worker-supervisor.ts` | 604 ⚠ 604 > cap 600 | lib | 6 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `routes/api.ts` | 594 | route-host | 2 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved, inject_error · routes: 25 |
 | `wiring/brain.ts` | 594 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
@@ -192,11 +192,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
+| `lib/worker-worktree.ts` | 111 | lib | 6 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
 | `routes/design-state.ts` | 109 | lib | 3 |  |
-| `lib/worker-worktree.ts` | 107 | lib | 6 |  |
 | `lib/brain-store.ts` | 105 | lib | 14 |  |
 | `routes/dialogs.ts` | 104 | route-host | 1 | routes: 2 |
 | `wiring/resolver-dry-run.ts` | 104 | lib | 4 |  |
