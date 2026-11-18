@@ -353,3 +353,17 @@ test("localTerminalAttached: tmux attach count, Mac tab, Linux tty → pane, unk
   expect(await localTerminalAttached({ tty: "/dev/pts/4" }, "linux", yes, async () => null)).toBe(false)
   expect(await localTerminalAttached({}, "darwin", yes)).toBe(false)
 })
+
+test("a desk row (no tty, no pane) is held for the phone, not handed to the generic approval card; no park", async () => {
+  const desk = { key: "claude:sid:desk-q", sessionId: "desk-q", herdrPane: "headless:desk:desk-q" } as unknown as import("./sessions").Session
+  let opts: Record<string, unknown> = {}
+  const res = await questionFastPath(
+    hookInput({ eventName: "PreToolUse", tty: "", session: desk, headerMeta: {} }),
+    { ask: async (_r, o) => { opts = o as Record<string, unknown>; return [{ selected: ["Blue"] }] } },
+  )
+  expect(await res!.json()).toEqual(await hookDecisionResponse("claude", "PreToolUse", "allow", "Answered via Claude Companion", { questions: [color], answers: { "Which color test?": "Blue" } }).json())
+  expect(opts.expiryMs).toBe(EXPIRY_MS)
+  expect(opts.parkMs).toBeUndefined()
+  // Same input with no desk row and no terminal: still the generic-card fallback.
+  expect(await questionFastPath(hookInput({ tty: "", session: null, headerMeta: {} }))).toBeNull()
+})

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { recordSession, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
+import { recordSession, setPidDeadAdopter, listSessions, setSessionTitle, setTitleResolver, ttyTag, onSessions, removeSessionByTmuxPane, removeSessionByKey, socketForPane, setSessionWaiting, clearSessionWaiting, clearSessionWaitingByRef, clearWaitingForTarget, waitingSummary } from "./sessions"
 import { metaFromHeaders } from "./hook-common"
 import { drainRemovalCount } from "./session-removal-log"
 import { mergeTmuxSocket } from "./session-identity"
@@ -515,4 +515,40 @@ test("a tty session does not collapse a headless sibling or a different sessionI
   const keys = listSessions().map((s) => s.key)
   expect(keys).toContain(headless.key)
   expect(keys).toContain(ttySession.key)
+})
+
+// headless-desk P1: a closed terminal's chat becomes an idle desk row.
+test("pid-dead prune hands a confirmed claude row to the desk adopter: sid key, sticky desk marker, firstSeenAt kept", () => {
+  const adopted: Session[] = []
+  setPidDeadAdopter((s) => { adopted.push(s); return true })
+  try {
+    const live = recordSession({ cwd: "/tmp/adopt", agent: "claude", tty: "/dev/ttys881", sessionId: "adopt-sid", pid: "999991", firstSeenAt: 1000 })!
+    // A dead pid: the next record prunes it.
+    recordSession({ cwd: "/tmp/adopt-other", tty: "/dev/ttys882" })
+    const keys = listSessions().map((s) => s.key)
+    expect(keys).not.toContain(live.key)
+    const row = listSessions().find((s) => s.key === "claude:sid:adopt-sid")!
+    expect(row).toMatchObject({ herdrPane: "headless:desk:adopt-sid", tty: "", pid: "", agentStatus: "idle", firstSeenAt: 1000, sessionId: "adopt-sid" })
+    expect(adopted.map((s) => s.key)).toEqual(["claude:sid:adopt-sid"])
+    // Prune never drops the desk row (no pid, headless).
+    recordSession({ cwd: "/tmp/adopt-other", tty: "/dev/ttys882" })
+    expect(listSessions().some((s) => s.key === "claude:sid:adopt-sid")).toBe(true)
+    // A guessed sid (not confirmed) is never adopted; an adopter that declines leaves nothing.
+    recordSession({ cwd: "/tmp/adopt2", agent: "claude", tty: "/dev/ttys883", sessionId: "guess-sid", pid: "999992" }, { provisional: true, sessionIdConfirmed: false })
+    setPidDeadAdopter(() => false)
+    recordSession({ cwd: "/tmp/adopt3", agent: "claude", tty: "/dev/ttys884", sessionId: "declined-sid", pid: "999993" })
+    recordSession({ cwd: "/tmp/adopt-other", tty: "/dev/ttys882" })
+    expect(listSessions().some((s) => s.sessionId === "guess-sid" || s.sessionId === "declined-sid")).toBe(false)
+  } finally {
+    setPidDeadAdopter(null)
+    removeSessionByKey("claude:sid:adopt-sid")
+  }
+})
+
+test("a terminal that takes the desk chat back (same sid, a tty) collapses the desk row; its record has no desk marker", () => {
+  recordSession({ cwd: "/tmp/back", agent: "claude", sessionId: "back-sid", herdrPane: "headless:desk:back-sid" }, { sessionIdConfirmed: true })
+  const term = recordSession({ cwd: "/tmp/back", agent: "claude", sessionId: "back-sid", tty: "/dev/ttys885" })!
+  expect(term.herdrPane).toBe("")
+  expect(listSessions().some((s) => s.key === "claude:sid:back-sid")).toBe(false)
+  removeSessionByKey(term.key)
 })

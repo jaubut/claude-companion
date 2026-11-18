@@ -9,7 +9,9 @@
 // retry once the pane is ready actually delivers.
 // No header → the handler runs exactly as before.
 //
-// ponytail: in-memory, lost on server restart; move to disk if that ever matters.
+// A desk send (lib/desk-runner.ts) answers at spawn or enqueue, not at the
+// reply. This map is in-memory and lost on restart, so the key also rides the
+// desk runner's persisted queue item and a repeat is deduped at enqueue.
 
 export const TTL_MS = 24 * 60 * 60 * 1000
 export const MAX_KEY_LENGTH = 128

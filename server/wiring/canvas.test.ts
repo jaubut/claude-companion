@@ -156,3 +156,18 @@ test("pick notify: a same-key PATCH repairs an empty binding but preserves a non
     sessions.removeSessionByKey(pending.key)
   }
 })
+
+test("headless-desk: a node bound to a closed terminal's sid follows it to its desk row", async () => {
+  const typed: [string, string | undefined][] = []
+  canvas.setCanvasDeliver(async (text, key) => { typed.push([text, key]); return Response.json({ ok: true, confirmed: true, queued: true }) })
+  const term = sessions.recordSession({ cwd: "/tmp/canvas-desk", tty: "/dev/pts/81", sessionId: "sid-desk" }, { sessionIdConfirmed: true })!
+  const node = canvas.canvasStore.addNode(
+    { kind: "preview", ref: "http://zettlab:3147/d.html", x: 0, y: 0, w: 1, h: 1, data: { direction: "calm", group: "g", sessionKey: term.key } }, 1).node
+  sessions.removeSessionByKey(term.key)
+  const desk = sessions.recordSession({ cwd: "/tmp/canvas-desk", sessionId: "sid-desk", herdrPane: "headless:desk:sid-desk" }, { sessionIdConfirmed: true })!
+  // queued:true is delivered-pending: ok.
+  expect(await canvas.canvasPickNotify(node)).toEqual({ ok: true })
+  expect(typed).toEqual([["Picked direction: calm — http://zettlab:3147/d.html", desk.key]])
+  canvas.canvasStore.removeNode(node.id)
+  sessions.removeSessionByKey(desk.key)
+})

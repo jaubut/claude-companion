@@ -64,3 +64,33 @@ test("PostToolUse of the question tool (answered at the terminal) ends the pendi
   expect(getPendingQuestions().some((r) => r.sessionId === sessionId)).toBe(false)
   expect(await (await res)!.json()).toEqual({})
 })
+
+// headless-desk Verify 1b fixture: the PreToolUse body a `claude -p --resume
+// --permission-prompt-tool stdio` turn sent (CC 2.1.327, captured 2026-11-18,
+// paths shortened). No tty, no pane: a desk row. The phone's answer goes back
+// as PreToolUse allow + updatedInput.answers — the exact reply that turn took
+// (tool_result "…"Which color do you prefer?"="Blue"…", reply CHOSEN=Blue).
+const DESK_PRETOOLUSE = {
+  session_id: "3f7c4b90-6165-49ef-b8ab-0b783e078513",
+  transcript_path: "/Users/x/.claude/projects/-tmp-v1b-cwd/3f7c4b90-6165-49ef-b8ab-0b783e078513.jsonl",
+  cwd: "/tmp/v1b/cwd", prompt_id: "0e06a9fd-6b22-460e-8ad6-c00700f68435", permission_mode: "default", effort: { level: "medium" },
+  hook_event_name: "PreToolUse", tool_name: "AskUserQuestion",
+  tool_input: { questions: [{ question: "Which color do you prefer?", header: "Color", options: [{ label: "Red", description: "Choose Red" }, { label: "Blue", description: "Choose Blue" }], multiSelect: false }] },
+  tool_use_id: "toolu_01GQSCNrXFqemwoYvAFry2zM",
+}
+
+test("a desk turn's AskUserQuestion is held for the phone and answered through PreToolUse updatedInput.answers", async () => {
+  const { recordSession } = await import("../lib/sessions")
+  recordSession({ cwd: DESK_PRETOOLUSE.cwd, agent: "claude", sessionId: DESK_PRETOOLUSE.session_id, herdrPane: `headless:desk:${DESK_PRETOOLUSE.session_id}` }, { sessionIdConfirmed: true })
+  const url = new URL("http://localhost:4245/hooks/pre-tool-use")
+  const res = handleHookRoute(new Request(url.href, { method: "POST", headers: { "content-type": "application/json", "x-companion-tty": "", "x-companion-pid": "" }, body: JSON.stringify(DESK_PRETOOLUSE) }), url)
+  const q = await waitPending(DESK_PRETOOLUSE.session_id)
+  expect(q.sessionKey).toBe(`claude:sid:${DESK_PRETOOLUSE.session_id}`)
+  expect(resolveQuestion(q.id, [{ selected: ["Blue"] }])).toBe(true)
+  expect(await (await res)!.json()).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "Answered via Claude Companion",
+      updatedInput: { ...DESK_PRETOOLUSE.tool_input, answers: { "Which color do you prefer?": "Blue" } },
+    },
+  })
+})

@@ -1320,6 +1320,36 @@
           "externals": []
         },
         {
+          "path": "lib/command-catalog.ts",
+          "lines": 205,
+          "kind": "lib",
+          "exports": [
+            "PROBE_TIMEOUT_MS",
+            "STALE_MS",
+            "initProbeArgs",
+            "INIT_REQUEST",
+            "parseInitLine",
+            "Probe",
+            "defaultProbe",
+            "CatalogEntry",
+            "CommandCatalog",
+            "createCommandCatalog",
+            "commandCatalog"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/command-list.ts",
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/command-list.ts",
           "lines": 459,
           "kind": "lib",
@@ -1746,6 +1776,48 @@
           "apiCalls": [],
           "imports": [
             "lib/figcraft.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/desk-runner.ts",
+          "lines": 417,
+          "kind": "lib",
+          "exports": [
+            "DESK_PANE_PREFIX",
+            "QUEUE_CAP",
+            "QUEUE_TTL_MS",
+            "KILL_GRACE_MS",
+            "DeskAgent",
+            "deskStateFile",
+            "deskEnabled",
+            "isDeskRow",
+            "DeskTurnRecord",
+            "DeskSendResult",
+            "DeskSendInput",
+            "DeskDeps",
+            "deskEnv",
+            "defaultTerminalHolds",
+            "createDeskRunner",
+            "DeskRunner"
+          ],
+          "state": [
+            "let secretsOnce"
+          ],
+          "emits": [
+            "inject_error"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts",
+            "lib/worker-pid.ts",
+            "lib/agent-pid.ts",
+            "lib/session-titles.ts",
+            "lib/sessions.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -2528,7 +2600,7 @@
         },
         {
           "path": "lib/idempotency.ts",
-          "lines": 83,
+          "lines": 85,
           "kind": "lib",
           "exports": [
             "TTL_MS",
@@ -3420,7 +3492,7 @@
         },
         {
           "path": "lib/orphan-question.ts",
-          "lines": 225,
+          "lines": 259,
           "kind": "lib",
           "exports": [
             "ORPHAN_WINDOW_MS",
@@ -3433,7 +3505,9 @@
             "OrphanDeps",
             "raiseOrphanQuestion",
             "orphanPickerClosed",
-            "_resetOrphansForTest"
+            "_resetOrphansForTest",
+            "sweepDeskOrphanQuestion",
+            "deskAnswerText"
           ],
           "state": [
             "raised: Map"
@@ -3749,7 +3823,7 @@
         },
         {
           "path": "lib/question-hook.ts",
-          "lines": 268,
+          "lines": 272,
           "kind": "lib",
           "exports": [
             "LOCAL_PHONE_WINDOW_MS",
@@ -3775,7 +3849,8 @@
             "lib/activity.ts",
             "lib/tool-format.ts",
             "lib/hook-common.ts",
-            "lib/sessions.ts"
+            "lib/sessions.ts",
+            "lib/desk-runner.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4865,12 +4940,13 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 630,
+          "lines": 654,
           "kind": "lib",
           "exports": [
             "Session",
             "markHeadlessSession",
             "isHeadlessSession",
+            "setPidDeadAdopter",
             "RecordOptions",
             "recordSession",
             "setTitleResolver",
@@ -4899,6 +4975,7 @@
             "archived: Map",
             "headlessIds: Set",
             "listeners: Set",
+            "let pidDeadAdopter",
             "let pruneTimer",
             "let titleResolver",
             "resolvingTitle: Set"
@@ -6906,11 +6983,10 @@
         },
         {
           "path": "routes/api.ts",
-          "lines": 594,
+          "lines": 507,
           "kind": "route-host",
           "exports": [
-            "handleApiRoute",
-            "deliverInject"
+            "handleApiRoute"
           ],
           "state": [
             "HISTORY_KINDS: Set",
@@ -6918,8 +6994,7 @@
           ],
           "emits": [
             "super_auto",
-            "resolved",
-            "inject_error"
+            "resolved"
           ],
           "consumes": [],
           "endpoints": [
@@ -7009,6 +7084,11 @@
               "prefix": false
             },
             {
+              "method": "POST",
+              "path": "/api/session/interrupt",
+              "prefix": false
+            },
+            {
               "method": "GET",
               "path": "/api/sessions/recent",
               "prefix": false
@@ -7052,13 +7132,8 @@
           "apiCalls": [],
           "imports": [
             "lib/pty-manager.ts",
-            "lib/agy-feed.ts",
-            "wiring/brain.ts",
-            "wiring/worker-mcp.ts",
             "lib/log.ts",
             "lib/questions.ts",
-            "lib/submit-confirm.ts",
-            "lib/inject-guard.ts",
             "lib/secret-store.ts",
             "lib/vault-guard.ts",
             "lib/spawn-session.ts",
@@ -7081,7 +7156,8 @@
             "lib/push.ts",
             "state.ts",
             "wiring/dialogs.ts",
-            "wiring/waiting.ts",
+            "wiring/desk-deliver.ts",
+            "lib/desk-runner.ts",
             "wiring/shell-sessions.ts",
             "lib/idempotency.ts",
             "lib/json-body.ts",
@@ -7346,7 +7422,7 @@
         },
         {
           "path": "routes/command.ts",
-          "lines": 261,
+          "lines": 118,
           "kind": "route-host",
           "exports": [
             "handleCommandRoute"
@@ -7372,14 +7448,10 @@
           "imports": [
             "lib/command-list.ts",
             "lib/command-menu.ts",
+            "lib/command-catalog.ts",
             "lib/shell-sessions.ts",
             "lib/log.ts",
-            "lib/command-offpane-cache.ts",
-            "lib/command-scrape.ts",
             "lib/sessions.ts",
-            "lib/session-pane.ts",
-            "wiring/dialogs.ts",
-            "lib/suggest-cleanup.ts",
             "lib/json-body.ts"
           ],
           "listeners": [],
@@ -7444,7 +7516,7 @@
         },
         {
           "path": "routes/dialogs.ts",
-          "lines": 104,
+          "lines": 119,
           "kind": "route-host",
           "exports": [
             "handleDialogRoute"
@@ -7474,7 +7546,10 @@
             "lib/tmux-pane.ts",
             "wiring/dialogs.ts",
             "lib/herdr.ts",
-            "lib/json-body.ts"
+            "lib/json-body.ts",
+            "lib/questions.ts",
+            "lib/desk-runner.ts",
+            "wiring/desk-deliver.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7601,7 +7676,7 @@
         },
         {
           "path": "routes/hooks.ts",
-          "lines": 567,
+          "lines": 573,
           "kind": "route-host",
           "exports": [
             "handleHookRoute"
@@ -7692,7 +7767,9 @@
             "lib/brain.ts",
             "wiring/brain.ts",
             "wiring/brain-lead.ts",
-            "lib/json-body.ts"
+            "lib/json-body.ts",
+            "lib/desk-runner.ts",
+            "wiring/desk-deliver.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7725,7 +7802,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 310,
+          "lines": 321,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -7764,7 +7841,9 @@
             "lib/json-body.ts",
             "lib/agy-feed.ts",
             "wiring/brain.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/worker-mcp.ts",
+            "lib/desk-runner.ts",
+            "wiring/desk-deliver.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8157,7 +8236,7 @@
         },
         {
           "path": "wiring/auto-compact.ts",
-          "lines": 285,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "compactionStatsSince",
@@ -8196,7 +8275,9 @@
             "state.ts",
             "lib/apns.ts",
             "lib/push.ts",
-            "wiring/dialogs.ts"
+            "wiring/dialogs.ts",
+            "lib/desk-runner.ts",
+            "wiring/desk-deliver.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8419,7 +8500,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 211,
+          "lines": 213,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -8442,7 +8523,8 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/worker-supervisor.ts",
-            "wiring/brain-workers.ts"
+            "wiring/brain-workers.ts",
+            "lib/command-catalog.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8835,7 +8917,7 @@
         },
         {
           "path": "wiring/canvas.ts",
-          "lines": 203,
+          "lines": 216,
           "kind": "lib",
           "exports": [
             "canvasStore",
@@ -8929,6 +9011,44 @@
           "imports": [
             "lib/design-state.ts",
             "state.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/desk-deliver.ts",
+          "lines": 193,
+          "kind": "lib",
+          "exports": [
+            "deskRunner",
+            "interruptSession",
+            "deliverInject"
+          ],
+          "state": [],
+          "emits": [
+            "inject_error"
+          ],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agy-feed.ts",
+            "wiring/brain.ts",
+            "wiring/worker-mcp.ts",
+            "lib/log.ts",
+            "lib/submit-confirm.ts",
+            "lib/inject-guard.ts",
+            "lib/sessions.ts",
+            "lib/activity.ts",
+            "lib/pty-manager.ts",
+            "lib/questions.ts",
+            "lib/command-catalog.ts",
+            "lib/desk-runner.ts",
+            "lib/orphan-question.ts",
+            "state.ts",
+            "wiring/dialogs.ts",
+            "wiring/waiting.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9820,7 +9940,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 247,
+          "lines": 194,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -9845,8 +9965,6 @@
             "lib/log.ts",
             "lib/pty-manager.ts",
             "lib/questions.ts",
-            "lib/submit-confirm.ts",
-            "lib/inject-guard.ts",
             "lib/secret-store.ts",
             "lib/super-auto.ts",
             "lib/sessions.ts",
@@ -9854,7 +9972,7 @@
             "lib/feed.ts",
             "state.ts",
             "wiring/dialogs.ts",
-            "wiring/waiting.ts",
+            "wiring/desk-deliver.ts",
             "wiring/copy-jobs.ts",
             "wiring/builder-jobs.ts",
             "wiring/canvas.ts",
@@ -9904,6 +10022,7 @@
             "wiring/canvas.ts",
             "wiring/copy-jobs.ts",
             "wiring/design-state.ts",
+            "wiring/desk-deliver.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -9930,12 +10049,6 @@
           "callers": [
             "companion-server.ts",
             "wiring/front-door.ts"
-          ]
-        },
-        "deliverInject": {
-          "module": "routes/api.ts",
-          "callers": [
-            "companion-server.ts"
           ]
         },
         "setCanvasDeliver": {
@@ -10049,6 +10162,7 @@
             "companion-server.ts",
             "lib/agy-feed.ts",
             "lib/codex-feed.ts",
+            "lib/desk-runner.ts",
             "lib/discover.ts",
             "lib/session-archive.ts",
             "lib/session-prune-gone.ts",
@@ -10065,6 +10179,7 @@
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
+            "wiring/desk-deliver.ts",
             "wiring/dialogs.ts",
             "wiring/orchestrator.ts",
             "wiring/shell-sessions.ts",
@@ -10304,7 +10419,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/api.ts#* /api/feed",
+            "routes/api.ts#POST /api/session/interrupt",
             "routes/attach.ts#POST /api/attach",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
@@ -10313,7 +10428,7 @@
             "routes/model.ts#POST /api/model/open",
             "routes/model.ts#POST /api/model/set",
             "routes/model.ts#POST /api/model/cancel",
-            "ws.ts"
+            "wiring/desk-deliver.ts"
           ]
         },
         "mirrorViewerCount": {
@@ -10528,6 +10643,7 @@
             "lib/agy-feed.ts",
             "lib/canvas.ts",
             "lib/command-menu.ts",
+            "lib/desk-runner.ts",
             "lib/dialog-watch.ts",
             "lib/herdr-workspace.ts",
             "lib/hook-common.ts",
@@ -10540,7 +10656,6 @@
             "lib/session-removal-log.ts",
             "lib/worker-session.ts",
             "routes/brain.ts",
-            "routes/command.ts",
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request",
@@ -10551,6 +10666,7 @@
             "wiring/brain-headless.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
+            "wiring/desk-deliver.ts",
             "wiring/dialogs.ts",
             "wiring/events.ts",
             "wiring/gauge.ts",
@@ -10731,6 +10847,7 @@
             "lib/agy-feed.ts",
             "lib/orphan-question.ts",
             "routes/hooks.ts",
+            "wiring/desk-deliver.ts",
             "wiring/dialogs.ts"
           ]
         },
@@ -10762,6 +10879,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/desk-runner.ts",
             "routes/model.ts",
             "routes/model.ts#POST /api/model/open",
             "routes/model.ts#POST /api/model/set",
@@ -10774,9 +10892,9 @@
             "lib/agy-feed.ts",
             "lib/session-resolve.ts",
             "routes/api.ts#GET /api/sessions/history",
-            "routes/api.ts#* /api/feed",
             "wiring/auto-compact.ts",
             "wiring/brain.ts",
+            "wiring/desk-deliver.ts",
             "wiring/events.ts",
             "wiring/waiting.ts"
           ]
@@ -10785,6 +10903,7 @@
           "module": "lib/sessions.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/desk-runner.ts",
             "lib/discover.ts",
             "lib/rehydrate.ts",
             "lib/worker-session.ts",
@@ -10820,7 +10939,8 @@
         "clearExternalSessionActivity": {
           "module": "lib/activity.ts",
           "callers": [
-            "lib/agy-feed.ts"
+            "lib/agy-feed.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "syncExternalToolActivity": {
@@ -10838,7 +10958,9 @@
         "scrubAgentEnv": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/agy-feed.ts"
+            "lib/agy-feed.ts",
+            "lib/command-catalog.ts",
+            "lib/desk-runner.ts"
           ]
         },
         "ApnsEnv": {
@@ -10916,8 +11038,6 @@
             "routes/body.ts#POST /api/body/alert",
             "routes/brain.ts",
             "routes/capture.ts",
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/hooks.ts",
@@ -10952,6 +11072,7 @@
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
+            "wiring/desk-deliver.ts",
             "wiring/dialogs.ts",
             "wiring/dispatch.ts",
             "wiring/events.ts",
@@ -11680,6 +11801,16 @@
             "lib/codex-feed.ts"
           ]
         },
+        "CommandEntry": {
+          "module": "lib/command-list.ts",
+          "callers": [
+            "lib/command-catalog.ts",
+            "lib/command-menu.ts",
+            "lib/command-offpane-cache.ts",
+            "lib/command-offpane.ts",
+            "routes/command.ts"
+          ]
+        },
         "unstyle": {
           "module": "lib/command-menu.ts",
           "callers": [
@@ -11698,17 +11829,7 @@
             "lib/command-list.ts",
             "lib/inject-guard.ts",
             "lib/submit-confirm.ts",
-            "lib/suggest-cleanup.ts",
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "CommandEntry": {
-          "module": "lib/command-list.ts",
-          "callers": [
-            "lib/command-menu.ts",
-            "lib/command-offpane-cache.ts",
-            "lib/command-offpane.ts",
-            "routes/command.ts"
+            "lib/suggest-cleanup.ts"
           ]
         },
         "Dialog": {
@@ -12163,6 +12284,98 @@
             "lib/design-state.ts"
           ]
         },
+        "SpawnedWorkerHandle": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-turn-watch.ts"
+          ]
+        },
+        "SpawnWorkerOpts": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultLoadAgentSecrets": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessClaudeArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "buildHeadlessCodexArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultSpawnWorker": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetParentPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "isAgentPidAlive": {
+          "module": "lib/agent-pid.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/session-prune-gone.ts",
+            "lib/sessions.ts"
+          ]
+        },
+        "defaultIsPidAlive": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultGetPidIdentity": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "transcriptPath": {
+          "module": "lib/session-titles.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/discover.ts",
+            "lib/orphan-question.ts",
+            "lib/transcript-backfill.ts",
+            "wiring/auto-compact.ts",
+            "wiring/brain-headless.ts",
+            "wiring/events.ts"
+          ]
+        },
         "parseDialog": {
           "module": "lib/dialogs.ts",
           "callers": [
@@ -12186,7 +12399,7 @@
           "module": "lib/agy-feed.ts",
           "callers": [
             "lib/discover.ts",
-            "routes/api.ts#* /api/feed"
+            "wiring/desk-deliver.ts"
           ]
         },
         "AGY_BRAIN_TASK_ID": {
@@ -12244,17 +12457,6 @@
           "module": "lib/dispatch-worker.ts",
           "callers": [
             "lib/discover.ts"
-          ]
-        },
-        "transcriptPath": {
-          "module": "lib/session-titles.ts",
-          "callers": [
-            "lib/discover.ts",
-            "lib/orphan-question.ts",
-            "lib/transcript-backfill.ts",
-            "wiring/auto-compact.ts",
-            "wiring/brain-headless.ts",
-            "wiring/events.ts"
           ]
         },
         "PaneRef": {
@@ -13245,6 +13447,12 @@
             "lib/question-hook.ts"
           ]
         },
+        "questionAnswerMap": {
+          "module": "lib/questions.ts",
+          "callers": [
+            "lib/orphan-question.ts"
+          ]
+        },
         "isPaneClean": {
           "module": "lib/command-list.ts",
           "callers": [
@@ -13445,6 +13653,18 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/pre-tool-use",
             "routes/hooks.ts#POST /hooks/permission-request"
+          ]
+        },
+        "isDeskRow": {
+          "module": "lib/desk-runner.ts",
+          "callers": [
+            "lib/question-hook.ts",
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "routes/dialogs.ts#POST /api/dialog/pick",
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/set",
+            "wiring/auto-compact.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "hookPassthroughResponse": {
@@ -14372,13 +14592,6 @@
             "routes/api.ts#POST /api/sessions/resume"
           ]
         },
-        "isAgentPidAlive": {
-          "module": "lib/agent-pid.ts",
-          "callers": [
-            "lib/session-prune-gone.ts",
-            "lib/sessions.ts"
-          ]
-        },
         "removeSessionByKey": {
           "module": "lib/sessions.ts",
           "callers": [
@@ -14633,8 +14846,7 @@
         "endFlow": {
           "module": "lib/command-scrape.ts",
           "callers": [
-            "lib/suggest-cleanup.ts",
-            "routes/command.ts#POST /api/command/suggest"
+            "lib/suggest-cleanup.ts"
           ]
         },
         "normDate": {
@@ -15406,13 +15618,6 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
-        "defaultKillPid": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/worker-invocation.ts",
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "WorkerSupervisor": {
           "module": "lib/worker-supervisor.ts",
           "callers": [
@@ -15616,19 +15821,6 @@
             "lib/worker-supervisor.ts"
           ]
         },
-        "SpawnedWorkerHandle": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts",
-            "lib/worker-turn-watch.ts"
-          ]
-        },
-        "SpawnWorkerOpts": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "progressOf": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15636,18 +15828,6 @@
           ]
         },
         "applyProgressEvent": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "buildHeadlessClaudeArgs": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "buildHeadlessCodexArgs": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -15671,12 +15851,6 @@
             "lib/worker-supervisor.ts"
           ]
         },
-        "defaultLoadAgentSecrets": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "resolveWorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15690,12 +15864,6 @@
           ]
         },
         "buildHeadlessWorkerInvocation": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultSpawnWorker": {
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
@@ -15730,24 +15898,6 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "wiring/brain-lead.ts"
-          ]
-        },
-        "defaultIsPidAlive": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultGetPidIdentity": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultGetParentPid": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
           ]
         },
         "createReceiptOutbox": {
@@ -15874,6 +16024,15 @@
             "routes/api.ts#DELETE /api/register-token"
           ]
         },
+        "deliverInject": {
+          "module": "wiring/desk-deliver.ts",
+          "callers": [
+            "routes/api.ts",
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#* /api/feed",
+            "ws.ts"
+          ]
+        },
         "withIdempotency": {
           "module": "lib/idempotency.ts",
           "callers": [
@@ -15901,6 +16060,7 @@
             "routes/api.ts#POST /api/sessions/resume",
             "routes/api.ts#POST /api/sessions/ended/delete",
             "routes/api.ts#POST /api/shell/close",
+            "routes/api.ts#POST /api/session/interrupt",
             "routes/api.ts#* /api/feed",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/command.ts#POST /api/command/suggest",
@@ -15932,6 +16092,7 @@
             "routes/api.ts#DELETE /api/learned",
             "routes/api.ts#POST /api/super-auto",
             "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/session/interrupt",
             "routes/api.ts#* /api/feed",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
@@ -16003,6 +16164,15 @@
             "routes/api.ts#POST /api/spawn-session"
           ]
         },
+        "deskEnabled": {
+          "module": "lib/desk-runner.ts",
+          "callers": [
+            "routes/api.ts#POST /api/spawn-session",
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/desk-deliver.ts"
+          ]
+        },
         "SpawnResult": {
           "module": "lib/spawn-session.ts",
           "callers": [
@@ -16022,6 +16192,18 @@
           "module": "lib/spawn-seed.ts",
           "callers": [
             "routes/api.ts#POST /api/spawn-session"
+          ]
+        },
+        "deskRunner": {
+          "module": "wiring/desk-deliver.ts",
+          "callers": [
+            "routes/api.ts#POST /api/sessions/resume",
+            "routes/api.ts#* /api/feed",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "routes/hooks.ts#POST /hooks/session-end",
+            "routes/model.ts",
+            "routes/model.ts#POST /api/model/set",
+            "wiring/auto-compact.ts"
           ]
         },
         "resumeInPane": {
@@ -16046,6 +16228,13 @@
           "module": "wiring/shell-sessions.ts",
           "callers": [
             "routes/api.ts#POST /api/shell/close"
+          ]
+        },
+        "interruptSession": {
+          "module": "wiring/desk-deliver.ts",
+          "callers": [
+            "routes/api.ts#POST /api/session/interrupt",
+            "routes/dialogs.ts#POST /api/dialog/key"
           ]
         },
         "listRecentSessions": {
@@ -16095,7 +16284,6 @@
           "module": "wiring/dialogs.ts",
           "callers": [
             "routes/api.ts#* /api/status",
-            "routes/command.ts#POST /api/command/suggest",
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "routes/model.ts",
@@ -16184,119 +16372,6 @@
             "routes/api.ts#* /api/feed",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "ws.ts"
-          ]
-        },
-        "ensureHeadlessAgySession": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
-        "clearWaitingForTarget": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "announceWaiting": {
-          "module": "wiring/waiting.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "deliverHeadlessAgyBrainTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
-        "deliverHeadlessAgyTurn": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
-        "recordUserPrompt": {
-          "module": "lib/activity.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/user-prompt-submit"
-          ]
-        },
-        "headlessBrainRunner": {
-          "module": "wiring/brain.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
-          ]
-        },
-        "workerSupervisor": {
-          "module": "wiring/worker-mcp.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "routes/model.ts#POST /api/model/set",
-            "wiring/github-webhook.ts"
-          ]
-        },
-        "yieldPaneForInject": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
-            "ws.ts"
-          ]
-        },
-        "injectRefusal": {
-          "module": "lib/inject-guard.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
-            "ws.ts"
-          ]
-        },
-        "openDialogFor": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
-            "ws.ts"
-          ]
-        },
-        "screenSnapshotFor": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "wiring/auto-compact.ts",
-            "ws.ts"
-          ]
-        },
-        "paneWidthFor": {
-          "module": "wiring/dialogs.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "injectConfirmed": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "deliveryFailedHint": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed",
-            "ws.ts"
-          ]
-        },
-        "echoPromptOnInject": {
-          "module": "lib/submit-confirm.ts",
-          "callers": [
-            "routes/api.ts#* /api/feed"
           ]
         },
         "HISTORY_STATES": {
@@ -16860,54 +16935,17 @@
             "routes/capture.ts"
           ]
         },
-        "commandLister": {
-          "module": "lib/command-offpane-cache.ts",
+        "commandCatalog": {
+          "module": "lib/command-catalog.ts",
           "callers": [
-            "routes/command.ts",
-            "routes/command.ts#POST /api/command/list"
+            "routes/command.ts#POST /api/command/suggest",
+            "routes/command.ts#POST /api/command/list",
+            "wiring/brain-headless.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "suggestFromList": {
           "module": "lib/command-menu.ts",
-          "callers": [
-            "routes/command.ts"
-          ]
-        },
-        "sessionPaneOf": {
-          "module": "lib/session-pane.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest",
-            "routes/model.ts#POST /api/model/open",
-            "routes/model.ts#POST /api/model/set",
-            "routes/model.ts#POST /api/model/cancel"
-          ]
-        },
-        "suggestRefusal": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "beginFlow": {
-          "module": "lib/command-scrape.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "clearIfOurs": {
-          "module": "lib/suggest-cleanup.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "parseCommandMenu": {
-          "module": "lib/command-menu.ts",
-          "callers": [
-            "routes/command.ts#POST /api/command/suggest"
-          ]
-        },
-        "finishSuggestProbe": {
-          "module": "lib/suggest-cleanup.ts",
           "callers": [
             "routes/command.ts#POST /api/command/suggest"
           ]
@@ -16970,14 +17008,22 @@
             "wiring/design-state.ts"
           ]
         },
-        "opensChordWindow": {
-          "module": "lib/key-gate.ts",
+        "getPendingQuestions": {
+          "module": "lib/questions.ts",
           "callers": [
-            "routes/dialogs.ts#POST /api/dialog/key"
+            "routes/dialogs.ts#POST /api/dialog/key",
+            "wiring/dialogs.ts",
+            "ws.ts"
           ]
         },
         "endQuestionsOnEscape": {
           "module": "wiring/dialogs.ts",
+          "callers": [
+            "routes/dialogs.ts#POST /api/dialog/key"
+          ]
+        },
+        "opensChordWindow": {
+          "module": "lib/key-gate.ts",
           "callers": [
             "routes/dialogs.ts#POST /api/dialog/key"
           ]
@@ -17062,6 +17108,14 @@
             "routes/hooks.ts#POST /hooks/stop"
           ]
         },
+        "recordUserPrompt": {
+          "module": "lib/activity.ts",
+          "callers": [
+            "routes/hooks.ts",
+            "routes/hooks.ts#POST /hooks/user-prompt-submit",
+            "wiring/desk-deliver.ts"
+          ]
+        },
         "cwdFromPayload": {
           "module": "lib/hook-common.ts",
           "callers": [
@@ -17125,7 +17179,8 @@
         "cancelApprovalsFor": {
           "module": "lib/pty-manager.ts",
           "callers": [
-            "routes/hooks.ts"
+            "routes/hooks.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "workerHookGate": {
@@ -17338,6 +17393,14 @@
             "routes/model.ts#POST /api/model/open"
           ]
         },
+        "sessionPaneOf": {
+          "module": "lib/session-pane.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/open",
+            "routes/model.ts#POST /api/model/set",
+            "routes/model.ts#POST /api/model/cancel"
+          ]
+        },
         "choicesFrom": {
           "module": "lib/model-control.ts",
           "callers": [
@@ -17361,6 +17424,14 @@
           "module": "lib/agy-feed.ts",
           "callers": [
             "routes/model.ts#POST /api/model/set"
+          ]
+        },
+        "workerSupervisor": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "routes/model.ts#POST /api/model/set",
+            "wiring/desk-deliver.ts",
+            "wiring/github-webhook.ts"
           ]
         },
         "setKeys": {
@@ -18105,6 +18176,13 @@
             "wiring/auto-compact.ts"
           ]
         },
+        "screenSnapshotFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/desk-deliver.ts"
+          ]
+        },
         "screenWidthFor": {
           "module": "wiring/dialogs.ts",
           "callers": [
@@ -18115,6 +18193,27 @@
           "module": "lib/inject-guard.ts",
           "callers": [
             "wiring/auto-compact.ts"
+          ]
+        },
+        "yieldPaneForInject": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "injectRefusal": {
+          "module": "lib/inject-guard.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "openDialogFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/auto-compact.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "injectVerifiedHerdr": {
@@ -18971,17 +19070,95 @@
             "wiring/design-state.ts"
           ]
         },
+        "createDeskRunner": {
+          "module": "lib/desk-runner.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "sweepDeskOrphanQuestion": {
+          "module": "lib/orphan-question.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "setPidDeadAdopter": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "headlessBrainRunner": {
+          "module": "wiring/brain.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "clearSessionWaiting": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/desk-deliver.ts",
+            "wiring/waiting.ts"
+          ]
+        },
+        "announceWaiting": {
+          "module": "wiring/waiting.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "ensureHeadlessAgySession": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "clearWaitingForTarget": {
+          "module": "lib/sessions.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "deliverHeadlessAgyBrainTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "deliverHeadlessAgyTurn": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "paneWidthFor": {
+          "module": "wiring/dialogs.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "injectConfirmed": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "deliveryFailedHint": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
+        "echoPromptOnInject": {
+          "module": "lib/submit-confirm.ts",
+          "callers": [
+            "wiring/desk-deliver.ts"
+          ]
+        },
         "SessionStatus": {
           "module": "lib/dialog-watch.ts",
           "callers": [
             "wiring/dialogs.ts"
-          ]
-        },
-        "getPendingQuestions": {
-          "module": "lib/questions.ts",
-          "callers": [
-            "wiring/dialogs.ts",
-            "ws.ts"
           ]
         },
         "createDialogWatcher": {
@@ -20295,12 +20472,6 @@
           "module": "lib/trip-autofile.ts",
           "callers": [
             "wiring/trips.ts"
-          ]
-        },
-        "clearSessionWaiting": {
-          "module": "lib/sessions.ts",
-          "callers": [
-            "wiring/waiting.ts"
           ]
         },
         "clearSessionWaitingByRef": {

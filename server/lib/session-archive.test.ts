@@ -140,3 +140,10 @@ describe("agy print-mode conversations", () => {
     expect(agyThreadVisible({ id: "resumed-worker-convo", headless: false }, undefined)).toBe(false)
   })
 })
+
+test("headless-desk: an idle desk row ages out like any chat; a busy one stays", () => {
+  const desk = { herdrPane: "headless:desk:x" }
+  expect(archiveReason(row(desk), NOW, POLICY, neverDone)).toBe("idle")
+  expect(archiveReason(row({ ...desk, agentStatus: "busy" }), NOW, POLICY, neverDone)).toBeNull()
+  expect(archiveReason(row({ ...desk, lastActiveAt: NOW - H }), NOW, POLICY, neverDone)).toBeNull()
+})

@@ -1,13 +1,7 @@
 import { hostname } from "node:os"
-import { basename } from "node:path"
 import { getPending, resolveApproval } from "../lib/pty-manager"
-import { AGY_BRAIN_PANE, deliverHeadlessAgyBrainTurn, deliverHeadlessAgyTurn, ensureHeadlessAgySession } from "../lib/agy-feed"
-import { headlessBrainRunner } from "../wiring/brain"
-import { workerSupervisor } from "../wiring/worker-mcp"
 import { companionLog } from "../lib/log"
 import { type QuestionAnswer, resolveQuestion } from "../lib/questions"
-import { deliveryFailedHint, echoPromptOnInject, injectConfirmed } from "../lib/submit-confirm"
-import { injectRefusal } from "../lib/inject-guard"
 import { handleKeyCommand, isKeyCommand } from "../lib/secret-store"
 import { keyCommandGate, originLabel } from "../lib/vault-guard"
 import { type SpawnAgent, type SpawnResult, ensureFolderTrusted, resolveSpawnCwd, spawnCompanionSession } from "../lib/spawn-session"
@@ -21,9 +15,9 @@ import { keyGate } from "../lib/key-gate"
 import { closeShellSession, spawnShellSession, wireSessions } from "../lib/shell-sessions"
 import { isSuperAuto, setSuperAuto } from "../lib/super-auto"
 import { clearLearned, forgetLearned, listLearned } from "../lib/learned-allow"
-import { clearWaitingForTarget, getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
+import { getSessionByKey, listSessions, resolveSession, waitingSummary } from "../lib/sessions"
 import { historyFor } from "../lib/transcript-backfill"
-import { getActivity, listActivities, recordUserPrompt } from "../lib/activity"
+import { getActivity, listActivities } from "../lib/activity"
 import { getFeed } from "../lib/feed"
 import {
   type ApnsEnv,
@@ -35,12 +29,16 @@ import {
 import { apnsConfigured } from "../lib/apns"
 import { pushToAll } from "../lib/push"
 import { HOST_INFO, broadcast, clientInfo, clients, describeClient } from "../state"
-import { dialogWatcher, openDialogFor, paneWidthFor, screenSnapshotFor, yieldPaneForInject } from "../wiring/dialogs"
-import { announceWaiting } from "../wiring/waiting"
+import { dialogWatcher } from "../wiring/dialogs"
+import { deliverInject, deskRunner, interruptSession } from "../wiring/desk-deliver"
+import { deskEnabled } from "../lib/desk-runner"
 import { detachTerminals } from "../wiring/shell-sessions"
 import { withIdempotency } from "../lib/idempotency"
 import { checked, isObject, jsonObject } from "../lib/json-body"
 import { HISTORY_STATES, getHistoryItem, historyCounts, listHistory, pruneHistory } from "../lib/approval-history"
+
+// deliverInject lives in wiring/desk-deliver.ts; re-exported for companion-server.ts and older importers.
+export { deliverInject }
 
 // Phone-facing API routes: approval resolve, question answer, push tokens,
 // push debug, generic broadcast, inject, learned-allow, SUPER toggle, spawn,
@@ -205,6 +203,7 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
 
     const dim = "\x1b[2m"; const reset = "\x1b[0m"; const cyan = "\x1b[36m"; const red = "\x1b[31m"
     companionLog(`${cyan}spawn${reset} ${agent} in ${cwd}`)
+    if (deskEnabled() && agent === "claude") return spawnDesk(cwd, seed.seed)
 
     let result: SpawnResult
     try {
@@ -245,6 +244,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     const body = await jsonObject<{ key?: unknown }>(req, {})
     const key = typeof body.key === "string" ? body.key : ""
     const ended = endedStore.get(key)
+    // headless-desk: the ended chat becomes a desk row; the next message resumes it headless.
+    if (deskEnabled()) {
+      const row = ended ? deskRunner.adopt({ agent: ended.agent === "codex" ? "codex" : "claude", sessionId: ended.sessionId, cwd: ended.cwd, title: ended.title }) : null
+      if (!row) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+      endedStore.drop(key)
+      companionLog(`\x1b[36mresume\x1b[0m ${ended!.sessionId} → desk row ${row.key}`)
+      return Response.json({ ok: true, via: "headless", key: row.key })
+    }
     const r = await resumeInPane(endedStore, key, {
       sendText: (p, t) => herdrGatedText(keyGate, p, t),
       sendKey: (p, k) => herdrGatedKey(keyGate, p, k),
@@ -295,6 +302,14 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     return Response.json(r, { status })
   }
 
+  // ── Stop a session's turn (desk or brain): {key} → 200 {ok, stopped} | 410 target_gone ──
+  if (url.pathname === "/api/session/interrupt" && req.method === "POST") {
+    const body = checked(await jsonObject<{ key?: string }>(req, {}), { key: "string" })
+    const session = resolveSession((body.key ?? "").trim())
+    if (!session) return Response.json({ ok: false, error: "target_gone" }, { status: 410 })
+    return Response.json({ ok: true, stopped: await interruptSession(session) })
+  }
+
   // ── Recent interactive Claude sessions (terminal: Recent sessions, Resume chip) ──
   // {ok, sessions: [{sessionId, cwd, title, updatedAt}]}, newest first.
   if (url.pathname === "/api/sessions/recent" && req.method === "GET") {
@@ -341,6 +356,21 @@ export async function handleApiRoute(req: Request, url: URL): Promise<Response |
     })
   }
   return null
+}
+
+// headless-desk: a new claude conversation as an idle desk row; the seed (if
+// any) is its first headless turn. `seed:"pending"` stays until iOS build 60.
+async function spawnDesk(rawCwd: string, seed: string | null): Promise<Response> {
+  const cwd = resolveSpawnCwd(rawCwd)
+  if ("error" in cwd) return Response.json({ ok: false, error: cwd.error }, { status: 400 })
+  ensureFolderTrusted(cwd.dir)
+  const row = deskRunner.create("claude", cwd.dir)
+  if (!row) return Response.json({ ok: false, error: "spawn failed" }, { status: 500 })
+  if (seed) {
+    const r = await deliverInject(seed, row.key)
+    if (!r.ok) companionLog(`\x1b[31mspawn seed\x1b[0m ${row.key}: ${r.status}`)
+  }
+  return Response.json({ ok: true, app: "headless", cwd: cwd.dir, agent: "claude", key: row.key, ...(seed ? { seed: "pending" } : {}) })
 }
 
 // A login shell in a marked herdr pane (lib/shell-sessions.ts). Always herdr,
@@ -426,124 +456,7 @@ async function handleInject(req: Request): Promise<Response> {
       return Response.json(body, { status })
     }
   }
-  return deliverInject(text, key, cwd)
-}
-
-/**
- * The guarded delivery behind POST /api/inject (refusals, waiting-badge clear,
- * submit confirmation). Also the canvas Context-edge send (wiring/canvas.ts),
- * so a canvas prompt passes the exact same inject guards as a phone prompt.
- */
-export async function deliverInject(text: string, key?: string, cwd?: string, boundSid?: string, canDeliver?: () => boolean): Promise<Response> {
-  const lookup = key || cwd || ""
-  let target = lookup ? (resolveSession(lookup) ?? ensureHeadlessAgySession(lookup, cwd)) : null
-  const explicit = target
-  if (!lookup) {
-    // Never a headless worker: a just-finished one is the most recent session, and an untargeted inject would resume it.
-    const recent = listSessions().find(s => !!s.tty || (s.herdrPane?.startsWith("headless:") && !s.herdrPane.startsWith("headless:worker:")))
-    if (recent) target = recent
-  }
-
-  // Headless session delivery (BKM-Q24R): brain, Inverted MCP workers, and headless Antigravity conversations.
-  if (target?.herdrPane?.startsWith("headless:")) {
-    if ((boundSid && target.sessionId !== boundSid) || (canDeliver && !canDeliver())) {
-      return Response.json({ ok: false, error: "target_changed", key, cwd }, { status: 409 })
-    }
-    const { cleared } = clearWaitingForTarget(explicit, "turn-end")
-    announceWaiting(cleared)
-    if (target.herdrPane === AGY_BRAIN_PANE) {
-      const ok = deliverHeadlessAgyBrainTurn({ prompt: text, cwd: target.cwd, model: target.model })
-      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
-    }
-    if (target.herdrPane.startsWith("headless:agy:")) {
-      const ok = deliverHeadlessAgyTurn({ sessionId: target.sessionId, cwd: target.cwd, prompt: text, model: target.model })
-      return Response.json(ok ? { ok: true, confirmed: true } : { ok: false, error: "deliver_failed" }, { status: ok ? 200 : 500 })
-    }
-    recordUserPrompt({ text, cwd: target.cwd, sessionId: target.sessionId, tty: target.tty, sessionKey: target.key })
-    if (target.herdrPane === "headless:brain") {
-      const r = await headlessBrainRunner.deliver(text)
-      return r.ok ? Response.json({ ok: true, confirmed: true }) : r
-    }
-    if (target.herdrPane.startsWith("headless:worker:")) {
-      const taskId = target.taskId || target.herdrPane.slice("headless:worker:".length)
-      const existing = workerSupervisor.getTask(taskId)
-      const dispatched = await workerSupervisor.dispatchTask({
-        taskId, repo: existing?.repo || basename(target.cwd), title: existing?.title || target.title || taskId,
-        // A known task keeps its recorded family+model (a picked one stays pinned past retry escalation); the session's model is a display value (picker changes go through setTaskModel).
-        prompt: text, mode: "auto",
-        ...(existing ? {} : { family: target.agent === "codex" || target.agent === "gemini" ? target.agent : "claude", model: target.model || undefined }),
-        inheritClaim: true, // Jeremie's own channel (Bearer): his follow-up resumes a bound task with its stored claim
-      })
-      return dispatched.ok
-        ? Response.json({ ok: true, confirmed: true })
-        : Response.json({ ok: false, error: dispatched.error ?? "deliver_failed", key, cwd }, { status: 409 })
-    }
-  }
-
-  const paneFree = await yieldPaneForInject(target)
-  const refusal = injectRefusal({
-    lookup, target, paneFree,
-    dialog: paneFree ? await openDialogFor(target) : null,
-    pane: paneFree ? await screenSnapshotFor(target) : undefined,
-    paneWidth: paneFree ? await paneWidthFor(target) : undefined,
-  })
-  if (refusal) {
-    const reset = "\x1b[0m"; const red = "\x1b[31m"
-    const who = target?.label || target?.key || lookup
-    const why = refusal.error === "target_gone" ? `target ${lookup} not registered`
-      : refusal.error === "target_idle" ? `target ${who} has no live tty`
-      : refusal.error === "busy_flow" ? `${who} pane still held by a companion flow`
-      : refusal.error === "pane_too_narrow" ? `${who} pane only ${refusal.width} cols wide — input box can't be verified`
-      : refusal.error === "pane_not_ready" ? `${who} pane not at an empty prompt (${refusal.reason}) — ${JSON.stringify(refusal.excerpt?.slice(-160) ?? "")}`
-      : `${who} has a dialog open — "${refusal.dialog?.title || "(untitled)"}"`
-    companionLog(`${red}inject refused${reset} — ${why}`)
-    const status = refusal.error === "dialog_open" || refusal.error === "busy_flow" || refusal.error === "pane_not_ready" || refusal.error === "pane_too_narrow" ? 409 : 410
-    return Response.json({
-      ok: false, error: refusal.error, key, cwd, dialog: refusal.dialog, reason: refusal.reason, excerpt: refusal.excerpt, width: refusal.width,
-    }, { status })
-  }
-
-  const reset = "\x1b[0m"; const cyan = "\x1b[36m"
-  const tag = target ? ` → ${target.label || target.key}` : " → frontmost"
-  companionLog(`${cyan}injecting${reset}${tag} "${text.slice(0, 60)}"`)
-
-  const { cleared, refused } = clearWaitingForTarget(explicit, "turn-end")
-  announceWaiting(cleared)
-  if (!cleared && refused > 0) {
-    companionLog(`\x1b[33minject: ${refused} sessions waiting, no target — cleared none\x1b[0m`)
-  }
-
-  const res = await injectConfirmed(text, target ?? undefined, undefined, boundSid === undefined ? canDeliver : () => !!boundSid && getSessionByKey(key ?? "")?.sessionId === boundSid && (canDeliver?.() ?? true))
-  if (!res.ok && res.error === "target_changed") return Response.json({ ok: false, error: res.error, key, cwd }, { status: 409 })
-  if (!res.ok && res.error === "pane_not_ready") {
-    // herdr refused it (agent_blocked): same 409 as the pre-inject refusal.
-    companionLog(`\x1b[31minject refused\x1b[0m — ${target?.label || target?.key} herdr agent blocked`)
-    return Response.json({ ok: false, error: res.error, key, cwd, reason: res.reason, excerpt: res.excerpt }, { status: 409 })
-  }
-  if (!res.ok && res.error === "not_submitted") {
-    // Typed but never submitted (no UserPromptSubmit after Enter + one
-    // retry). Tell every client so the bubble is marked undelivered, and
-    // answer 409 like the other "target alive, text not accepted" cases.
-    broadcast({ type: "inject_error", error: "not_submitted", key: target?.key ?? key, cwd: target?.cwd ?? cwd, text, excerpt: res.excerpt })
-    return Response.json({ ok: false, error: "not_submitted", excerpt: res.excerpt, key, cwd }, { status: 409 })
-  }
-  const ok = res.ok
-  if (!ok) {
-    companionLog(`\x1b[31minject failed\x1b[0m — delivery failed (${deliveryFailedHint()})`)
-  } else if (target && echoPromptOnInject(res)) {
-    // Unconfirmable delivery only (see echoPromptOnInject): the hook is
-    // the source of truth everywhere it can be observed.
-    recordUserPrompt({
-      text,
-      cwd: target.cwd,
-      sessionId: target.sessionId,
-      tty: target.tty,
-      sessionKey: target.key,
-    })
-  }
-  return Response.json(res.ok
-    ? { ok, confirmed: res.confirmed, ...(res.queued ? { queued: true } : {}), ...(res.command ? { command: true } : {}) }
-    : { ok, error: "deliver_failed", hint: deliveryFailedHint() })
+  return deliverInject(text, key, cwd, undefined, undefined, req.headers.get("idempotency-key") ?? undefined)
 }
 
 // Approval history — lib/approval-history.ts. Bearer-gated like every /api route.

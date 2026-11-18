@@ -53,6 +53,8 @@ import { isBrainHook, isSupervisedTask } from "../lib/brain"
 import { brainWiring } from "../wiring/brain"
 import { maybeRelaySendMessageToBrain } from "../wiring/brain-lead"
 import { checked, jsonObject } from "../lib/json-body"
+import { deskEnabled } from "../lib/desk-runner"
+import { deskRunner } from "../wiring/desk-deliver"
 
 // Claude Code hook endpoints (PreToolUse, PostToolUse, UserPromptSubmit,
 // PermissionRequest, Stop, SessionStart, SessionEnd) and the helpers only they
@@ -288,7 +290,9 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     // match also tells the hook the prompt came from the phone.
     const brain = isBrainHook(headerMeta.taskId || session?.taskId)
     if (brain) brainWiring.noteActivity(body.session_id ?? "")
-    const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt)
+    // A desk turn's own prompt (deskRunner): accepted, so no turn_failed; it came from the phone.
+    const deskTurn = deskRunner.noteAccepted(body.session_id ?? "")
+    const fromPhone = noteUserPromptSubmit({ key: session?.key, sessionId: body.session_id, tty: headerMeta.tty }, body.prompt) || deskTurn
     // Resets the auto-compact idle window and cancels a pending countdown.
     if (session) autoCompactor.noteUserActivity(session.key)
     // A new prompt means the picker is gone (e.g. "Chat about this").
@@ -533,6 +537,8 @@ export async function handleHookRoute(req: Request, url: URL): Promise<Response 
     }
     const removableVictims = victims.filter((s) => !s.herdrPane?.startsWith("headless:"))
     const removedKeys = removableVictims.map((s) => s.key).filter((k) => removeSessionByKey(k))
+    // headless-desk: `/exit` hands the chat to Companion (an idle desk row), `/clear` does not.
+    if (deskEnabled() && body.reason !== "clear") for (const v of removableVictims) if (v.sidConfirmed) deskRunner.adopt(v)
     for (const k of removedKeys) autoCompactor.forget(k)
     for (const v of removableVictims) herdrSessionGone(v, listSessions, body.reason ?? "")
     const removed = removedKeys.length > 0

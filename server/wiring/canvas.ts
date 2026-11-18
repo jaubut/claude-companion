@@ -94,6 +94,13 @@ function rebind(id: string, patch: NodePatch): NodePatch {
   return shouldBind ? { ...patch, data, boundSid: sidOf(key) } : { ...patch, data }
 }
 
+// headless-desk: a closed terminal's chat re-keys from `claude:tty:…` to its
+// desk row `claude:sid:<sid>`; a node bound to that sid follows it there.
+function liveKey(key: string, boundSid: string | undefined): string {
+  if (!key || !boundSid || listSessions().some((s) => s.key === key)) return key
+  return listSessions().find((s) => s.sessionId === boundSid && s.herdrPane?.startsWith("headless:desk:"))?.key ?? key
+}
+
 // The bound-session check before typing into `key`: a refusal, or null when it may go ahead.
 function boundCheck(key: string, boundSid: string | undefined): SendResult | null {
   // An empty key would make deliverInject fall back to the frontmost session.
@@ -117,19 +124,24 @@ export async function canvasSend(edge: CanvasEdge, canDeliver?: () => boolean): 
   const from = canvasStore.node(edge.from)
   const to = canvasStore.node(edge.to)
   if (!from || !to) return { ok: false, status: 404, error: "node_not_found" }
-  const refused = boundCheck(to.ref, to.boundSid)
+  const key = liveKey(to.ref, to.boundSid)
+  const refused = boundCheck(key, to.boundSid)
   if (refused) return refused
   const prompt = await contextPrompt(from, tursoQuery)
   if (!prompt.ok) return { ok: false, status: prompt.error === "source_not_found" ? 404 : 400, error: prompt.error }
-  companionLog(`canvas send ${edge.id}: ${from.kind} ${from.ref || from.id} → ${to.ref}`)
-  return inject(prompt.text, to.ref, canDeliver ? to.boundSid : undefined, canDeliver)
+  companionLog(`canvas send ${edge.id}: ${from.kind} ${from.ref || from.id} → ${key}`)
+  // A desk send that queued behind a running turn is ok (delivered-pending).
+  return inject(prompt.text, key, canDeliver ? to.boundSid : undefined, canDeliver)
 }
 
 // Design-first pick: tell the agent that posted the preview (data.sessionKey) which direction won.
 // null = no live session to tell: the pick is only stored, the agent reads it from GET /api/canvas.
 export async function canvasPickNotify(node: CanvasNode, claimValid?: () => boolean): Promise<SendResult | null> {
-  const key = bindKey(node.kind, node)
-  if (!key || !listSessions().some((s) => s.key === key)) return null
+  const key = liveKey(bindKey(node.kind, node), node.boundSid)
+  if (!key || !listSessions().some((s) => s.key === key)) {
+    companionLog(`canvas pick ${node.id}: no live session for ${key || "(unbound)"} — stored only`)
+    return null
+  }
   const refused = boundCheck(key, node.boundSid)
   if (refused) return refused
   const direction = typeof node.data.direction === "string" ? node.data.direction : ""
@@ -141,6 +153,7 @@ export async function canvasPickNotify(node: CanvasNode, claimValid?: () => bool
   } : undefined
   const result = await inject(oneLine(`Picked direction: ${direction} — ${node.ref}`), key, canDeliver ? node.boundSid : undefined, canDeliver)
   // Only a cancellation observed before a write is stored-only, never a later edit.
+  if (superseded) companionLog(`canvas pick ${node.id}: superseded before delivery — stored only`)
   return superseded ? null : result
 }
 

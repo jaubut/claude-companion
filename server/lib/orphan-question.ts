@@ -22,7 +22,7 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs"
 import { companionLog } from "./log"
 import type { Herdr } from "./herdr"
-import { type QuestionAnswer, type QuestionItem, addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput } from "./questions"
+import { type QuestionAnswer, type QuestionItem, addQuestionRequest, cancelQuestionsFor, isQuestionTool, parseQuestionInput, questionAnswerMap } from "./questions"
 import { REVIEW_RE, answeredCount, driveQuestionPicker, pickerRegion, pickerShowsQuestions } from "./question-driver"
 import { type InjectTarget, withPickerIO } from "./keyboard-inject"
 import { transcriptPath } from "./session-titles"
@@ -44,7 +44,10 @@ interface Block { type?: string; id?: string; name?: string; input?: unknown; to
 // The last question tool call in the transcript tail with no tool_result.
 // Bounded tail read, like modelFromTranscript: a truncated first line just
 // fails JSON.parse and is skipped.
-export function openQuestionFromTranscript(path: string, tailBytes = 262_144): OpenQuestionCall | null {
+// `denied`: a desk turn (`claude -p`) has no picker — an unanswered question
+// ends as an error tool_result, so that counts as open too, until a later
+// prompt moves the conversation on.
+export function openQuestionFromTranscript(path: string, tailBytes = 262_144, denied = false): OpenQuestionCall | null {
   let text: string
   try {
     const size = statSync(path).size
@@ -62,12 +65,13 @@ export function openQuestionFromTranscript(path: string, tailBytes = 262_144): O
   let open: OpenQuestionCall | null = null
   for (const line of text.split("\n")) {
     if (!line.trim()) continue
-    let entry: { message?: { content?: unknown } }
+    let entry: { type?: string; isMeta?: boolean; message?: { content?: unknown } }
     try { entry = JSON.parse(line) } catch { continue }
     const content = entry.message?.content
+    if (denied && entry.type === "user" && typeof content === "string" && !entry.isMeta) open = null
     if (!Array.isArray(content)) continue
     for (const b of content as Block[]) {
-      if (b?.type === "tool_result" && b.tool_use_id) answered.add(b.tool_use_id)
+      if (b?.type === "tool_result" && b.tool_use_id && !(denied && (b as { is_error?: unknown }).is_error === true)) answered.add(b.tool_use_id)
       if (b?.type === "tool_use" && b.id && b.name && isQuestionTool(b.name)) {
         const questions = parseQuestionInput(b.input)
         if (questions) open = { toolUseId: b.id, questions }
@@ -221,4 +225,34 @@ export function orphanPickerClosed(key: string): void {
 
 export function _resetOrphansForTest(): void {
   raised.clear()
+}
+
+// Desk session (headless-desk P1): a question its `claude -p` turn could not
+// get answered (phone window lapsed, server restarted mid-question) comes back
+// as a card; the answer goes in as the next desk turn, formatted as text.
+// Triggered at boot and on each desk turn exit (wiring/desk-deliver.ts).
+export function sweepDeskOrphanQuestion(
+  s: Session,
+  send: (text: string) => { ok: boolean },
+  deps: Pick<OrphanDeps, "ask"> & { readOpen?: (s: Session) => OpenQuestionCall | null } = {},
+): boolean {
+  if (s.agent !== "claude" || !s.cwd || !s.sessionId) return false
+  const open = deps.readOpen ? deps.readOpen(s) : openQuestionFromTranscript(transcriptPath(s.cwd, s.sessionId), undefined, true)
+  if (!open || raised.get(s.key) === open.toolUseId) return false
+  raised.set(s.key, open.toolUseId)
+  companionLog(`${yellow}→ phone${reset} desk question re-raised ${dim}${open.questions[0]?.question.slice(0, 80) ?? ""} · ${s.key}${reset}`)
+  void (deps.ask ?? addQuestionRequest)(
+    { agent: "claude", sessionId: s.sessionId, cwd: s.cwd, questions: open.questions, sessionKey: s.key },
+    { expiryMs: ORPHAN_WINDOW_MS },
+  ).then((answers) => {
+    if (answers.length === 0) return
+    const r = send(deskAnswerText(open.questions, answers))
+    companionLog(r.ok ? `${green}desk question answered${reset} → ${s.key}` : `${red}desk answer not sent${reset} → ${s.key}`)
+  })
+  return true
+}
+
+export function deskAnswerText(questions: QuestionItem[], answers: QuestionAnswer[]): string {
+  const map = questionAnswerMap(questions, answers)
+  return ["My answers to your question:", ...Object.entries(map).map(([q, a]) => `- ${q} → ${a}`)].join("\n")
 }

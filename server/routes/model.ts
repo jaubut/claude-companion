@@ -9,6 +9,8 @@ import { checked, jsonObject } from "../lib/json-body"
 import { AGY_BRAIN_TASK_ID, getAgyBrainModel, setAgyBrainModel } from "../lib/agy-feed"
 import { getBrainModel, setBrainModel } from "../wiring/brain"
 import { workerSupervisor } from "../wiring/worker-mcp"
+import { isDeskRow } from "../lib/desk-runner"
+import { deskRunner } from "../wiring/desk-deliver"
 
 interface HeadlessModelEntry {
   id: string
@@ -44,7 +46,10 @@ function isHeadlessSession(session: Session | null): boolean {
   return false
 }
 
+// The one filter both open and set use, so an index round-trips.
 function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
+  // A desk turn passes the id as --model: its own family, never the router's "auto".
+  if (isDeskRow(session)) return HEADLESS_MODELS.filter((m) => m.family === session.agent && m.id !== "auto")
   if (session.taskId === "brain") {
     return HEADLESS_MODELS.filter((m) => m.family === "claude")
   }
@@ -61,8 +66,8 @@ function buildHeadlessChoices(session: Session): ModelChoice[] {
       ? (session.model || getBrainModel())
       : session.taskId === AGY_BRAIN_TASK_ID
         ? (session.model || getAgyBrainModel())
-        : (session.model || "claude-opus-5-5")
-  ).trim().toLowerCase()
+        : (deskRunner.modelFor(session.sessionId) || session.model || "claude-opus-5-5")
+  ).trim().toLowerCase().replace(/\[1m\]$/, "")
   let matchedIndex = catalog.findIndex((m) => m.id.toLowerCase() === rawCurrent || m.aliases.includes(rawCurrent))
   if (matchedIndex < 0) matchedIndex = 0
   return catalog.map((m, idx) => ({
@@ -212,6 +217,12 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
         return Response.json({ ok: false, error: "no_such_model" }, { status: 400 })
       }
       const picked = catalog[index]!
+      if (isDeskRow(session)) {
+        // Hooks overwrite Session.model each turn: the pick lives in the desk runner, the pill follows the next reply.
+        deskRunner.setModel(session.sessionId, picked.id)
+        log(`set (desk) → "${picked.id}" scope=${scope} on ${session.label || session.key}`)
+        return Response.json({ ok: true, key: session.key, scope, chosen: { index, text: picked.text, current: true } })
+      }
       if (session.taskId === "brain") {
         setBrainModel(picked.id)
       } else if (session.taskId === AGY_BRAIN_TASK_ID) {
@@ -220,7 +231,7 @@ export async function handleModelRoute(req: Request, url: URL): Promise<Response
         workerSupervisor.setTaskModel(session.taskId, picked.id)
       }
       setSessionModel(session.key, picked.id)
-      recordSession({ ...session, agent: picked.family, model: picked.id }, { sessionIdConfirmed: true })
+      recordSession({ ...session, model: picked.id }, { sessionIdConfirmed: true })
       const chosen: ModelChoice = { index, text: picked.text, current: true }
       log(`set (headless) → "${picked.id}" scope=${scope} on ${session.label || session.key}`)
       return Response.json({ ok: true, key: session.key, scope, chosen })

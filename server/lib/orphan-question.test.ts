@@ -2,7 +2,7 @@ import { test, expect, beforeEach } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { REVIEW_CANCEL, REVIEW_SUBMIT, _resetOrphansForTest, isQuestionReview, openQuestionFromTranscript, orphanPickerClosed, raiseOrphanQuestion, reviewSummary } from "./orphan-question"
+import { REVIEW_CANCEL, REVIEW_SUBMIT, _resetOrphansForTest, isQuestionReview, openQuestionFromTranscript, orphanPickerClosed, raiseOrphanQuestion, reviewSummary, sweepDeskOrphanQuestion } from "./orphan-question"
 import { getPendingQuestions, type QuestionAnswer } from "./questions"
 import type { Session } from "./sessions"
 import { type InjectTarget, withPickerIO } from "./keyboard-inject"
@@ -232,4 +232,31 @@ test("herdr picker IO reads the plain shape tmux's `capture-pane -p` gives", asy
   const text = await herdrPickerIO("w6:p1", pane.h).capture!()
   expect(text).toBe(herdrScreen(REVIEW_PANE))
   expect(isQuestionReview(text!)).toBe(true)
+})
+
+// headless-desk: a desk turn's question the phone never answered ends as an
+// error tool_result; it comes back as a card and the answer is the next turn.
+test("desk sweep: a denied question re-raises once; its answer is sent as text; a later prompt closes it", async () => {
+  _resetOrphansForTest()
+  const q = { question: "Which color do you prefer?", header: "Color", multiSelect: false, options: [{ label: "Red" }, { label: "Blue" }] }
+  const lines = [
+    { type: "user", message: { role: "user", content: "ask me a color" } },
+    { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "AskUserQuestion", input: { questions: [q] } }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", is_error: true, content: "Tool permission request failed: AbortError: Stream closed" }] } },
+    { type: "user", isMeta: true, message: { content: "<system-reminder>x</system-reminder>" } },
+  ]
+  const path = join(mkdtempSync(join(tmpdir(), "desk-orphan-")), "t.jsonl")
+  writeFileSync(path, lines.map((l) => JSON.stringify(l)).join("\n"))
+  expect(openQuestionFromTranscript(path)).toBeNull()
+  expect(openQuestionFromTranscript(path, undefined, true)?.toolUseId).toBe("tu1")
+  const s = { key: "claude:sid:do", agent: "claude", cwd: "/tmp/do", sessionId: "do" } as unknown as Session
+  const sent: string[] = []
+  const send = (t: string) => { sent.push(t); return { ok: true } }
+  const readOpen = () => openQuestionFromTranscript(path, undefined, true)
+  expect(sweepDeskOrphanQuestion(s, send, { readOpen, ask: async () => [{ selected: ["Blue"] }] })).toBe(true)
+  expect(sweepDeskOrphanQuestion(s, send, { readOpen, ask: async () => [] })).toBe(false)
+  await Bun.sleep(0)
+  expect(sent).toEqual(["My answers to your question:\n- Which color do you prefer? → Blue"])
+  writeFileSync(path, [...lines, { type: "user", message: { content: "My answers to your question:\n- Which color do you prefer? → Blue" } }].map((l) => JSON.stringify(l)).join("\n"))
+  expect(openQuestionFromTranscript(path, undefined, true)).toBeNull()
 })
