@@ -25,7 +25,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
-| `lib/worker-invocation.ts` | 535 | lib | 39 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
+| `lib/worker-invocation.ts` | 539 | lib | 39 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |

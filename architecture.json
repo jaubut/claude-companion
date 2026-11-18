@@ -6631,7 +6631,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 535,
+          "lines": 539,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
