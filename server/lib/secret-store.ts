@@ -5,7 +5,17 @@ import { writeLimiter } from "./vault-guard"
 import { forwardVault, vaultUpstream } from "./vault-upstream"
 
 // Companion Vault: list / add / rotate / change hosts / delete the agent
-// secrets in ~/.config/tls-agent/secrets.env — values are WRITE-ONLY.
+// secrets — values are WRITE-ONLY.
+//
+// Where sessions read them: tls-agent-env → `tls-secrets.py env`, which reads
+// the 1Password vault Agents-Zettlab when ~/.config/tls-agent/op-token exists
+// and falls back to secrets.env when op fails. So every write goes to
+// 1Password first (`op` with that token, same item shape as tls-secrets.py:
+// title = NAME, field `credential`, tags `host:<h>`; the value only ever on
+// op's stdin), then to secrets.env (the fallback, and the name list), then
+// the .env / env mirrors (read directly by scripts: calendar-sync flow,
+// perplexity-mcp, scout-nightly, jev hooks). op down → secrets.env only, and
+// the reply says so. No op-token → secrets.env only (pre-1Password hosts).
 //
 // Store format and masking are owned by ~/.claude/tools/tls-secrets.py:
 // one line per key, `NAME='value'  # host [host ...] [scripts|plain]`. Every
@@ -41,6 +51,8 @@ const FLAGS = new Set(["scripts", "plain"])
 const HEADER = "# Agent secrets. NAME='value'  # hosts [scripts]   — see ~/.claude/tools/tls-secrets.py"
 
 export type SyncFn = () => Promise<{ ok: boolean; detail: string }>
+/** Runs `op` with the service-account token in the child's env only. */
+export type OpFn = (args: string[], stdin?: string) => Promise<{ ok: boolean; out: string }>
 export type VaultAction = "created" | "updated" | "hosts" | "deleted"
 
 /** Who asked for a write, as recorded in the audit log. */
@@ -59,8 +71,10 @@ export interface VaultResult {
   retry_after?: number
 }
 
-// Test seam: tests swap `sync` for a mock instead of spawning python.
-export const vaultDeps: { sync: SyncFn } = { sync: runSync }
+// Test seam: tests swap `sync` / `op` for mocks instead of spawning python / op.
+export const vaultDeps: { sync: SyncFn; op: OpFn } = { sync: runSync, op: runOp }
+
+const OP_VAULT = "Agents-Zettlab"
 
 export function storePath(): string {
   return process.env.TLS_SECRETS_FILE ?? join(homedir(), ".config", "tls-agent", "secrets.env")
@@ -73,6 +87,11 @@ export function syncToolPath(): string {
 /** Writes are only possible where the masking sync tool exists. */
 export function vaultWritable(): boolean {
   return existsSync(syncToolPath())
+}
+
+/** tls-secrets.py's 1Password token: present = 1Password is the session source. */
+export function opTokenPath(): string {
+  return join(dirname(storePath()), "op-token")
 }
 
 export function auditPath(): string {
@@ -177,15 +196,51 @@ async function runSync(): Promise<{ ok: boolean; detail: string }> {
   return { ok: code === 0, detail: out.slice(-200) }
 }
 
+async function runOp(args: string[], stdin?: string): Promise<{ ok: boolean; out: string }> {
+  const token = readFileSync(opTokenPath(), "utf8").trim()
+  const bin = Bun.which("op") ?? join(homedir(), ".local", "bin", "op")
+  const proc = Bun.spawn([bin, ...args], {
+    stdin: stdin === undefined ? "ignore" : new Blob([stdin]), stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
+  })
+  const timer = setTimeout(() => proc.kill(), 30_000)
+  const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  clearTimeout(timer)
+  return { ok: code === 0, out: (code === 0 ? out : err).trim() }
+}
+
+type OpWrite = { ok: true; created: boolean } | { ok: false; detail: string }
+
+/** Apply one vault change to 1Password, as tls-secrets.py add / tag would. */
+async function opWrite(action: VaultAction, name: string, hosts: string[], value?: string): Promise<OpWrite> {
+  try {
+    const list = await vaultDeps.op(["item", "list", "--vault", OP_VAULT, "--format", "json"])
+    if (!list.ok) return { ok: false, detail: list.out }
+    const item = (JSON.parse(list.out || "[]") as { id: string; title?: string; tags?: string[] }[]).find((i) => i.title === name)
+    // Absent from 1Password: nothing to delete or retag there.
+    if (!item && value === undefined) return { ok: true, created: false }
+    const tags = [...hosts.map((h) => `host:${h}`), ...(item?.tags ?? []).filter((t) => !t.startsWith("host:"))]
+    const args = action === "deleted" ? ["item", "delete", item!.id, "--vault", OP_VAULT]
+      : value === undefined ? ["item", "edit", item!.id, "--vault", OP_VAULT, "--tags", tags.join(",")]
+      : item ? ["item", "edit", item.id, "--vault", OP_VAULT] : ["item", "create", "--vault", OP_VAULT, "-"]
+    const template = value === undefined ? undefined
+      : JSON.stringify({ title: name, category: "API_CREDENTIAL", tags, fields: [{ id: "credential", label: "credential", type: "CONCEALED", value }] })
+    const r = await vaultDeps.op(args, template)
+    return r.ok ? { ok: true, created: !item } : { ok: false, detail: r.out }
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 function toOrigin(o: string | Partial<AuditOrigin>): AuditOrigin {
   const raw = typeof o === "string" ? { device_claimed: o } : o
   return { device_claimed: raw.device_claimed ?? "unknown", transport: raw.transport ?? "unknown", peer: raw.peer ?? "unknown" }
 }
 
-function audit(action: VaultAction, name: string, hosts: string[], origin: AuditOrigin): void {
+function audit(action: VaultAction, name: string, hosts: string[], origin: AuditOrigin, store: string): void {
   const path = auditPath()
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), action, name, hosts, ...origin }) + "\n", { mode: 0o600 })
+  appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), action, name, hosts, store, ...origin }) + "\n", { mode: 0o600 })
 }
 
 function lastAuditTimes(): Map<string, string> {
@@ -241,25 +296,38 @@ export function mirrorEnvFiles(storeFile: string, action: VaultAction, name: str
 
 async function commit(before: string | null, after: string, action: VaultAction, name: string, hosts: string[], origin: AuditOrigin, secret?: string): Promise<VaultResult> {
   const path = storePath()
+  const redact = (s: string): string => (secret ? s.split(secret).join("•••") : s).slice(0, 200)
+  const op = existsSync(opTokenPath()) ? await opWrite(action, name, hosts, secret) : null
   atomicWrite(path, after)
+  // Masks every name tls-secrets.py env exports (1Password included).
   const synced = await vaultDeps.sync().catch((e: unknown) => ({ ok: false, detail: String(e) }))
   if (!synced.ok) {
+    const detail = redact(synced.detail)
+    // ponytail: only a 1Password create is undone (a new name would go out unmasked);
+    // a rotate / retag / delete keeps its stale mask by name, so it stays.
+    if (op?.ok && !op.created) {
+      return { ok: false, status: 500, name, error: "sync_failed", message: `${name} modifié dans 1Password, mais masquage échoué (${detail}) — relance tls-secrets.py sync.` }
+    }
+    if (op?.ok) await vaultDeps.op(["item", "delete", name, "--vault", OP_VAULT]).catch(() => undefined)
     // No file before = remove it: an empty secrets.env would make
     // tls-agent-env switch to it and drop every other key.
     if (before === null) unlinkSync(path)
     else atomicWrite(path, before)
-    const detail = secret ? synced.detail.split(secret).join("•••") : synced.detail
     return { ok: false, status: 500, name, error: "sync_failed", message: `${name} NON enregistré — masquage échoué (${detail}). Rien n'a changé.` }
   }
   mirrorEnvFiles(path, action, name, hosts, secret)
-  audit(action, name, hosts, origin)
-  return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts) }
+  audit(action, name, hosts, origin, op?.ok ? "1password" : "secrets.env")
+  const file = path.replace(homedir(), "~")
+  const dest = op?.ok ? `1Password (coffre ${OP_VAULT})` : file
+  const warn = op && !op.ok ? ` ⚠️ 1Password injoignable (${redact(op.detail)}): repli sur ${file}, lu par les sessions seulement tant que 1Password ne répond pas — réessaie.` : ""
+  return { ok: true, status: 200, name, hosts, action, message: messageFor(action, name, hosts, dest) + warn }
 }
 
-function messageFor(action: VaultAction, name: string, hosts: string[]): string {
-  if (action === "deleted") return `${name} supprimé.`
+function messageFor(action: VaultAction, name: string, hosts: string[], dest: string): string {
+  const after = "Les nouvelles sessions l'auront; les sessions ouvertes gardent l'ancienne valeur jusqu'au redémarrage."
+  if (action === "deleted") return `${name} supprimé de ${dest}. ${after}`
   const where = hosts.length ? hosts.join(" ") : "aucun hôte: jamais envoyé"
-  return `🔑 ${name} ${action === "hosts" ? "→" : "enregistré"} (${where}). Actif à la prochaine session.`
+  return `🔑 ${name} ${action === "hosts" ? "→" : "enregistré"} (${where}) dans ${dest}. ${after}`
 }
 
 function bad(error: string, message: string, status = 400): VaultResult {
@@ -365,7 +433,7 @@ export function revealSecret(name: string, origin: Partial<AuditOrigin>): Reveal
 /**
  * Store abstraction for a create/rotate: the upstream Companion's vault when
  * COMPANION_VAULT_UPSTREAM is set (its status + body mapped through), else
- * this host's secrets.env via upsertSecret (incl. its 501 check).
+ * this host's vault (1Password, then secrets.env) via upsertSecret (incl. its 501 check).
  */
 export async function saveSecret(input: { name: string; value: string; hosts: string[] }, origin: Partial<AuditOrigin>): Promise<VaultResult> {
   const up = vaultUpstream()
