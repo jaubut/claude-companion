@@ -210,6 +210,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
 | `lib/board-mcp.ts` | 99 | lib | 4 |  |
+| `lib/byq.ts` | 98 | lib | 12 | state: let index, THUMB_HOSTS: Set |
 | `lib/request-gate.ts` | 96 | lib | 6 | state: NAMES: Set, let tailscaleName |
 | `routes/worker-mcp.ts` | 96 | route-host | 3 | route: * /api/mcp/workers |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
@@ -218,7 +219,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `lib/turso-test-db.test-util.ts` | 93 | lib | 5 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
-| `lib/byq.ts` | 92 | lib | 12 | state: let index, THUMB_HOSTS: Set |
 | `lib/super-auto.ts` | 92 | lib | 4 | state: let cached |
 | `state.ts` | 91 | lib | 9 |  |
 | `lib/herdr-inject.ts` | 90 | lib | 6 |  |

@@ -1388,7 +1388,7 @@
         },
         {
           "path": "lib/byq.ts",
-          "lines": 92,
+          "lines": 98,
           "kind": "lib",
           "exports": [
             "ByqManifestItem",
