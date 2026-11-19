@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { existsSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
@@ -17,6 +18,20 @@ import { commandCatalog } from "../lib/command-catalog"
 export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
 export const HEADLESS_BRAIN_PANE = "headless:brain"
 
+/**
+ * The brain's --mcp-config (canvas-board-sync A1): only `board`, on loopback,
+ * the same definition as the user-scope entry (scripts/board-mcp-register.ts).
+ * No token inside: the headersHelper reads it at connect time. Mode 0600.
+ */
+export function writeBrainMcpConfig(dir = join(homedir(), ".claude-companion"), port = Number(process.env.COMPANION_PORT) || 4245): string {
+  const path = join(dir, "brain-mcp.json")
+  const headersHelper = join(import.meta.dir, "..", "..", "scripts", "board-mcp-headers.sh")
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(path, JSON.stringify({ mcpServers: { board: { type: "http", url: `http://127.0.0.1:${port}/api/mcp/board`, headersHelper } } }, null, 2), { mode: 0o600 })
+  chmodSync(path, 0o600)
+  return path
+}
+
 export function getBrainModel(): string {
   return getKv("brain_model") || "auto"
 }
@@ -33,6 +48,7 @@ export function createHeadlessBrainRunner(hooks: {
   let delivering = false
   let lastTurnReply = ""
   let sweptLegacyHerdr = false
+  let mcpConfig = ""
 
   function syncSession(activeTurnModel?: string): Session | null {
     if (!brainAlive || !currentSessionId) return null
@@ -79,6 +95,7 @@ export function createHeadlessBrainRunner(hooks: {
         void brainWorkers.stopBrain().catch(() => undefined)
       }
       ensureFolderTrusted(BRAIN_DIR)
+      mcpConfig = writeBrainMcpConfig()
       const hasResumeTranscript = !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
       currentSessionId = hasResumeTranscript ? resume! : randomUUID()
       sessionStarted = hasResumeTranscript
@@ -137,6 +154,7 @@ export function createHeadlessBrainRunner(hooks: {
         resume: sessionStarted,
         mode: "auto",
         model: turnModel,
+        mcpConfig: mcpConfig || undefined,
       })
       lastTurnReply = ""
       let settled = false
@@ -145,7 +163,7 @@ export function createHeadlessBrainRunner(hooks: {
           cmd: "claude",
           args,
           cwd: BRAIN_DIR,
-          env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1" },
+          env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1", COMPANION_BOARD_CALLER: "brain" },
           onStdoutLine(line) {
             commandCatalog.noteLine(BRAIN_DIR, line)
             if (settled) return

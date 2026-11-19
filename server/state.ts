@@ -25,6 +25,8 @@ export interface WsData {
   // session's key and pane, + its tmux address for a tmux pane. Never in
   // `clients` either.
   mirror?: { key: string; pane: string; tmux?: { pane: string; socket: string } }
+  // Set on a /api/board/sync socket (wiring/board.ts): its tldraw sync session. Never in `clients`.
+  board?: { sessionId: string }
   // The iOS build that opened this socket (X-Companion-Build at upgrade,
   // brain-v2): P3 gates archived-channel frames on it. Absent = a shipped build.
   build?: string

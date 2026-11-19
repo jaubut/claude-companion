@@ -14,6 +14,12 @@
     "contracts:sync": "bun scripts/contracts-sync.ts"
   },
   "dependencies": {
+    "@tldraw/state": "5.6.0",
+    "@tldraw/store": "5.6.0",
+    "@tldraw/sync-core": "5.6.0",
+    "@tldraw/tlschema": "5.6.0",
+    "@tldraw/utils": "5.6.0",
+    "@tldraw/validate": "5.6.0",
     "qrcode": "^1.5.4",
     "sharp": "^0.35.5"
   },

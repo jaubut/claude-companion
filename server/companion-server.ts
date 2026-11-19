@@ -24,6 +24,7 @@ import { handleGaugeRoute } from "./routes/gauge"
 import { handleCopyJobsRoute } from "./routes/copy-jobs"
 import { handleBuilderJobsRoute } from "./routes/builder-jobs"
 import { handleWorkerMcpRoute } from "./routes/worker-mcp"
+import { BOARD_SYNC_PATH, boardCors, handleBoardRoute } from "./routes/board"
 import { handleMyTasksRoute } from "./routes/my-tasks"
 import { handleTasteRoute } from "./routes/taste"
 import { handleNotesRoute } from "./routes/notes"
@@ -115,6 +116,9 @@ export function createCompanionServer(port: number) {
       // LAN could hit /api/inject and paste arbitrary keystrokes.
       const isHookCall = url.pathname.startsWith("/hooks/")
       if (isHookCall && !hookCallerAllowed(req)) return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+      // CORS preflight for the Canvas page (routes/board.ts): carries no token by design.
+      const preflight = boardCors(req, url)
+      if (preflight) return preflight
       const isStateMutation = url.pathname === "/ws" || url.pathname.startsWith("/api/")
       if (isStateMutation && !checkBearer(req)) {
         return unauthorized()
@@ -150,6 +154,17 @@ export function createCompanionServer(port: number) {
         const upgraded = server.upgrade(req, {
           data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), keyGate: keyCommandGate(req), build: clientBuild(req) },
         })
+        if (upgraded) return undefined
+        return new Response("WebSocket upgrade failed", { status: 500 })
+      }
+
+      // ── Canvas board sync (routes/board.ts, wiring/board.ts) ──
+      // After the Bearer gate: the WKWebView page sends ?token= (no WS headers).
+      if (url.pathname === BOARD_SYNC_PATH) {
+        if (!brainEnabled()) return Response.json({ ok: false, error: "board_disabled" }, { status: 404 })
+        const sessionId = url.searchParams.get("sessionId") ?? ""
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return Response.json({ ok: false, error: "bad_session" }, { status: 400 })
+        const upgraded = server.upgrade(req, { data: { id: crypto.randomUUID(), client: clientInfo(req, originLabel(req)), board: { sessionId } } })
         if (upgraded) return undefined
         return new Response("WebSocket upgrade failed", { status: 500 })
       }
@@ -191,7 +206,7 @@ export function createCompanionServer(port: number) {
       // Route chain — hooks, phone API, orchestrator, dialog mirror. Each
       // returns null for paths it doesn't own; the plain `/` page is last.
       try {
-        for (const route of [handleWorkerBlockedRoute, handleGithubWebhookRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleDesignStateRoute, handleCanvasRoute]) {
+        for (const route of [handleWorkerBlockedRoute, handleGithubWebhookRoute, handleHookRoute, brainRoute, handleWorkerMcpRoute, handleBoardRoute, handleApiRoute, handleTriageRoute, handleOrchestratorRoute, handleDialogRoute, handleModelRoute, handleCommandRoute, handleAttachRoute, handleMediaRoute, handleFilesRoute, handleGoalsRoute, handleBodyRoute, handleVaultRoute, handleRecordsRoute, handleCaptureRoute, handleTripsRoute, handleAutoCompactRoute, handleGaugeRoute, handleCopyJobsRoute, handleBuilderJobsRoute, handleTasksAgentRoute, handleMyTasksRoute, handleTasteRoute, handleNotesRoute, handleDesignStateRoute, handleCanvasRoute]) {
           const handled = await route(req, url)
           if (handled) return handled
         }
