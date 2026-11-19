@@ -1,6 +1,7 @@
 import { toRichText } from "@tldraw/tlschema"
 import { BOARD_ASSET_PREFIX, boardAssetFile } from "./board-assets"
-import { type BoardRecord, BOARD_SHAPE_TYPES, type BoardShapeType, buildArrowBindings, buildShape, nextIndex, richTextToPlain } from "./board-records"
+import { type BoardRecord, BOARD_PROPS_TYPES, BOARD_SHAPE_TYPES, type BoardShapeType, buildArrowBindings, buildShape, nextIndex, richTextToPlain } from "./board-records"
+import { BYQ_SLUGS } from "./byq"
 import { type BoardRoom, type PresenceRecord, boardPresence, boardRecords, boardRoom } from "./board-room"
 
 // The one implementation of the board tools (canvas-board-sync), served by
@@ -33,6 +34,8 @@ export interface BoardShapeView {
   color?: string
   title?: string
   html?: string
+  /** ui-block / auto-layout-frame: every prop (layout, slug, name). */
+  props?: Record<string, unknown>
   arrow?: { from: string | null; to: string | null }
   image?: { file: string; path: string | null; url: string; mime: string | null; w: number | null; h: number | null }
   by?: string
@@ -49,8 +52,8 @@ export interface BoardPresenceView {
 export interface BoardReadOpts { ids?: string[]; focus?: boolean; html?: boolean }
 
 export type BoardOp =
-  | { op: "create"; type: BoardShapeType; id?: string; parentId?: string; x?: number; y?: number; text?: string; geo?: string; color?: string; w?: number; h?: number; from?: string; to?: string; html?: string; title?: string }
-  | { op: "update"; id: string; x?: number; y?: number; rotation?: number; text?: string; w?: number; h?: number; color?: string; geo?: string; html?: string; title?: string }
+  | { op: "create"; type: BoardShapeType; id?: string; parentId?: string; x?: number; y?: number; text?: string; geo?: string; color?: string; w?: number; h?: number; from?: string; to?: string; html?: string; title?: string; props?: Record<string, unknown> }
+  | { op: "update"; id: string; x?: number; y?: number; rotation?: number; text?: string; w?: number; h?: number; color?: string; geo?: string; html?: string; title?: string; props?: Record<string, unknown> }
   | { op: "delete"; id: string }
 
 export class BoardOpError extends Error {
@@ -157,6 +160,7 @@ function viewOf(s: Shape, ix: ReturnType<typeof index>, bindings: BoardRecord[],
   if (typeof p.color === "string") v.color = p.color
   if (typeof p.title === "string") v.title = p.title
   if (withHtml && typeof p.html === "string") v.html = p.html
+  if (BOARD_PROPS_TYPES.includes(s.type)) v.props = { ...p }
   if (s.type === "arrow") {
     const end = (t: string) => (bindings.find((b) => b.fromId === s.id && (b.props as { terminal?: unknown })?.terminal === t)?.toId as string | undefined) ?? null
     v.arrow = { from: end("start"), to: end("end") }
@@ -188,6 +192,15 @@ const fin = (v: unknown, at: number, name: string): number | undefined => {
   return v
 }
 
+/** `props` (ui-block / auto-layout-frame): a plain object; a slug must be in the BYQ manifest. Values are checked by boardSchema on put. */
+const propsArg = (v: unknown, at: number): Record<string, unknown> | undefined => {
+  if (v === undefined) return undefined
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new BoardOpError("props must be an object", at)
+  const p = v as Record<string, unknown>
+  if (p.slug !== undefined && !BYQ_SLUGS.has(p.slug as string)) throw new BoardOpError(`unknown BYQ slug ${JSON.stringify(p.slug)} (canvas-lib/byq/manifest.json)`, at)
+  return p
+}
+
 /** Parse untrusted ops (MCP arguments): throws BoardOpError naming the bad op's index. */
 export function parseBoardOps(raw: unknown): BoardOp[] {
   if (!Array.isArray(raw) || raw.length === 0) throw new BoardOpError("ops must be a non-empty array", 0)
@@ -197,7 +210,7 @@ export function parseBoardOps(raw: unknown): BoardOp[] {
     const r = o as Record<string, unknown>
     const html = str(r.html, at, "html")
     if (html !== undefined && html.length > BOARD_MAX_HTML) throw new BoardOpError("html over 512 KB", at)
-    const common = { text: str(r.text, at, "text"), geo: str(r.geo, at, "geo"), color: str(r.color, at, "color"), w: fin(r.w, at, "w"), h: fin(r.h, at, "h"), html, title: str(r.title, at, "title"), x: fin(r.x, at, "x"), y: fin(r.y, at, "y") }
+    const common = { text: str(r.text, at, "text"), geo: str(r.geo, at, "geo"), color: str(r.color, at, "color"), w: fin(r.w, at, "w"), h: fin(r.h, at, "h"), html, title: str(r.title, at, "title"), props: propsArg(r.props, at), x: fin(r.x, at, "x"), y: fin(r.y, at, "y") }
     if (r.op === "create") {
       if (!BOARD_SHAPE_TYPES.includes(r.type as BoardShapeType)) throw new BoardOpError(`type must be one of ${BOARD_SHAPE_TYPES.join(", ")}`, at)
       const id = str(r.id, at, "id")
@@ -205,6 +218,8 @@ export function parseBoardOps(raw: unknown): BoardOp[] {
       const from = str(r.from, at, "from")
       const to = str(r.to, at, "to")
       if (r.type === "arrow" && (!from || !to)) throw new BoardOpError("an arrow needs from and to", at)
+      if (common.props && !BOARD_PROPS_TYPES.includes(r.type as string)) throw new BoardOpError(`props only for ${BOARD_PROPS_TYPES.join(", ")}`, at)
+      if (r.type === "ui-block" && common.props?.slug === undefined) throw new BoardOpError("a ui-block needs props.slug", at)
       return { op: "create", type: r.type as BoardShapeType, id, parentId: str(r.parentId, at, "parentId"), from, to, ...common }
     }
     const id = str(r.id, at, "id")
@@ -289,6 +304,8 @@ function update(store: Store, op: Extract<BoardOp, { op: "update" }>): string {
   }
   if (op.text !== undefined) set("richText", toRichText(op.text))
   set("w", op.w); set("h", op.h); set("color", op.color); set("geo", op.geo); set("html", op.html); set("title", op.title)
+  if (op.props && !BOARD_PROPS_TYPES.includes(s.type)) throw new Error(`props only for ${BOARD_PROPS_TYPES.join(", ")}`)
+  for (const [k, v] of Object.entries(op.props ?? {})) set(k, v)
   store.put(s as never)
   return s.id
 }

@@ -23,7 +23,7 @@ export function boardAssetDir(): string {
   return join(homedir(), ".claude-companion", "board-assets")
 }
 
-function sniff(b: Uint8Array): string | null {
+export function sniff(b: Uint8Array): string | null {
   const at = (i: number, ...v: number[]) => v.every((x, k) => b[i + k] === x)
   if (at(0, 0x89, 0x50, 0x4e, 0x47)) return "image/png"
   if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg"

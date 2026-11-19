@@ -1,6 +1,6 @@
 import { createBindingId, createShapeId, toRichText } from "@tldraw/tlschema"
 import { type IndexKey, getIndexAbove } from "@tldraw/utils"
-import { LIVE_FRAME_TYPE } from "./board-schema"
+import { AUTO_LAYOUT_FRAME_TYPE, LIVE_FRAME_TYPE, UI_BLOCK_TYPE, UI_BLOCK_WIDTHS } from "./board-schema"
 
 // Full tldraw 5.6.0 records for the shapes board_write creates. The server has
 // no editor to fill defaults, so every prop is spelled out here and
@@ -14,7 +14,9 @@ export interface BoardRecord {
   [key: string]: unknown
 }
 
-export const BOARD_SHAPE_TYPES = ["note", "text", "geo", "arrow", LIVE_FRAME_TYPE] as const
+export const BOARD_SHAPE_TYPES = ["note", "text", "geo", "arrow", LIVE_FRAME_TYPE, UI_BLOCK_TYPE, AUTO_LAYOUT_FRAME_TYPE] as const
+/** The types whose props board_write takes as a `props` object (validated by boardSchema). */
+export const BOARD_PROPS_TYPES: readonly string[] = [UI_BLOCK_TYPE, AUTO_LAYOUT_FRAME_TYPE]
 export type BoardShapeType = typeof BOARD_SHAPE_TYPES[number]
 
 export interface ShapeInput {
@@ -32,6 +34,7 @@ export interface ShapeInput {
   h?: number
   html?: string
   title?: string
+  props?: Record<string, unknown>
 }
 
 const STYLE = { size: "m", font: "draw" }
@@ -50,6 +53,10 @@ function shapeProps(s: ShapeInput): Record<string, unknown> {
       return { ...STYLE, kind: "arc", labelColor: "black", color: s.color ?? "black", fill: "none", dash: "draw", arrowheadStart: "none", arrowheadEnd: "arrow", start: { x: 0, y: 0 }, end: { x: 100, y: 0 }, bend: 0, richText, labelPosition: 0.5, scale: 1, elbowMidPoint: 0.5 }
     case LIVE_FRAME_TYPE:
       return { w: s.w ?? 640, h: s.h ?? 400, html: s.html ?? "", title: s.title ?? "Live frame" }
+    case UI_BLOCK_TYPE:
+      return { w: s.w ?? UI_BLOCK_WIDTHS.desktop, h: s.h ?? 720, slug: "", sizingW: "fixed", sizingH: "hug", ...s.props }
+    case AUTO_LAYOUT_FRAME_TYPE:
+      return { w: s.w ?? UI_BLOCK_WIDTHS.desktop, h: s.h ?? 800, name: s.title ?? "Frame", direction: "column", justify: "flex-start", align: "stretch", gap: 0, paddingX: 0, paddingY: 0, sizingW: "fixed", sizingH: "hug", bg: "", radius: 0, ...s.props }
   }
 }
 

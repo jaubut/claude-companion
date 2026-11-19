@@ -26,7 +26,7 @@ export const BOARD_MCP_TOOLS = [
   },
   {
     name: "board_write",
-    description: `Edit the live board in one transaction (≤${BOARD_MAX_OPS} ops; any invalid op → nothing applied). Ops: {op:"create", type:"note"|"text"|"geo"|"arrow"|"live-frame", id?, parentId?, x?, y?, text?, geo?, color?, w?, h?, from?, to?, html?, title?} (arrows: from/to shape ids; no x/y → placed right of Jeremie's selection), {op:"update", id, x?, y?, rotation?, text?, w?, h?, color?, geo?, html?, title?}, {op:"delete", id} (also deletes descendants and bindings). Coordinates are page coordinates (parent-relative for children). Returns {ok, ids}.`,
+    description: `Edit the live board in one transaction (≤${BOARD_MAX_OPS} ops; any invalid op → nothing applied). Ops: {op:"create", type:"note"|"text"|"geo"|"arrow"|"live-frame"|"ui-block"|"auto-layout-frame", id?, parentId?, x?, y?, text?, geo?, color?, w?, h?, from?, to?, html?, title?, props?} (arrows: from/to shape ids; no x/y → placed right of Jeremie's selection), {op:"update", id, x?, y?, rotation?, text?, w?, h?, color?, geo?, html?, title?, props?}, {op:"delete", id} (also deletes descendants and bindings). props (ui-block / auto-layout-frame only): ui-block {slug (required, from the BYQ manifest), sizingW:"fixed"|"fill", sizingH:"fixed"|"hug"}; auto-layout-frame {name, direction:"row"|"column", justify:"flex-start"|"center"|"flex-end"|"space-between", align:"flex-start"|"center"|"flex-end"|"stretch", gap, paddingX, paddingY (0-1000), sizingW/sizingH:"fixed"|"hug"|"fill", bg:"#rrggbb[aa]"|"", radius}. Put blocks in a frame with parentId. Coordinates are page coordinates (parent-relative for children). Returns {ok, ids}.`,
     inputSchema: {
       type: "object",
       required: ["ops"],

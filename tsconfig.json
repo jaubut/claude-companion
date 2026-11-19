@@ -17,5 +17,5 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "exclude": ["**/node_modules", "public/design-directions"]
+  "exclude": ["**/node_modules", "public/design-directions", "canvas-lib/byq/src"]
 }
