@@ -16,6 +16,8 @@ let handleHookRoute: (req: Request, url: URL) => Promise<Response | null>
 // SUPER mode is read from the host's flag file at import; these tests need the
 // normal phone path, so it is forced off in memory and restored after.
 const superWas = isSuperAuto()
+// Same for the desk-headless flag a brain host (Zettlab) exports: under it, SessionEnd takes the headless path.
+const deskWas = process.env.COMPANION_DESK_HEADLESS
 const frames: Array<Record<string, unknown>> = []
 const fake = { send: (m: string) => { frames.push(JSON.parse(m)) } } as unknown as Parameters<typeof clients.add>[0]
 
@@ -28,9 +30,11 @@ beforeAll(async () => {
   handleHookRoute = (await import("./hooks")).handleHookRoute
   clients.add(fake)
   setSuperAutoInMemoryForTests(false)
+  delete process.env.COMPANION_DESK_HEADLESS
 })
 afterAll(() => {
   setSuperAutoInMemoryForTests(superWas)
+  if (deskWas !== undefined) process.env.COMPANION_DESK_HEADLESS = deskWas
   clients.delete(fake)
   setDefaultApprovalExpiryMs(null)
 })

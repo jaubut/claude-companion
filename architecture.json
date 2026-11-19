@@ -8541,7 +8541,7 @@
         },
         {
           "path": "wiring/auto-deploy.ts",
-          "lines": 228,
+          "lines": 241,
           "kind": "lib",
           "exports": [
             "DEPLOY_REPOS",
@@ -8553,6 +8553,7 @@
             "DeployDeps",
             "DeployResult",
             "isDeployRepo",
+            "needsRestart",
             "deployRepo",
             "confirmBoot",
             "createAutoDeploy",
