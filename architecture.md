@@ -171,6 +171,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/hook-common.ts` | 145 | lib | 10 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
+| `lib/board-room.ts` | 141 | lib | 10 | state: let room, let db, let importChain, DOCUMENT_TYPES: Set |
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
@@ -191,7 +192,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-task-store.ts` | 120 | lib | 16 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `routes/dialogs.ts` | 119 | route-host | 1 | routes: 2 |
-| `lib/board-room.ts` | 118 | lib | 8 | state: let room, let db, let importChain, DOCUMENT_TYPES: Set |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `routes/command.ts` | 118 | route-host | 1 | state: let cachedAgyCommands · routes: 2 |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
@@ -278,6 +278,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
+| `wiring/board.ts` | 39 | lib | 3 |  |
 | `lib/agent-pid.ts` | 38 | lib | 2 |  |
 | `lib/claude-mcp-trust.ts` | 37 | lib | 2 |  |
 | `routes/gauge.ts` | 37 | route-host | 1 | routes: 3 |
@@ -298,7 +299,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/push.ts` | 28 | lib | 2 |  |
 | `routes/builder-jobs.ts` | 28 | route-host | 1 | routes: 2 |
 | `wiring/design-state.ts` | 27 | lib | 6 |  |
-| `wiring/board.ts` | 26 | lib | 3 |  |
 | `lib/worker-hook-gate.ts` | 25 | lib | 2 | state: let envReader |
 | `lib/session-removal-log.ts` | 24 | lib | 2 | state: let removedSinceDrain |
 | `wiring/worker-blocked.ts` | 24 | lib | 1 | listens: setInterval |
