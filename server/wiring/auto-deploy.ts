@@ -21,6 +21,9 @@ import { orchEmit } from "./orchestrator"
 //     when package.json / bun.lock changed → `systemctl --user restart
 //     --no-block claude-companion.service`. The row and event go first (the
 //     restart kills this process); the next boot confirms it (confirmBoot).
+//     A range that changes nothing the server runs (docs, *.md, tests, mac/,
+//     scripts/, the arch maps) fast-forwards without the restart: every
+//     restart drops every phone, Mac and Canvas client for 5-30 s.
 //   - claude-config: its deploy is claude-config-sync.service (pull --ff-only
 //     with the memory/ + skills/ runtime edits set aside and restored, never a
 //     stash), started early; the poll confirms when ~/.claude reaches the head.
@@ -47,7 +50,7 @@ export interface DeployDeps {
 
 export type DeployResult =
   | { ok: true; repo: DeployRepo; result: "up_to_date"; head: string }
-  | { ok: true; repo: DeployRepo; result: "restarting" | "sync_started"; from: string; to: string; commits: number }
+  | { ok: true; repo: DeployRepo; result: "restarting" | "sync_started" | "no_restart"; from: string; to: string; commits: number }
   | { ok: false; repo: string; error: string; detail?: string; from?: string; to?: string }
 
 export const isDeployRepo = (r: unknown): r is DeployRepo => typeof r === "string" && (DEPLOY_REPOS as readonly string[]).includes(r)
@@ -56,6 +59,11 @@ const dirOf = (repo: DeployRepo, home: string) => (repo === "claude-companion" ?
 const UNIT: Record<DeployRepo, string> = { "claude-companion": "claude-companion.service", "claude-config": "claude-config-sync.service" }
 const markerPath = (home: string) => join(home, ".claude-companion", "deploy-pending.json")
 const short = (s: string) => s.slice(0, 7)
+
+// Paths the running server never loads: a change to them alone needs no restart.
+// Anything else (server/, cli.ts, canvas-lib/, brain/ bins and settings, hooks/, package.json, tsconfig) restarts.
+const NO_RESTART = /(\.md$|\.test\.ts$|^docs\/|^mac\/|^scripts\/|^lint\/|^(architecture\.json|architecture\.refs\.json|archmap\.json|\.gitignore|LICENSE|sgconfig\.yml)$)/
+export const needsRestart = (files: string[]): boolean => files.some((f) => !NO_RESTART.test(f))
 
 async function git(deps: DeployDeps, dir: string, args: string[], timeoutMs = 60_000) {
   return deps.sh("git", ["-C", dir, ...args], { cwd: dir, timeoutMs })
@@ -110,7 +118,8 @@ export async function deployRepo(repo: string, source: "auto" | "brain", deps: D
     return { ok: true, repo, result: "sync_started", from, to, commits }
   }
 
-  const lockChanged = (await git(deps, dir, ["diff", "--name-only", from, to, "--", "package.json", "bun.lock"])).out.trim() !== ""
+  const changed = (await git(deps, dir, ["diff", "--name-only", from, to])).out.split("\n").filter(Boolean)
+  const lockChanged = changed.includes("package.json") || changed.includes("bun.lock")
   const ff = await git(deps, dir, ["merge", "--ff-only", "--quiet", "refs/remotes/origin/main"])
   if (!ff.ok) {
     const detail = redactSecrets(ff.err.trim()).slice(0, 300)
@@ -123,6 +132,10 @@ export async function deployRepo(repo: string, source: "auto" | "brain", deps: D
       await record(deps, repo, `claude-companion fast-forwarded ${short(from)}→${short(to)} but bun install failed — NOT restarted (still running ${short(from)})`, { from, to, commits, result: "install_failed", source })
       return { ok: false, repo, error: "install_failed", from, to, detail: inst.err.trim().slice(0, 200) }
     }
+  }
+  if (!needsRestart(changed)) {
+    await record(deps, repo, `Deployed claude-companion ${short(from)}→${short(to)} (${commits} commit${commits === 1 ? "" : "s"}): no runtime file changed, not restarted`, { from, to, commits, result: "no_restart", source })
+    return { ok: true, repo, result: "no_restart", from, to, commits }
   }
   // Row, event and marker before the restart: --no-block returns at once, then systemd stops this process.
   await record(deps, repo, `Deploying claude-companion ${short(from)}→${short(to)} (${commits} commit${commits === 1 ? "" : "s"}${lockChanged ? ", deps installed" : ""}): restarting`, { from, to, commits, result: "restarting", source })

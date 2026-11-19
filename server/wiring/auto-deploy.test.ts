@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { type ShFn, realSh } from "../lib/live-repo"
 import type { ExecFn, Row } from "../lib/turso"
 
@@ -11,7 +11,7 @@ import type { ExecFn, Row } from "../lib/turso"
 // (a bare origin + the two checkouts under a temp HOME); systemctl and bun are faked at the shell seam.
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-deploy-")), "test.db")
-const { DEPLOY_ACTION, QUIET_MS, SYNC_GRACE_MS, confirmBoot, createAutoDeploy, deployRepo } = await import("./auto-deploy")
+const { DEPLOY_ACTION, QUIET_MS, SYNC_GRACE_MS, confirmBoot, createAutoDeploy, deployRepo, needsRestart } = await import("./auto-deploy")
 
 const genv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }
 const git = (cwd: string, ...args: string[]) => {
@@ -36,8 +36,10 @@ function world(opts: { install?: boolean; systemctl?: boolean } = {}) {
     seeds[name] = seed
   }
   const push = (name: string, file = "app.ts", text = `v${Date.now()}${Math.random()}\n`) => {
+    mkdirSync(dirname(join(seeds[name]!, file)), { recursive: true })
     writeFileSync(join(seeds[name]!, file), text)
-    git(seeds[name]!, "commit", "-qam", `edit ${file}`)
+    git(seeds[name]!, "add", file)
+    git(seeds[name]!, "commit", "-qm", `edit ${file}`)
     git(seeds[name]!, "push", "-q", "origin", "main")
     return git(seeds[name]!, "rev-parse", "HEAD").out
   }
@@ -88,6 +90,26 @@ describe("auto-deploy: claude-companion", () => {
     await confirmBoot(w.deps)
     expect(w.rows()[1]).toMatchObject({ result: "restarted", head: to })
     expect(existsSync(join(w.home, ".claude-companion", "deploy-pending.json"))).toBe(false)
+  })
+
+  test("docs, *.md, tests, mac/, scripts/ only → fast-forward, no restart, no boot marker", async () => {
+    const w = world()
+    const from = w.head("claude-companion")
+    w.push("claude-companion", "docs/canvas/plan.md")
+    w.push("claude-companion", "brain/CLAUDE.md")
+    const to = w.push("claude-companion", "scripts/board-mcp-headers.sh")
+    expect(await deployRepo("claude-companion", "auto", w.deps)).toEqual({ ok: true, repo: "claude-companion", result: "no_restart", from, to, commits: 3 })
+    expect(w.head("claude-companion")).toBe(to)
+    expect(w.calls).toEqual([])
+    expect(w.rows()).toEqual([expect.objectContaining({ result: "no_restart", from, to })])
+    expect(existsSync(join(w.home, ".claude-companion", "deploy-pending.json"))).toBe(false)
+  })
+
+  test("needsRestart: one runtime file in the range restarts", () => {
+    expect(needsRestart(["docs/a.md", "server/lib/x.test.ts", "mac/Sources/A.swift", "architecture.json", "archmap.json", "lint/r.yml"])).toBe(false)
+    for (const f of ["server/lib/board-room.ts", "cli.ts", "canvas-lib/byq/manifest.json", "brain/bin/worker", "brain/.claude/settings.json", "hooks/x.sh", "package.json", "tsconfig.json", "contracts/a.json"]) {
+      expect(needsRestart(["docs/a.md", f])).toBe(true)
+    }
   })
 
   test("up to date → nothing runs", async () => {

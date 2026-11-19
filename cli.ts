@@ -193,7 +193,8 @@ import { reapScrapeSessions } from "./server/lib/command-offpane"
 import { startCodexFeedMonitor } from "./server/lib/codex-feed"
 import { startAgyFeedMonitor } from "./server/lib/agy-feed"
 import { getAuthToken, maskToken } from "./server/lib/auth"
-import { secureLogFile } from "./server/lib/log"
+import { companionLog, secureLogFile } from "./server/lib/log"
+import { clients } from "./server/state"
 import { startMediaSweeper } from "./server/wiring/media"
 import { startRecordsExpiry } from "./server/lib/records-expiry"
 import { startReceiptQa } from "./server/wiring/receipt-qa"
@@ -312,6 +313,10 @@ process.on("SIGINT", () => {
 })
 
 process.on("SIGTERM", () => {
+  // 1012 Service Restart (a deploy): clients get a real close frame instead of
+  // a dead link (1006), so they can reconnect without showing a drop.
+  companionLog(`shutdown: closing ${clients.size} client${clients.size === 1 ? "" : "s"} with 1012`)
+  for (const ws of clients) ws.close(1012, "restart")
   server.stop()
   process.exit(0)
 })
