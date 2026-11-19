@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { getAuthToken } from "../lib/auth"
@@ -7,6 +7,7 @@ import { InMemorySyncStorage, TLSocketRoom } from "@tldraw/sync-core"
 import type { TLRecord } from "@tldraw/tlschema"
 import { type BoardRoom, boardRecords } from "../lib/board-room"
 import { boardSchema } from "../lib/board-schema"
+import { byqThumbDir } from "../lib/byq"
 import { boardCors, createBoardRoute } from "./board"
 
 // routes/board.ts: CORS preflight (A2), assets, import, auth and the
@@ -77,6 +78,20 @@ describe("board assets", () => {
     // Refused from Content-Length before the body is buffered.
     const big = (await call("/api/board/assets", { method: "POST", body: PNG, headers: { "Content-Type": "image/png", "Content-Length": String(26 * 1024 * 1024) } }))!
     expect(big.status).toBe(413)
+  })
+})
+
+describe("board byq thumbnails", () => {
+  test("a cached thumbnail is served with its type; bad names 404; no token 401", async () => {
+    const dir = byqThumbDir()
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, "component-test-hero-1.png"), PNG)
+    const res = (await call("/api/board/byq/thumbs/component-test-hero-1.jpg"))!
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), PNG)).toBe(0)
+    expect((await call("/api/board/byq/thumbs/..%2f..%2fauth.token"))!.status).toBe(404)
+    expect((await call("/api/board/byq/thumbs/component-test-hero-1", {}, false))!.status).toBe(401)
   })
 })
 

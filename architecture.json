@@ -680,6 +680,7 @@
             "BOARD_ASSET_MAX_BYTES",
             "BOARD_ASSET_PREFIX",
             "boardAssetDir",
+            "sniff",
             "SaveResult",
             "saveBoardAsset",
             "boardAssetFile",
@@ -722,11 +723,12 @@
         },
         {
           "path": "lib/board-records.ts",
-          "lines": 102,
+          "lines": 109,
           "kind": "lib",
           "exports": [
             "BoardRecord",
             "BOARD_SHAPE_TYPES",
+            "BOARD_PROPS_TYPES",
             "BoardShapeType",
             "ShapeInput",
             "buildShape",
@@ -789,11 +791,16 @@
         },
         {
           "path": "lib/board-schema.ts",
-          "lines": 19,
+          "lines": 70,
           "kind": "lib",
           "exports": [
             "LIVE_FRAME_TYPE",
+            "UI_BLOCK_TYPE",
+            "AUTO_LAYOUT_FRAME_TYPE",
             "liveFrameProps",
+            "UI_BLOCK_WIDTHS",
+            "uiBlockProps",
+            "autoLayoutFrameProps",
             "boardSchema"
           ],
           "state": [],
@@ -811,7 +818,7 @@
         },
         {
           "path": "lib/board-tools.ts",
-          "lines": 305,
+          "lines": 322,
           "kind": "lib",
           "exports": [
             "BOARD_MAX_OPS",
@@ -835,6 +842,7 @@
           "imports": [
             "lib/board-assets.ts",
             "lib/board-records.ts",
+            "lib/byq.ts",
             "lib/board-room.ts"
           ],
           "listeners": [],
@@ -1373,6 +1381,40 @@
           "apiCalls": [],
           "imports": [
             "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/byq.ts",
+          "lines": 98,
+          "kind": "lib",
+          "exports": [
+            "ByqManifestItem",
+            "ByqManifest",
+            "BYQ_MANIFEST_PATH",
+            "BYQ_MANIFEST",
+            "BYQ_SLUGS",
+            "byqLibDir",
+            "byqThumbDir",
+            "ByqIndexItem",
+            "byqIndex",
+            "ByqThumb",
+            "byqThumb",
+            "thumbHash"
+          ],
+          "state": [
+            "let index",
+            "THUMB_HOSTS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "../canvas-lib/byq/manifest.json",
+            "lib/board-assets.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7412,7 +7454,7 @@
         },
         {
           "path": "routes/board.ts",
-          "lines": 116,
+          "lines": 124,
           "kind": "route-host",
           "exports": [
             "BOARD_SYNC_PATH",
@@ -7440,6 +7482,7 @@
             "lib/board-assets.ts",
             "lib/board-mcp.ts",
             "lib/board-room.ts",
+            "lib/byq.ts",
             "lib/json-body.ts"
           ],
           "listeners": [],
@@ -11639,6 +11682,24 @@
             "lib/board-records.ts"
           ]
         },
+        "UI_BLOCK_TYPE": {
+          "module": "lib/board-schema.ts",
+          "callers": [
+            "lib/board-records.ts"
+          ]
+        },
+        "AUTO_LAYOUT_FRAME_TYPE": {
+          "module": "lib/board-schema.ts",
+          "callers": [
+            "lib/board-records.ts"
+          ]
+        },
+        "UI_BLOCK_WIDTHS": {
+          "module": "lib/board-schema.ts",
+          "callers": [
+            "lib/board-records.ts"
+          ]
+        },
         "boardSchema": {
           "module": "lib/board-schema.ts",
           "callers": [
@@ -11696,8 +11757,20 @@
             "lib/board-tools.ts"
           ]
         },
+        "BOARD_PROPS_TYPES": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
         "BOARD_ASSET_PREFIX": {
           "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "BYQ_SLUGS": {
+          "module": "lib/byq.ts",
           "callers": [
             "lib/board-tools.ts"
           ]
@@ -12196,6 +12269,12 @@
           "module": "lib/auto-judge.ts",
           "callers": [
             "lib/branch-guard.ts"
+          ]
+        },
+        "sniff": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/byq.ts"
           ]
         },
         "Activity": {
@@ -16862,6 +16941,12 @@
         },
         "saveBoardAsset": {
           "module": "lib/board-assets.ts",
+          "callers": [
+            "routes/board.ts#POST /api/board/import"
+          ]
+        },
+        "byqThumb": {
+          "module": "lib/byq.ts",
           "callers": [
             "routes/board.ts#POST /api/board/import"
           ]

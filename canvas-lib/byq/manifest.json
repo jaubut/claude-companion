@@ -1,0 +1,206 @@
+{
+  "widths": {
+    "desktop": 1280,
+    "tablet": 768,
+    "mobile": 390
+  },
+  "items": [
+    {
+      "slug": "algarve-hero-1",
+      "kind": "component",
+      "name": "Animated Hero with Gallery Grid",
+      "category": "Hero",
+      "component": "HeroSection",
+      "file": "HeroSection.tsx",
+      "fonts": [
+        "42 Dot Sans"
+      ],
+      "thumb": "component-algarve-hero-1",
+      "thumbHash": "21bc033a84b1132d"
+    },
+    {
+      "slug": "andfold-hero-2",
+      "kind": "component",
+      "name": "Split Hero with Author Card",
+      "category": "Hero",
+      "component": "HeroSection",
+      "file": "HeroSection.tsx",
+      "fonts": [
+        "LT Superior Serif",
+        "42 Dotsans"
+      ],
+      "thumb": "component-andfold-hero-2",
+      "thumbHash": "084d344aa4d9a54a"
+    },
+    {
+      "slug": "andfold-value-features-1",
+      "kind": "component",
+      "name": "Services Grid Three Columns",
+      "category": "Value & Features",
+      "component": "ValueFeaturesSection",
+      "file": "ValueFeaturesSection.tsx",
+      "fonts": [
+        "LT Superior Serif",
+        "42 Dotsans"
+      ],
+      "thumb": "component-andfold-value-features-1",
+      "thumbHash": "4413b8c9d01644e9"
+    },
+    {
+      "slug": "all-abt-pricing-1",
+      "kind": "component",
+      "name": "Three Column Pricing Cards Section",
+      "category": "Pricing",
+      "component": "PricingSection",
+      "file": "PricingSection.tsx",
+      "fonts": [
+        "Inter",
+        "Geist Mono"
+      ],
+      "thumb": "component-all-abt-pricing-1",
+      "thumbHash": "52544a7f1d7048d8"
+    },
+    {
+      "slug": "avenir-pricing-1",
+      "kind": "component",
+      "name": "Three-Tier Pricing Cards Grid",
+      "category": "Pricing",
+      "component": "PricingSection",
+      "file": "PricingSection.tsx",
+      "fonts": [
+        "Lora",
+        "Inter Tight",
+        "Fragment Mono"
+      ],
+      "thumb": "component-avenir-pricing-1",
+      "thumbHash": "f9cff30272a545f8"
+    },
+    {
+      "slug": "evermind-faq-1",
+      "kind": "component",
+      "name": "FAQ Accordion Two Column",
+      "category": "FAQ",
+      "component": "FaqSection",
+      "file": "FaqSection.tsx",
+      "fonts": [
+        "Playfair Display",
+        "Inter"
+      ],
+      "thumb": "component-evermind-faq-1",
+      "thumbHash": "48b1169721dd049b"
+    },
+    {
+      "slug": "andfold-cta-1",
+      "kind": "component",
+      "name": "Instagram Follow CTA Section",
+      "category": "CTA",
+      "component": "CtaSection",
+      "file": "CtaSection.tsx",
+      "fonts": [
+        "LT Superior Serif",
+        "42 Dotsans"
+      ],
+      "thumb": "component-andfold-cta-1",
+      "thumbHash": "72e088e8814c3add"
+    },
+    {
+      "slug": "aiaiaiai-testimonials-3",
+      "kind": "component",
+      "name": "Team Story Image Text Layout",
+      "category": "Testimonials",
+      "component": "TestimonialsSection",
+      "file": "TestimonialsSection.tsx",
+      "fonts": [
+        "Inter"
+      ],
+      "thumb": "component-aiaiaiai-testimonials-3",
+      "thumbHash": "b7442c07f66bbd8a"
+    },
+    {
+      "slug": "babka-brands-logos-1",
+      "kind": "component",
+      "name": "Animated Publication Logos Strip",
+      "category": "Brands & Logos",
+      "component": "BrandsLogosSection",
+      "file": "BrandsLogosSection.tsx",
+      "fonts": [
+        "Poppins"
+      ],
+      "thumb": "component-babka-brands-logos-1",
+      "thumbHash": "a540f5320a0fd6ff"
+    },
+    {
+      "slug": "andfold-stats-1",
+      "kind": "component",
+      "name": "Statistics Section with Grid Layout",
+      "category": "Stats",
+      "component": "StatsSection",
+      "file": "StatsSection.tsx",
+      "fonts": [
+        "LT Superior Serif",
+        "42 Dotsans"
+      ],
+      "thumb": "component-andfold-stats-1",
+      "thumbHash": "166f906e22880b79"
+    },
+    {
+      "slug": "algarve-contact-1",
+      "kind": "component",
+      "name": "Contact Form with Company Info",
+      "category": "Contact",
+      "component": "ContactSection",
+      "file": "ContactSection.tsx",
+      "fonts": [
+        "42 Dot Sans"
+      ],
+      "thumb": "component-algarve-contact-1",
+      "thumbHash": "2ede78d44b419292"
+    },
+    {
+      "slug": "ark-studio-footer-1",
+      "kind": "component",
+      "name": "Multi-Column Footer with Links",
+      "category": "Footer",
+      "component": "FooterSection",
+      "file": "FooterSection.tsx",
+      "fonts": [
+        "Satoshi"
+      ],
+      "thumb": "component-ark-studio-footer-1",
+      "thumbHash": "88158b47949048bb"
+    },
+    {
+      "slug": "flip-card-01",
+      "kind": "gem",
+      "name": "Flip Card",
+      "category": "Hover",
+      "component": "FlipCard",
+      "file": "FlipCard.tsx",
+      "fonts": [],
+      "thumb": "gem-flip-card-01",
+      "thumbHash": "ffdd97f888802714"
+    },
+    {
+      "slug": "blur-up-image-reveal-01",
+      "kind": "gem",
+      "name": "Blur-Up Image Reveal",
+      "category": "Scroll",
+      "component": "BlurUpImageReveal",
+      "file": "BlurUpImageReveal.tsx",
+      "fonts": [],
+      "thumb": "gem-blur-up-image-reveal-01",
+      "thumbHash": "cc23a076d95c2117"
+    },
+    {
+      "slug": "fit-text-01",
+      "kind": "gem",
+      "name": "Fit Text",
+      "category": "Text",
+      "component": "FitText",
+      "file": "FitText.tsx",
+      "fonts": [],
+      "thumb": "gem-fit-text-01",
+      "thumbHash": "2028601bc2deb74a"
+    }
+  ]
+}

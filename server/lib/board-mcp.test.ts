@@ -58,6 +58,14 @@ describe("board MCP", () => {
     expect(shapes).toEqual([])
   })
 
+  test("invalid auto-layout-frame props (schema check on put) → isError with the op index, nothing applied", async () => {
+    const r = result(await rpc("tools/call", { name: "board_write", arguments: { ops: [{ op: "create", type: "auto-layout-frame", id: "shape:fr1" }, { op: "create", type: "ui-block", parentId: "shape:fr1", props: { slug: "algarve-hero-1", sizingH: "stretch" } }] } }))
+    expect(r.isError).toBe(true)
+    expect(r.structuredContent).toMatchObject({ ok: false, at: 1 })
+    expect(String(r.structuredContent!.error)).toContain("sizingH")
+    expect(result(await rpc("tools/call", { name: "board_read", arguments: { ids: ["shape:fr1"] } })).structuredContent!.shapes).toEqual([])
+  })
+
   test("board_asset → an MCP image block; an unknown file → isError", async () => {
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64")
     const saved = saveBoardAsset(png, "image/png")

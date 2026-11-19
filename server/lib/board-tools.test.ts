@@ -92,4 +92,40 @@ describe("board tools", () => {
     // The @internal method exists on the pinned 5.6.0 room (an exact pin + this guard).
     expect(typeof (newRoom() as unknown as { getPresenceRecords?: unknown }).getPresenceRecords).toBe("function")
   })
+
+  test("ui-block inside an auto-layout-frame: create, read props, update props", async () => {
+    const room = newRoom()
+    await boardWrite(parseBoardOps([
+      { op: "create", type: "auto-layout-frame", id: "shape:page1", x: 0, y: 0, props: { name: "Landing", gap: 24, paddingY: 48 } },
+      { op: "create", type: "ui-block", id: "shape:hero", parentId: "shape:page1", props: { slug: "algarve-hero-1" } },
+    ]), "brain", room)
+    validateAll(room)
+    await boardWrite(parseBoardOps([{ op: "update", id: "shape:hero", w: 390, props: { sizingW: "fill" } }, { op: "update", id: "shape:page1", props: { direction: "row", bg: "#faf6ea" } }]), "brain", room)
+    const shapes = boardRead({ ids: ["shape:page1"] }, room).shapes
+    expect(shapes.find((s) => s.id === "shape:hero")!.props).toEqual({ w: 390, h: 720, slug: "algarve-hero-1", sizingW: "fill", sizingH: "hug" })
+    expect(shapes.find((s) => s.id === "shape:page1")!.props).toMatchObject({ name: "Landing", gap: 24, paddingY: 48, direction: "row", bg: "#faf6ea" })
+  })
+
+  test("invalid ui-block / auto-layout-frame ops are refused, nothing applied", async () => {
+    const at = (raw: unknown) => { try { parseBoardOps(raw); return -1 } catch (e) { return (e as BoardOpError).at } }
+    expect(at([{ op: "create", type: "ui-block" }])).toBe(0)
+    expect(at([{ op: "create", type: "ui-block", props: { slug: "not-in-manifest" } }])).toBe(0)
+    expect(at([{ op: "create", type: "note", props: { w: 1 } }])).toBe(0)
+    expect(at([{ op: "update", id: "shape:x", props: [] }])).toBe(0)
+    const room = newRoom()
+    await boardWrite(parseBoardOps([{ op: "create", type: "auto-layout-frame", id: "shape:f", props: { name: "F" } }, { op: "create", type: "note", id: "shape:n" }]), "t", room)
+    const refused = async (ops: unknown[], index: number) => {
+      const before = JSON.stringify(boardRecords(room))
+      await expect(boardWrite(parseBoardOps(ops), "t", room)).rejects.toMatchObject({ at: index })
+      expect(JSON.stringify(boardRecords(room))).toBe(before)
+    }
+    await refused([{ op: "create", type: "note", id: "shape:ok" }, { op: "create", type: "auto-layout-frame", props: { gap: -4 } }], 1)
+    await refused([{ op: "create", type: "auto-layout-frame", props: { direction: "diagonal" } }], 0)
+    await refused([{ op: "create", type: "ui-block", props: { slug: "fit-text-01", sizingH: "fill" } }], 0)
+    await refused([{ op: "update", id: "shape:f", props: { justify: "space-around" } }], 0)
+    await refused([{ op: "update", id: "shape:f", props: { clip: true } }], 0)
+    await refused([{ op: "update", id: "shape:f", props: { bg: "red" } }], 0)
+    await refused([{ op: "update", id: "shape:n", props: { color: "red" } }], 0)
+    await refused([{ op: "create", type: "ui-block", props: { slug: "fit-text-01", w: 0 } }], 0)
+  })
 })
