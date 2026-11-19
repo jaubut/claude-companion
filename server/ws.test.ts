@@ -20,10 +20,13 @@ function fakeWs(): { ws: Ws; got: Array<Record<string, unknown>> } {
 }
 
 const sender = fakeWs()
+// A brain host (Zettlab) exports COMPANION_BRAIN=1, which adds brain frames after init; these tests pin the plain host.
+const brainWas = process.env.COMPANION_BRAIN
 const bystander = fakeWs()
 
 beforeAll(async () => {
   process.env.COMPANION_DB_PATH = join(mkdtempSync(join(tmpdir(), "ws-res-")), "test.db")
+  delete process.env.COMPANION_BRAIN
   websocket = (await import("./ws")).websocket
   dialogWatcher = (await import("./wiring/dialogs")).dialogWatcher
   clients.add(sender.ws)
@@ -32,6 +35,7 @@ beforeAll(async () => {
 afterAll(() => {
   // Importing ws.ts starts the dialog poller; don't leave it running.
   dialogWatcher.stop()
+  if (brainWas !== undefined) process.env.COMPANION_BRAIN = brainWas
   clients.delete(sender.ws)
   clients.delete(bystander.ws)
 })

@@ -99,12 +99,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `lib/jev-model-router.ts` | 244 | lib | 13 |  |
+| `wiring/auto-deploy.ts` | 241 | lib | 15 | state: let live |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `companion-server.ts` | 233 | route-host | 1 | routes: 10 |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `wiring/brain-headless.ts` | 231 | lib | 5 |  |
 | `routes/vault.ts` | 230 | lib | 1 |  |
-| `wiring/auto-deploy.ts` | 228 | lib | 14 | state: let live |
 | `lib/auto-compact-transcript.ts` | 227 | lib | 16 |  |
 | `lib/figcraft.ts` | 227 | lib | 16 |  |
 | `lib/triage-repos.ts` | 227 | lib | 17 | state: MEMBER_SOURCES: Set |
