@@ -3,9 +3,15 @@
 # runs it at connect time and sends the JSON it prints as request headers, so
 # the token is never stored in ~/.claude.json, an argv or a commit.
 # Token: $COMPANION_PEER_ZETTLAB_TOKEN (Mac → Zettlab), else
-# $COMPANION_AUTH_TOKEN, else ~/.claude-companion/auth.token (the brain host).
+# ~/.claude-companion/peer-zettlab.token (the Mac's copy of Zettlab's token, 0600),
+# else $COMPANION_AUTH_TOKEN, else ~/.claude-companion/auth.token (the brain host).
+# Order matters on the Mac: its own auth.token is the Mac server's and Zettlab refuses it.
 # None → exit 1 with no output (/mcp shows `board` failed, no secret anywhere).
-token="${COMPANION_PEER_ZETTLAB_TOKEN:-${COMPANION_AUTH_TOKEN:-}}"
+token="${COMPANION_PEER_ZETTLAB_TOKEN:-}"
+if [ -z "$token" ] && [ -r "$HOME/.claude-companion/peer-zettlab.token" ]; then
+  token="$(tr -d '[:space:]' < "$HOME/.claude-companion/peer-zettlab.token")"
+fi
+token="${token:-${COMPANION_AUTH_TOKEN:-}}"
 if [ -z "$token" ] && [ -r "$HOME/.claude-companion/auth.token" ]; then
   token="$(tr -d '[:space:]' < "$HOME/.claude-companion/auth.token")"
 fi
