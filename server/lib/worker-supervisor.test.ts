@@ -79,6 +79,11 @@ describe("parseStreamJsonLine", () => {
     })
   })
 
+  test("buildHeadlessClaudeArgs passes --mcp-config before the -- prompt separator", () => {
+    expect(buildHeadlessClaudeArgs({ prompt: "hi", sessionId: "s", resume: false, mode: "auto", mcpConfig: "/h/.claude-companion/brain-mcp.json" }).slice(-4))
+      .toEqual(["--mcp-config", "/h/.claude-companion/brain-mcp.json", "--", "hi"])
+  })
+
   test("buildHeadlessClaudeArgs places -- before prompt (safe for prompts starting with -) and buildWorkerEnv strips tokens", () => {
     expect(buildHeadlessClaudeArgs({
       prompt: "--add-dir=/",

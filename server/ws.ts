@@ -17,6 +17,7 @@ import { designStateSnapshotFrame } from "./wiring/design-state"
 import { wireSessions } from "./lib/shell-sessions"
 import { terminalClose, terminalMessage, terminalOpen } from "./wiring/shell-sessions"
 import { mirrorClose, mirrorMessage, mirrorOpen } from "./wiring/pane-mirror"
+import { boardClose, boardMessage, boardOpen } from "./wiring/board"
 import { brainEnabled } from "./lib/brain"
 import { latestRows } from "./lib/brain-trace"
 import { brainWiring } from "./wiring/brain"
@@ -28,6 +29,7 @@ export const websocket: WebSocketHandler<WsData> = {
   open(ws) {
     if (ws.data.terminal) return terminalOpen(ws)
     if (ws.data.mirror) return mirrorOpen(ws)
+    if (ws.data.board) return boardOpen(ws)
     clients.add(ws)
     companionLog(`\x1b[2mws open ${describeClient("ws", ws.data.client)} (${clients.size} client${clients.size === 1 ? "" : "s"})\x1b[0m`)
 
@@ -98,6 +100,7 @@ export const websocket: WebSocketHandler<WsData> = {
   async message(ws, raw) {
     if (ws.data.terminal) return terminalMessage(ws, raw)
     if (ws.data.mirror) return mirrorMessage(ws, raw)
+    if (ws.data.board) return boardMessage(ws, raw)
     let msg: {
       type: string
       id?: string
@@ -176,6 +179,7 @@ export const websocket: WebSocketHandler<WsData> = {
   close(ws, code) {
     if (ws.data.terminal) return terminalClose(ws)
     if (ws.data.mirror) return mirrorClose(ws)
+    if (ws.data.board) return boardClose(ws)
     clients.delete(ws)
     companionLog(`\x1b[2mws close ${describeClient("ws", ws.data.client)} code=${code} (${clients.size} left)\x1b[0m`)
   },

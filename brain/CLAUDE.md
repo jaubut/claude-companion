@@ -82,6 +82,14 @@ A dispatch PR stuck on stale CI: `bin/pr-update-branch --repo <owner/name> --pr 
 - 502 `update_failed`: GitHub refused the update; check the PR before asking Jeremie.
 - 503 `turso_unreachable`: origin or park/hold checks could not complete; no update attempted.
 
+## Canvas board
+
+Jeremie's Canvas board (Mac Companion Canvas + iPad) is one live document on this host, and you see and edit it through the `board` MCP: `board_read`, `board_write`, `board_asset`. Never ask him for an export or a screenshot.
+- `board_read` returns pages, shapes (page coordinates, `text`, arrow ends, `by`) and `presence` (his page, selection and viewport). `focus: true` = his selection, else what his viewport shows. `ids` = those shapes plus children. `html: true` adds live-frame html.
+- Images: `image.file` → `board_asset {file}` shows it to you (or Read `image.path`).
+- `board_write` applies all ops in one transaction (any bad op → nothing applied). Omit x/y and new shapes land to the right of his selection, so "next to my selection" needs no maths. Never move or delete his shapes unless he asked.
+- Make Real output goes on the board as a `live-frame` (`html`, `title`) via `board_write`, never as html in your reply.
+
 ## Deploys
 
 claude-companion and claude-config deploy themselves on this host once a merge to main has settled (2 min); the brain thread shows each one. Never `git pull` or `systemctl` by hand. To deploy now: `bin/deploy --repo claude-companion|claude-config --reason "<why now>"`. The server only fast-forwards; `not_fast_forward`, `dirty_overlap` or `not_on_main` is final: tell Jeremie.

@@ -106,15 +106,15 @@ export interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown }
 }
 
-function rpcOk(id: string | number | null, result: unknown): JsonRpcResponse {
+export function rpcOk(id: string | number | null, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result }
 }
 
-function rpcErr(id: string | number | null, code: number, message: string, data?: unknown): JsonRpcResponse {
+export function rpcErr(id: string | number | null, code: number, message: string, data?: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, error: { code, message, ...(data !== undefined ? { data } : {}) } }
 }
 
-function toolResult(payload: Record<string, unknown>, isError = false): { content: Array<{ type: "text"; text: string }>; structuredContent: Record<string, unknown>; isError?: boolean } {
+export function toolResult(payload: Record<string, unknown>, isError = false): { content: Array<{ type: "text"; text: string }>; structuredContent: Record<string, unknown>; isError?: boolean } {
   return {
     content: [{ type: "text", text: JSON.stringify(payload) }],
     structuredContent: payload,

@@ -430,10 +430,11 @@ export function modelFitsFamily(model: string, family: WorkerFamily): boolean {
 }
 
 /** Build the headless `claude -p` argv with `--` before positional prompt so `-...` prompts are never parsed as flags. */
-export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): string[] {
+export function buildHeadlessClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string; mcpConfig?: string }): string[] {
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", opts.mode, ...(opts.resume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId])]
   if (opts.agent && !ALLOWED_FAMILIES.has(opts.agent as WorkerFamily)) args.push("--agent", opts.agent)
   if (opts.model) args.push("--model", opts.model)
+  if (opts.mcpConfig) args.push("--mcp-config", opts.mcpConfig)
   args.push("--", opts.prompt)
   return args
 }

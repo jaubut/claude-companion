@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-18",
+  "generatedAt": "2026-11-19",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -11,7 +11,7 @@
       "modules": [
         {
           "path": "companion-server.ts",
-          "lines": 218,
+          "lines": 233,
           "kind": "route-host",
           "exports": [
             "createCompanionServer"
@@ -98,6 +98,7 @@
             "routes/copy-jobs.ts",
             "routes/builder-jobs.ts",
             "routes/worker-mcp.ts",
+            "routes/board.ts",
             "routes/my-tasks.ts",
             "routes/taste.ts",
             "routes/notes.ts",
@@ -669,6 +670,177 @@
           "listeners": [],
           "sheets": 0,
           "externals": []
+        },
+        {
+          "path": "lib/board-assets.ts",
+          "lines": 80,
+          "kind": "lib",
+          "exports": [
+            "BOARD_ASSET_MIMES",
+            "BOARD_ASSET_MAX_BYTES",
+            "BOARD_ASSET_PREFIX",
+            "boardAssetDir",
+            "SaveResult",
+            "saveBoardAsset",
+            "boardAssetFile",
+            "externalizeDataUrls"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/board-mcp.ts",
+          "lines": 99,
+          "kind": "lib",
+          "exports": [
+            "BOARD_MCP_TOOLS",
+            "BoardMcpDeps",
+            "createBoardMcpHandler",
+            "BoardMcpHandler"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-assets.ts",
+            "lib/board-room.ts",
+            "lib/board-tools.ts",
+            "lib/worker-mcp.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/board-records.ts",
+          "lines": 102,
+          "kind": "lib",
+          "exports": [
+            "BoardRecord",
+            "BOARD_SHAPE_TYPES",
+            "BoardShapeType",
+            "ShapeInput",
+            "buildShape",
+            "buildArrowBindings",
+            "richTextToPlain",
+            "nextIndex"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-schema.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "@tldraw/tlschema",
+            "@tldraw/utils"
+          ]
+        },
+        {
+          "path": "lib/board-room.ts",
+          "lines": 115,
+          "kind": "lib",
+          "exports": [
+            "BoardRoom",
+            "boardRoom",
+            "closeBoardRoom",
+            "boardRecords",
+            "PresenceRecord",
+            "boardPresence",
+            "ImportResult",
+            "importBoard"
+          ],
+          "state": [
+            "let room",
+            "let db",
+            "let importChain",
+            "DOCUMENT_TYPES: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/db-path.ts",
+            "lib/log.ts",
+            "lib/board-schema.ts",
+            "lib/board-records.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "@tldraw/sync-core",
+            "@tldraw/tlschema"
+          ]
+        },
+        {
+          "path": "lib/board-schema.ts",
+          "lines": 19,
+          "kind": "lib",
+          "exports": [
+            "LIVE_FRAME_TYPE",
+            "liveFrameProps",
+            "boardSchema"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "@tldraw/tlschema",
+            "@tldraw/validate"
+          ]
+        },
+        {
+          "path": "lib/board-tools.ts",
+          "lines": 302,
+          "kind": "lib",
+          "exports": [
+            "BOARD_MAX_OPS",
+            "BOARD_MAX_HTML",
+            "BOARD_READ_CAP",
+            "Rect",
+            "BoardShapeView",
+            "BoardPresenceView",
+            "BoardReadOpts",
+            "BoardOp",
+            "BoardOpError",
+            "boardRead",
+            "parseBoardOps",
+            "boardWrite"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-assets.ts",
+            "lib/board-records.ts",
+            "lib/board-room.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "@tldraw/tlschema"
+          ]
         },
         {
           "path": "lib/body-agent.ts",
@@ -6633,7 +6805,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 539,
+          "lines": 540,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -6702,6 +6874,9 @@
             "WorkerMcpDeps",
             "JsonRpcRequest",
             "JsonRpcResponse",
+            "rpcOk",
+            "rpcErr",
+            "toolResult",
             "isLocalTarget",
             "defaultResolvePeer",
             "createWorkerMcpHandler",
@@ -7229,6 +7404,42 @@
             "lib/log.ts",
             "lib/json-body.ts",
             "wiring/auto-compact.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "routes/board.ts",
+          "lines": 114,
+          "kind": "route-host",
+          "exports": [
+            "BOARD_SYNC_PATH",
+            "boardCors",
+            "BoardRouteDeps",
+            "createBoardRoute",
+            "handleBoardRoute"
+          ],
+          "state": [
+            "ALLOWED_ORIGINS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [
+            {
+              "method": "POST",
+              "path": "/api/board/import",
+              "prefix": false
+            }
+          ],
+          "apiCalls": [],
+          "imports": [
+            "lib/auth.ts",
+            "lib/brain.ts",
+            "lib/board-assets.ts",
+            "lib/board-mcp.ts",
+            "lib/board-room.ts",
+            "lib/json-body.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8210,7 +8421,7 @@
         },
         {
           "path": "state.ts",
-          "lines": 89,
+          "lines": 91,
           "kind": "lib",
           "exports": [
             "WsData",
@@ -8318,6 +8529,29 @@
             "lib/turso.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/board.ts",
+          "lines": 26,
+          "kind": "lib",
+          "exports": [
+            "boardOpen",
+            "boardMessage",
+            "boardClose"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-room.ts",
+            "lib/log.ts",
+            "state.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8499,11 +8733,12 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 213,
+          "lines": 231,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
+            "writeBrainMcpConfig",
             "getBrainModel",
             "createHeadlessBrainRunner"
           ],
@@ -9926,7 +10161,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 194,
+          "lines": 198,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -9966,6 +10201,7 @@
             "lib/shell-sessions.ts",
             "wiring/shell-sessions.ts",
             "wiring/pane-mirror.ts",
+            "wiring/board.ts",
             "lib/brain.ts",
             "lib/brain-trace.ts",
             "wiring/brain.ts"
@@ -10188,6 +10424,8 @@
           "module": "lib/brain.ts",
           "callers": [
             "companion-server.ts",
+            "companion-server.ts#* /ws",
+            "routes/board.ts",
             "routes/brain.ts",
             "routes/capture.ts",
             "routes/worker-mcp.ts#* /api/mcp/workers",
@@ -10237,6 +10475,7 @@
           "module": "state.ts",
           "callers": [
             "companion-server.ts",
+            "wiring/board.ts",
             "wiring/pane-mirror.ts",
             "wiring/shell-sessions.ts",
             "ws.ts"
@@ -10266,11 +10505,18 @@
             "companion-server.ts#* /hooks/"
           ]
         },
+        "boardCors": {
+          "module": "routes/board.ts",
+          "callers": [
+            "companion-server.ts#* /hooks/"
+          ]
+        },
         "checkBearer": {
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
             "lib/request-gate.ts",
+            "routes/board.ts#POST /api/board/import",
             "routes/brain.ts",
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
@@ -10285,6 +10531,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
+            "routes/board.ts#POST /api/board/import",
             "routes/brain.ts",
             "routes/github-webhook.ts",
             "routes/records.ts",
@@ -10334,6 +10581,12 @@
         },
         "clientBuild": {
           "module": "state.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "BOARD_SYNC_PATH": {
+          "module": "routes/board.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10436,6 +10689,12 @@
         },
         "handleAutoCompactRoute": {
           "module": "routes/auto-compact.ts",
+          "callers": [
+            "companion-server.ts#* /ws"
+          ]
+        },
+        "handleBoardRoute": {
+          "module": "routes/board.ts",
           "callers": [
             "companion-server.ts#* /ws"
           ]
@@ -10984,6 +11243,7 @@
           "module": "lib/log.ts",
           "callers": [
             "lib/approval-history-auto.ts",
+            "lib/board-room.ts",
             "lib/body-investigate-engine.ts",
             "lib/command-offpane-cache.ts",
             "lib/discover.ts",
@@ -11042,6 +11302,7 @@
             "routes/vault.ts",
             "wiring/auto-compact.ts",
             "wiring/auto-deploy.ts",
+            "wiring/board.ts",
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
             "wiring/body.ts",
@@ -11080,6 +11341,7 @@
           "module": "lib/db-path.ts",
           "callers": [
             "lib/approval-history.ts",
+            "lib/board-room.ts",
             "lib/learned-allow.ts",
             "lib/orchestrator-db.ts",
             "lib/push-tokens.ts",
@@ -11298,6 +11560,163 @@
           "module": "lib/learned-allow.ts",
           "callers": [
             "lib/auto-judge.ts"
+          ]
+        },
+        "BOARD_MAX_OPS": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "BoardRoom": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-mcp.ts",
+            "lib/board-tools.ts",
+            "routes/board.ts"
+          ]
+        },
+        "JsonRpcResponse": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "boardRead": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "rpcOk": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "toolResult": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "parseBoardOps": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "boardWrite": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "BoardOpError": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "boardAssetFile": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-mcp.ts",
+            "lib/board-tools.ts",
+            "routes/board.ts#POST /api/board/import"
+          ]
+        },
+        "rpcErr": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "LIVE_FRAME_TYPE": {
+          "module": "lib/board-schema.ts",
+          "callers": [
+            "lib/board-records.ts"
+          ]
+        },
+        "boardSchema": {
+          "module": "lib/board-schema.ts",
+          "callers": [
+            "lib/board-room.ts"
+          ]
+        },
+        "BoardRecord": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-room.ts",
+            "lib/board-tools.ts"
+          ]
+        },
+        "BoardShapeType": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "PresenceRecord": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "boardRoom": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-tools.ts",
+            "wiring/board.ts"
+          ]
+        },
+        "boardRecords": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-tools.ts",
+            "wiring/board.ts"
+          ]
+        },
+        "boardPresence": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "richTextToPlain": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "BOARD_ASSET_PREFIX": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "BOARD_SHAPE_TYPES": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "buildShape": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "nextIndex": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
+          ]
+        },
+        "buildArrowBindings": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-tools.ts"
           ]
         },
         "BodyComponentDetail": {
@@ -16048,6 +16467,7 @@
             "routes/api.ts#POST /api/session/interrupt",
             "routes/api.ts#* /api/feed",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
+            "routes/board.ts#POST /api/board/import",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -16324,6 +16744,7 @@
           "module": "state.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
+            "wiring/board.ts",
             "wiring/pane-mirror.ts",
             "wiring/shell-sessions.ts",
             "ws.ts"
@@ -16332,7 +16753,9 @@
         "isObject": {
           "module": "lib/json-body.ts",
           "callers": [
-            "routes/api.ts#* /api/feed"
+            "routes/api.ts#* /api/feed",
+            "routes/board.ts",
+            "routes/board.ts#POST /api/board/import"
           ]
         },
         "resolveQuestion": {
@@ -16405,6 +16828,36 @@
           "module": "wiring/auto-compact.ts",
           "callers": [
             "routes/auto-compact.ts#POST /api/auto-compact/test"
+          ]
+        },
+        "BoardMcpHandler": {
+          "module": "lib/board-mcp.ts",
+          "callers": [
+            "routes/board.ts"
+          ]
+        },
+        "createBoardMcpHandler": {
+          "module": "lib/board-mcp.ts",
+          "callers": [
+            "routes/board.ts"
+          ]
+        },
+        "externalizeDataUrls": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "routes/board.ts#POST /api/board/import"
+          ]
+        },
+        "importBoard": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "routes/board.ts#POST /api/board/import"
+          ]
+        },
+        "saveBoardAsset": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "routes/board.ts#POST /api/board/import"
           ]
         },
         "BodySnapshot": {
@@ -20540,6 +20993,12 @@
             "ws.ts"
           ]
         },
+        "boardOpen": {
+          "module": "wiring/board.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
         "canvasSnapshot": {
           "module": "wiring/canvas.ts",
           "callers": [
@@ -20564,6 +21023,12 @@
             "ws.ts"
           ]
         },
+        "boardMessage": {
+          "module": "wiring/board.ts",
+          "callers": [
+            "ws.ts"
+          ]
+        },
         "terminalClose": {
           "module": "wiring/shell-sessions.ts",
           "callers": [
@@ -20575,9 +21040,42 @@
           "callers": [
             "ws.ts"
           ]
+        },
+        "boardClose": {
+          "module": "wiring/board.ts",
+          "callers": [
+            "ws.ts"
+          ]
         }
       },
       "packages": {
+        "@tldraw/sync-core": {
+          "version": "5.6.0",
+          "modules": [
+            "lib/board-room.ts"
+          ]
+        },
+        "@tldraw/tlschema": {
+          "version": "5.6.0",
+          "modules": [
+            "lib/board-records.ts",
+            "lib/board-room.ts",
+            "lib/board-schema.ts",
+            "lib/board-tools.ts"
+          ]
+        },
+        "@tldraw/utils": {
+          "version": "5.6.0",
+          "modules": [
+            "lib/board-records.ts"
+          ]
+        },
+        "@tldraw/validate": {
+          "version": "5.6.0",
+          "modules": [
+            "lib/board-schema.ts"
+          ]
+        },
         "sharp": {
           "version": "0.35.5",
           "modules": [

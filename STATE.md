@@ -213,6 +213,281 @@ Last updated: 2026-11-07
 
 ## Change Plans
 
+### Change Plan — canvas-board-sync (server half, 2026-11-18)
+**Cross-repo:** this copy owns P1 (room, sync WS, assets + CORS, import, board MCP `/api/mcp/board`) and the server side of P3. The client half (P2 + iOS P3) is in `~/apps/claude-companion-ios` (worktree cc-canvas-strip) STATE.md › Change Plans › canvas-board-sync.
+**Request (Jeremie, approved direction):** the Brain must SEE and CO-EDIT the Canvas board in real time, with no exports or snapshots. One tldraw sync room on the brain host (Zettlab). Mac Companion Canvas and iPad are live replicas of it. The brain reads and writes the board through tools, and Make Real and the Canvas chat point the brain at the live board.
+**Done when:**
+- A sticky Jeremie draws on the iPad shows on the Mac in about 1 s, and `board_read` (board MCP, from any Claude session on the Mac or on Zettlab) returns it with its text.
+- A `board_write` from the brain or any agent (note, arrow, live frame) appears on both clients in about 1 s, without a reload, with `meta.by` set to the caller.
+- A Canvas chat turn or Make Real gets to the brain as `(canvas)` plus selected shape ids, and the brain answers by writing on the board. **The board is Make Real's only output** (Option A, coordinator decision 2026-11-18): no ```html reply, no Place Brain Reply.
+
+**Target shape & drift**
+- Reference for this intent: **tldraw sync** (the leader for this domain is tldraw itself: the `tldraw-sync-cloudflare` template is one `TLSocketRoom` per document, `/connect/:roomId` WS, `/uploads/:id` blob store with records holding only a URL) plus **Figma's plugin/REST API** for agent co-editing (`GET /files/:key/nodes` ↔ `board_read`; plugin `createShape` / `node.x=` / `remove()` on the same document model as users ↔ `board_write`). Their primitive → ours: Room/document → one room `main` per brain host; node tree → tldraw shape records (page coordinates stored, parent-relative for children); plugin edits → `room.updateStore` (the same commit path as a user push); blob upload → `/api/board/assets`; multiplayer presence → `instance_presence` records.
+  - One authoritative store on the server. Clients are replicas over the sync protocol, and nobody writes snapshots.
+  - Agents edit through the same transactional store path as users. Nothing is exported and pasted back.
+  - Assets live out of band (files keyed by id). Records hold only `src`.
+  - The schema is shared and versioned. The sync handshake rejects a mismatch instead of corrupting data.
+  - Presence (page, selection, viewport) is ephemeral session state that the agent can read.
+- Deviations today:
+  - Each device keeps its own board (`sketch-board.json` on the Mac and on the iPad: two different boards).
+  - The brain only sees Make Real's text plus a PNG path **on the Mac**, which the Zettlab brain cannot Read.
+  - Pasted images are inline `data:` URLs in the snapshot.
+  - `live-frame` has no migrations.
+  - The server carries a legacy graph canvas (`/api/canvas`, `canvas` frame: the map shows no consumer and no Swift caller on this branch) next to the tldraw board.
+  - The brain's "MCP" is CLI-over-loopback-hook (`bin/*` → `/hooks/brain/*`), not an MCP server.
+- This change moves toward: single room, sync replicas, agent edits via `updateStore`, assets as files, presence read, schema handshake.
+- Left for follow-up (to file, assignee `claude-companion` lead):
+  - (F1) retire the legacy `/api/canvas` graph and the `canvas` frame
+  - (F2) a `live-frame` migration sequence, before the first prop change
+  - (F3) brain presence and cursor on the board
+  - (F4) merge a second device's legacy board as an "Imported" page
+  - (F5) ~~a real MCP server for non-brain agents~~: done in this plan by A1
+
+**State decisions**
+- **Board document**:
+  - Lives in the server's `lib/board-room.ts`: one `TLSocketRoom` (room `main`, created lazily on the first use) with `SQLiteSyncStorage` over `NodeSqliteWrapper(bun:sqlite companionDbPath(), { tablePrefix: "board_" })`. Tables are `board_documents`, `board_tombstones` and `board_metadata` in companion.db. Every commit persists, so there is no debounce and no snapshot file.
+  - Mutated by client pushes (WS), by `boardWrite()` (`room.updateStore`, one transaction per call) and by `importBoard()` (`room.loadSnapshot`, only while the room has no shapes).
+  - Announced by the tldraw sync protocol diff to every session. The Companion `/ws` frames do not change.
+  - The room exists only where `brainEnabled()` is true; otherwise the endpoints answer `404 board_disabled`. One board per brain host. Boards never move between hosts.
+- **Assets**:
+  - Live in the server's `lib/board-assets.ts`: files at `~/.claude-companion/board-assets/<id>.<ext>` (png, jpeg, gif or webp; no svg; 25 MB cap).
+  - The record keeps `src: "/api/board/assets/<file>"` and never a token or host.
+  - Clients resolve `src` to `<board host>/api/board/assets/<file>?token=…` (A2). An `<img>` cannot carry headers, so the token goes in the query. The record itself never holds the token.
+  - Uploads come straight from the page JS (`fetch` with the Bearer header). CORS is enabled on `/api/board/*` only (A2).
+- **Presence**:
+  - Lives inside the room (ephemeral) and is read through one adapter, `boardPresence(room)`, which calls `getPresenceRecords()` (`@internal` in 5.6.0). Exact version pin plus a test. If the method is missing, it fails open and returns `presence: []`.
+  - Each client sets a user name of `Jeremie · Mac` or `Jeremie · iPad`.
+- **Frame of reference**: tldraw page coordinates as stored. `board_write` takes page coordinates (parent-relative for children). Nothing re-centres or derives an origin from content. A brain shape with no x/y goes 80 px right of Jeremie's selection bounds, else at his viewport centre, else at 0,0. Placement reads presence and never moves existing shapes.
+- **Local cache (client)**:
+  - `sketch-board.json` stays as the read-only offline copy, written from the synced store (debounced 600 ms, all sources).
+  - It is read only on a cold start with the brain host unreachable, and for the one-time import.
+  - Before the first synced save, Swift copies the old file to `sketch-board.pre-sync.json` once, so a second device's board is never overwritten unseen.
+- **Offline (decided, minimal and honest)**:
+  - Cold start with no sync within 8 s → load the local copy into a local store, `isReadonly`, with the banner "Board offline — read-only copy from <time>. Retrying…". Retry every 15 s, then remount on sync.
+  - Mid-session drops → tldraw sync's own buffering and rebase on reconnect, with a banner showing `connectionStatus`.
+  - No offline editing and no merge logic.
+- **Auth**:
+  - The WS uses `?token=` (WKWebView cannot set WS headers). `checkBearer` already accepts the query on `/api/*`, and `WsData` logs never hold the URL.
+  - REST calls carry the Bearer header (sent from Swift).
+  - Board MCP (`/api/mcp/board`) uses the existing Bearer gate (`checkBearer`), the same as `/api/mcp/workers` (A1).
+- **Agent tool surface (amended, A1)**: a real Streamable-HTTP MCP server at `POST /api/mcp/board` (JSON-RPC, reusing the `worker-mcp.ts` rpc helpers), for every agent and not only the brain. Tools: `board_read`, `board_write` and `board_asset`. The implementation is `boardRead` / `boardWrite` in `lib/board-tools.ts`. See § Amendments.
+- **Schema (decided: duplicate, guarded)**: server `lib/board-schema.ts` = `createTLSchema({ shapes: { ...defaultShapeSchemas, "live-frame": { props: { w: T.number, h: T.number, html: T.string, title: T.string } } } })`, copied from `LiveFrame.tsx` `static props`.
+  - The server cannot import the iOS repo, so there are two guards. First, the sync connect handshake rejects a schema mismatch (the client shows an "update needed" banner and no data is touched). Second, a server test validates a full `live-frame` record and one record for every type `board_write` builds.
+  - Both repos pin tldraw packages to exactly `5.6.0`.
+
+**Contracts touched** (server map: `routes/orchestrator.ts#POST /api/orchestrator/send`, `checkBearer()` fan-in, `ws.ts` socket dispatch; iOS map: `BrainClient.swift`, `CompanionSketchStudio.swift` bridge)
+
+| contract | kind | change | consumers / callers | compat |
+|---|---|---|---|---|
+| `GET /api/board/sync?token=&sessionId=&storeId=` | WS (tldraw sync protocol) | NEW | `web/tldraw-canvas/src/board-sync.tsx` (Mac + iPad WKWebView), `scripts/board-probe.ts` | new |
+| `POST /api/board/import` (TLStoreSnapshot JSON) | endpoint | NEW: 200 `{ok, imported}` \| 409 `board_not_empty` \| 404 `board_disabled`; `data:` image URLs become asset files | `CompanionSketchStudio.swift` (on the bridge's `canvasBoardImport`) | new |
+| `OPTIONS` + `POST /api/board/assets` (raw body, `Content-Type`, Bearer header) / `GET /api/board/assets/<file>?token=` | endpoint | NEW: `{ok, src, path}` / bytes; CORS on `/api/board/*` only (A2) | `board-assets.ts` (paste upload + `resolve`), `make-real.ts` (PNG upload) — direct from page JS | new |
+| `POST /api/mcp/board` (MCP Streamable HTTP; `GET` → 405, no SSE) | MCP | NEW tools `board_read`, `board_write`, `board_asset` (A1) | every Claude session on the Mac + Zettlab (user-scope `board` server), the brain (`--mcp-config`), `scripts/board-probe.ts` | new |
+| `POST /api/orchestrator/send` | endpoint | +body field `canvas: boolean` (non-boolean → 400) → turn `card {kind:"canvas", source:"app"}` only when `canvas===true` and on the brain thread with no voice card (voice wins). Stored `text` is never modified | `BrainClient.sendBrainTurn` (Canvas chat + Make Real via `CanvasBrainModel`); phone composer unchanged | additive. Shipped iOS `TurnCard.kind` is a free `String` and decodes with `try?`, so an unknown kind renders as a plain turn |
+| `orchestrator` frame (type `"orchestrator"`) / thread GET | frame | `card.kind` may be `"canvas"` | `AppState+SocketEvents.swift`, `CanvasBrainModel.handle`, `BrainFeedView`; the only `kind` reader is `BrainClient.swift:114` (dispatch) | additive, safe (above). Server map blind spot: it lists no consumer for this frame |
+| brain prompt line | internal | `[turn <id>] (canvas) text` | `lib/brain.ts deliveryLine` → the brain | internal |
+| bridge `canvasBoardConfig` (reply) | WK bridge | NEW → JSON string `{base, token, user, cachedAt}` or null (local mode). This is how the page gets the token for the WS, REST and asset URLs (A2) | `bridge.ts` ↔ `CompanionSketchController` | same build |
+| bridge `canvasBoardImport` (reply) | WK bridge | NEW: Swift posts the local file → `imported` \| `not_empty` \| `failed` | `board-sync.tsx` | same build |
+| bridge `canvasMakeReal` | WK bridge | payload `{ids, notes, outline, pngPath?}`. JS uploads the PNG itself (15 s timeout) and passes the returned host path; with no path, the prompt has no PNG line (A2) | `make-real.ts` → `SketchMakeReal.prompt` | same build |
+| `window.companion.addLiveFrame` / Swift `placeLiveFrame` | JS↔Swift | REMOVED (Place Brain Reply is gone; JS `placeLiveFrame` in live-html.ts stays for Paste HTML / BYQ) | `CanvasWindow.swift` only | same build |
+| bridge `canvasSave` / `canvasLoad` | WK bridge | meaning only: offline cache / import source | `main.tsx`, `board-sync.tsx` | same build |
+
+`board_write` ops (all in one transaction; any invalid op → 400 `{error, at:<index>}` and nothing applied; ≤50 ops; html ≤512 KB):
+- `{op:"create", type:"note"|"text"|"geo"|"arrow"|"live-frame", id?, parentId?, x?, y?, text?, geo?, color?, w?, h?, from?, to?, html?, title?}`
+  - Arrows take `from` / `to` shape ids → the arrow shape plus 2 `binding` records (`terminal` start/end).
+  - Created shapes get `meta.by = "brain"`.
+- `{op:"update", id, x?, y?, rotation?, text?, w?, h?, color?, geo?, html?, title?}`
+- `{op:"delete", id}`: also deletes the shape's descendants and every binding whose `fromId` or `toId` is a deleted shape, because the server has no editor side effects.
+- The result is `{ok, ids}`.
+
+`board_read` → `{ok, pages:[{id,name}], shapes:[…], presence:[…]}`:
+- Each shape is `{id, type, parentId, pageId, x, y, w?, h?, page:{x,y,w,h}, rotation, text?, geo?, color?, title?, html?(only --html), arrow?:{from,to}, image?:{file, mime, w, h}, by?}`.
+  - `w`/`h` are null where the record stores none (note = 200×props.scale).
+  - `page` sums the parent chain and ignores parent rotation.
+  - `text` comes from a richText walk (paragraph → `\n`).
+- Each presence entry is `{user, pageId, selection, viewport:{x,y,w,h}, lastActivity}`.
+  - `viewport` = `{x:-camera.x, y:-camera.y, w:screenBounds.w/camera.z, h:screenBounds.h/camera.z}`.
+- Default scope: the page Jeremie is on. `--ids` adds descendants. `--focus` = his selection plus descendants, else the shapes intersecting his viewport.
+- Cap of 500 shapes (`truncated: true` past it).
+
+**Files (this repo, claude-companion), one owner each.** The iOS half is in claude-companion-ios STATE.md › Change Plan canvas-board-sync.
+
+| file | owner | change | lines now → after (cap 600) |
+|---|---|---|---|
+| `package.json` | P1 builder | + `@tldraw/sync-core`, `@tldraw/tlschema`, `@tldraw/validate`, `@tldraw/utils` all exactly `5.6.0` (no caret) | – |
+| `server/lib/board-schema.ts` | P1 | NEW: `boardSchema, LIVE_FRAME_TYPE, liveFrameProps` | 0 → ~40 ✓ |
+| `server/lib/board-room.ts` | P1 | NEW: `boardRoom, importBoard, boardPresence, closeBoardRoom`. Holds the room singleton and the sqlite storage; import is serialized on one promise chain, with the empty check inside the chain | 0 → ~170 ✓ |
+| `server/lib/board-records.ts` | P1 | NEW: `buildShape, buildArrowBindings, richTextToPlain, nextIndex`. Builds full validated records per type (`toRichText`, `getIndexAbove`) | 0 → ~160 ✓ |
+| `server/lib/board-tools.ts` | P1 | NEW: `boardRead, boardWrite, BoardOp, BoardShapeView` (the single implementation): parses and validates ops, handles the delete cascade and placement from presence; `meta.by` comes from the caller label | 0 → ~260 ✓ |
+| `server/lib/board-mcp.ts` | P1 | NEW: `BOARD_MCP_TOOLS, createBoardMcpHandler` (initialize, tools/list, tools/call; notifications → 202; `board_asset` returns an MCP `image` content block ≤5 MB, else `{url, file}`) | 0 → ~150 ✓ |
+| `server/lib/worker-mcp.ts` | P1 | export `rpcOk, rpcErr, toolResult, JsonRpcResponse` (made public, nothing else changes) | 336 → 336 ✓ |
+| `server/lib/worker-invocation.ts` | P1 | `buildHeadlessClaudeArgs` + `mcpConfig?: string` → `--mcp-config <path>` (no `--strict-mcp-config`, see Amendments) | 539 → 541 ✓ |
+| `server/wiring/brain-headless.ts` | P1 | the brain's launch (`deliver()` → `buildHeadlessClaudeArgs`, ~:133): at `spawn()`, write `~/.claude-companion/brain-mcp.json` (mode 0600, holding no token) with only `board` → loopback `/api/mcp/board` + `headersHelper`; pass `mcpConfig`; child env `COMPANION_BOARD_CALLER=brain` | 212 → ~228 ✓ |
+| `scripts/board-mcp-headers.sh` | P1 | NEW `headersHelper`: prints `{"Authorization":"Bearer …","X-Board-Caller":"<host>:<COMPANION_BOARD_CALLER or session>"}` from `$COMPANION_PEER_ZETTLAB_TOKEN`, else `$COMPANION_AUTH_TOKEN`, else `~/.claude-companion/auth.token`; exits 1 silently when none exists | 0 → ~25 |
+| `scripts/board-mcp-register.ts` | P1 | NEW one-time per host: `claude mcp add-json --scope user board '{"type":"http","url":<board url>,"headersHelper":<abs path to board-mcp-headers.sh>}'`. URL: Zettlab `http://127.0.0.1:4245/api/mcp/board`, Mac `https://zettlab.tailfc45f2.ts.net/api/mcp/board`. Writes no token into `~/.claude.json` | 0 → ~40 |
+| `server/lib/board-assets.ts` | P1 | NEW: `saveBoardAsset, boardAssetFile, boardAssetDir, BOARD_ASSET_MIMES` | 0 → ~90 ✓ |
+| `server/routes/board.ts` | P1 | NEW: `createBoardRoute, handleBoardRoute, BOARD_SYNC_PATH, boardCors`. Serves `/api/board/import`, `/api/board/assets[/<file>]` and `/api/mcp/board`; CORS on `/api/board/*` (allowed origins `companion-sketch://app` and, if the P2 spike shows it, `null`; `Vary: Origin`; no credentials); `board_disabled` when `!brainEnabled()` | 0 → ~170 ✓ |
+| `server/wiring/board.ts` | P1 | NEW: `boardOpen, boardMessage, boardClose` (→ `room.handleSocketConnect/Message/Close`) | 0 → ~45 ✓ |
+| `server/state.ts` | P1 | `WsData` + `board?: { sessionId: string }` | 88 → 90 ✓ |
+| `server/ws.ts` | P1 | dispatches `ws.data.board` in open/message/close, like the terminal/mirror branches | 193 → 199 ✓ |
+| `server/companion-server.ts` | P1 | `OPTIONS /api/board/*` answered by `boardCors` **before** the Bearer gate (a preflight carries no token); upgrade branch for `BOARD_SYNC_PATH` after the gate (404 when brain disabled, `sessionId` required); `handleBoardRoute` in the chain | 217 → ~238 ✓ |
+| `brain/.claude/settings.json` | P1 | allow `mcp__board__board_read`, `mcp__board__board_write`, `mcp__board__board_asset` | – |
+| `brain/CLAUDE.md` | P1 (+P3 line) | § Canvas board: the live board through the `board` MCP; images → `board_asset` or a Read of `image.file`; `(canvas)` turns → `board_read` with `focus` first; place Make Real output as a live frame with `board_write` | 138 → ~150 |
+| `scripts/board-probe.ts` | P1 | NEW scripted sync client (`TLSyncClient` + `ClientWebSocketAdapter` + store from `boardSchema`) used by tests and by hand | 0 → ~90 |
+| `server/lib/orchestrator-chat.ts` | P3 | `TurnCard.kind` += `"canvas"` | 345 → 346 ✓ |
+| `server/routes/orchestrator.ts` | P3 | `canvas: "boolean"` in `checked` (:360); card only when `canvas===true`, on the brain thread, with no voice card; dedup guard (:385-390) → `!voice && !canvas` | 417 → ~425 ✓ |
+| `docs/brain-api.md` | P3 | the `canvas` body field + card (:59, :71) | – |
+| `contracts/brain/orchestrator.card.canvas.json` | P3 | NEW fixture; `bun run contracts:sync` to iOS | – |
+| `server/lib/brain.ts` | P3 | `deliveryLine` tags `(canvas)` | 277 → 278 ✓ |
+| tests | owner of the module | `board-records.test.ts` (every built record passes `boardSchema` validation; a live-frame literal from LiveFrame defaults), `board-tools.test.ts`, `board-room.test.ts` (real sqlite via `COMPANION_DB_PATH`, restart keeps shapes), `routes/board.test.ts`, `routes/brain.test.ts` (+board auth), `lib/brain.test.ts` (+`deliveryLine` and `fitDelivery` with canvas), `orchestrator-brain-send.test.ts` (canvas card; non-brain channel → no card; voice+canvas → voice), `wrong-type-body.test.ts` (`canvas:"yes"` → 400), and a test decoding every `contracts/brain/orchestrator.card.*.json` | – |
+
+**Phases** (each one can ship on its own)
+- **P1, server room + brain tools (this repo):** board-schema/records/room/assets/tools, WS, assets + CORS, import, board MCP (`/api/mcp/board`) + its registration on both hosts + the brain's `--mcp-config`, brain doc. Ships to Zettlab on merge (auto-deploy). No client uses it yet. The probe proves it works.
+- **P2, clients sync (iOS repo):** needs P1 live on Zettlab. No server change.
+- **P3, chat + Make Real:** the server side is the canvas card and tag above. **It ships before** the iOS P3 build (an old server drops `canvas`). The iOS side is in its copy.
+
+**Fan-in paths to guard**
+- `room.updateStore` is reached from `boardWrite` (`/api/mcp/board`, any number of agents at once) and from client pushes. `boardWrite` runs one transaction per call and never reads outside it.
+- `importBoard` is reached from `/api/board/import` by the Mac and the iPad at the same time. It is serialized on one promise chain, and the empty check sits inside the chain, so only one import can ever win and the other gets 409.
+- `checkBearer()` gains `/api/board/*`, which is already under the `/api/` gate in `companion-server.ts`. The upgrade branch must sit **after** that gate (as `/ws` does).
+- Delete cascades bindings and descendants. The test is "delete a geo with an arrow bound to it → no binding left, record count consistent, client store validates".
+- `getPresenceRecords` is internal: `boardPresence` is the only caller.
+
+**Risks**
+- kb offline — no external gotchas checked (the kb-api answered 401 because the dev token was empty in this sandbox).
+- `@tldraw/sync-core` 5.6.0 `getPresenceRecords()` is `@internal` → the one adapter plus a test, an exact pin, and fail-open `presence: []`. Read from the 5.6.0 tarball `.d.ts`: `initialSnapshot` and `onDataChange` are deprecated in favour of `storage` (we use `SQLiteSyncStorage`), and `onCommittedChanges` does not fire for `updateStore` (do not mirror from it).
+- `NodeSqliteWrapper` is written for node:sqlite / better-sqlite3. bun:sqlite's `prepare().all/iterate/run` matches `SyncSqliteDatabase` → the P1 test proves it on real sqlite, including a restart. Fallback if it fails: a separate `board.db` with node:sqlite under Bun.
+- Server-built records must carry every prop for 5.6.0 (note, text, geo, arrow, binding) → the validation test fails on a version bump before prod does. Bound arrows render from their bindings, so the arrow's own start/end are placeholders.
+- Schema drift between `LiveFrame.tsx` and `board-schema.ts` → the connect handshake refuses (banner, no data touched). Both repos bump tldraw in the same release (both STATE.md files carry the note).
+- WKWebView WS from the `companion-sketch://` origin is unproven → the P2 spike gates the phase.
+- Two legacy boards (Mac and iPad): the first device to connect wins the import. The other keeps `sketch-board.pre-sync.json` (F4). Jeremie should open the Mac first.
+- Large live frames: the connect message carries every record, and the Bun WS default `maxPayloadLength` is 16 MB → cap html at 512 KB per write. Import rewrites `data:` images to files. Log the snapshot size at connect.
+- The token rides the WS query string. It is accepted already by `checkBearer`. Tailscale serve does not log queries, and `WsData` never logs URLs. The shell WS stays header-only.
+- Concurrent plans: server `headless-desk` (STATE.md) edits `companion-server.ts` and `ws.ts` upgrade branches, and iOS `canvas-strip` edits `CanvasWindow.swift` and `CompanionSketchStudio.swift`. Whichever merges second rebases. The board branches are additive.
+- Map blind spot: the brain's `bin/*` tools and `brain/.claude/settings.json` are not in the archmap (they are not TS modules). The callers listed here come from grep. File an archmap adapter task.
+- If the brain host changes (brain enabled on the Mac), the board stays in the old host's companion.db. Out of scope; stated.
+
+**Verify**
+1. Server `bun test server/lib/board-*.test.ts server/routes/board.test.ts server/routes/brain.test.ts server/lib/brain.test.ts` + `bun run typecheck` + `bun run lint` → green. `board-room.test.ts` closes and reopens the room on the same `COMPANION_DB_PATH` and the shapes survive.
+2. **Realtime, scripted (P1):** `scripts/board-probe.ts` against a test server on an ephemeral port.
+   - (a) The probe puts a note with text "probe-A" → a `tools/call board_read` to `/api/mcp/board` (Bearer) returns it with `text:"probe-A"` within 1 s.
+   - (b) `boardWrite([{op:"create",type:"note",text:"brain-B"},{op:"create",type:"arrow",from:<A>,to:<B>}])` → the probe's store holds the note, the arrow and 2 bindings within 1 s.
+   - (c) A live-frame write with html → the probe sees `props.html`.
+   - (d) Delete A → the bindings are gone.
+   - (e) The probe sets presence selection [A] → `read --focus` returns A and `presence[0].selection`.
+   - All of this lives in `board-room.test.ts` (asserted timings ≤1000 ms).
+3. On Zettlab after the P1 deploy, after registering the board MCP on both hosts (A1):
+   - `bun scripts/board-probe.ts --url https://zettlab.tailfc45f2.ts.net` connects (token from env).
+   - The probe draws a note → from a desk session **on the Mac**, `claude -p "call board_read and print the texts"` returns the probe's text.
+   - `board_write` from that session → the probe prints it, with `meta.by` = `mac:<caller>`.
+   - `/mcp` in the brain shows exactly one `board` server, connected.
+   - `ps -o args` for the brain and for the MCP helper shows no token.
+4. Assets: `curl` POST of a PNG with the Bearer → `{src,path}`. GET returns the same bytes. An svg gets 415. A request without the token gets 401. With brain disabled, every board path gets 404 `board_disabled`.
+5. iOS: `cd web/tldraw-canvas && bun run build`. Then `swift test --package-path CompanionKit`, then the CLAUDE.md recipe (`build-for-testing` once + `test-without-building -collect-test-diagnostics never`, suites `SketchMakeRealTests`, `SketchBridgeTests`, `CanvasBrainModelTests`, then the full unit target once) → only the accepted baseline failures.
+6. **Realtime, headless Chromium (P2):** `vite preview` of the built SPA in two tabs with `?board=ws://127.0.0.1:<port>/api/board/sync&token=…` against a local server.
+   - A note drawn in tab 1 appears in tab 2 within 1 s, and a `board_read` MCP call returns it.
+   - A `boardWrite` appears in both tabs within 1 s.
+   - Kill the server → banner. Draw. Restart → the edit is present on the server (buffered rebase).
+   - A cold start with the server down → read-only copy with the banner, then auto-switch once the server is up.
+7. Server P3 (ships first): `canvas:"yes"` → 400; a non-brain channel → no card; the same text sent twice within 1.5 s with `canvas` is not deduped; `contracts:sync` then iOS `BrainShippedToleranceTests` pass on the canvas fixture. A POST to `/api/orchestrator/send` with `{text, channel:"brain", canvas:true}` → the turn card kind is `canvas`, and the `deliveryText` line is `[turn …] (canvas) …`. With `voice` set, the card stays `voice`. iPhone TestFlight build 240: a canvas turn renders as a plain message (no crash, no hidden turn).
+8. **Manual pass by Jeremie on the running builds (Mac Canvas + iPad, P2/P3).** The plan is not shipped until this pass is clean. He should see:
+   - (a) The first Mac open imports his existing board unchanged: the same shapes, images and live frames, and the iframes are live.
+   - (b) The iPad opens to the same board. If it had its own, the banner names the pre-sync file.
+   - (c) A Pencil sticky on the iPad lands on the Mac within ~1 s, and the reverse.
+   - (d) A pasted image shows on both devices. The brain, asked "what image is on the board?", describes it (it Read the file).
+   - (e) "Brain, put three stickies summarising X next to my selection": they appear beside his selection, not elsewhere, and nothing else moves.
+   - (f) Make Real on a freehand sketch: the status reads "Sent to Brain, it will place the result on the board." The brain places a live frame to the right of the sketch, and no Place Brain Reply button exists. With Zettlab down, Make Real still sends (without the PNG line).
+   - (g) Wi-Fi off on the iPad: banner. Edits made in the drop sync back. App cold-started with Zettlab off: read-only copy, plainly labelled.
+   - (h) Canvas chat "what did I select?" → the brain names the selected shapes correctly.
+
+**Amendments (Jeremie, 2026-11-18)** (these supersede the sections above wherever they disagree; the rows above are already rewritten)
+- **A1: board tools are a real MCP server for every agent.**
+  - Endpoint: `POST /api/mcp/board`, Streamable HTTP with JSON responses; `GET` → 405 (no SSE stream, which the spec allows).
+    - The path sits under `/api/` so the global Bearer gate applies, the same as `/api/mcp/workers`.
+    - It reuses the `worker-mcp.ts` rpc helpers (now exported).
+  - Tools:
+    - `board_read`: the planned shape, plus `image.url` (the asset URL, without the token).
+    - `board_write`: the same ops in one transaction, with `meta.by` = `X-Board-Caller` (else `clientInfo.name`, else `agent`).
+    - `board_asset {file}` → MCP `image` content. Mac agents cannot Read a Zettlab file path, so this is how they see images.
+  - **Removed:** `brain/bin/board`, `/hooks/brain/board` and its pid check.
+  - **Registration (decided):** `claude mcp add-json --scope user board …` with a **`headersHelper`** (`scripts/board-mcp-headers.sh`), not a literal `--header`.
+    - The token is never in `~/.claude.json`, argv, a commit or any output. The helper reads it at connect time from the env (`COMPANION_PEER_ZETTLAB_TOKEN` on the Mac) or from `~/.claude-companion/auth.token` on Zettlab.
+    - It runs once per host via `scripts/board-mcp-register.ts`.
+    - Mac URL: the Zettlab tailnet URL, because the board lives with the brain host. Zettlab URL: loopback.
+  - **Brain (decided):** `wiring/brain-headless.ts` (the headless brain's launch, through `lib/worker-invocation.ts buildHeadlessClaudeArgs`) passes `--mcp-config ~/.claude-companion/brain-mcp.json` with only `board`, plus `COMPANION_BOARD_CALLER=brain`.
+    - **No `--strict-mcp-config`:** the brain is not strict today, and its allowlist relies on the user-scope `mcp__turso__*` and claude.ai Gmail connectors, which strict mode would drop. Flagged to the coordinator.
+    - The definition is identical to the user-scope `board`, so whichever entry wins reaches the same endpoint. Verify 3 checks that exactly one `board` is listed.
+    - The allowlist adds `mcp__board__*` tools.
+  - Other sessions: `board_write` prompts by default. A claude-config follow-up (F7) may allow `board_read` and `board_asset` globally.
+- **A2: CORS on `/api/board/*` only; the page talks to the server directly.**
+  - Allowed Origin: `companion-sketch://app`. The P2 spike logs the Origin WKWebView actually sends for a custom scheme; if it is `null`, allow `null` as well.
+    - Allowing `null` grants nothing without the token, and the sandboxed live-frame iframes (also origin `null`) cannot read the parent's token.
+  - Headers: `Allow-Methods: GET, POST, OPTIONS`; `Allow-Headers: Authorization, Content-Type`; `Max-Age: 600`; `Vary: Origin`; no credentials. The `OPTIONS` preflight is answered before the Bearer gate.
+  - The token reaches the page through the existing `canvasBoardConfig` reply. Uploads send the Bearer header.
+  - **GET assets (decided): `?token=` query**, added by `resolve()` at render time.
+    - An `<img src>` cannot carry headers.
+    - Signed short URLs would need a server signing round-trip per render, and they add no secrecy, since the page already holds the token.
+    - Records stay token-free.
+  - **Removed:** `SketchBoardHost.swift`, the `canvasAssetUpload` bridge call and the scheme-proxy branch.
+  - **Make Real PNG (decided):** JS uploads it with `uploadBoardImage` and sends only `pngPath` in `canvasMakeReal`. The base64 no longer travels through Swift, so Swift's `makeReal` loses its upload and timeout code.
+- **Risks added:**
+  - Token visible to page JS: the bundle (our code plus tldraw) could leak it. Live frames are `sandbox="allow-scripts"` without allow-same-origin, so they cannot reach it. The token also appears in `<img>` URLs inside the WebView. Mitigation: CORS stays limited to `/api/board/*`, the shell WS stays header-only, and token rotation follows the existing auth.token procedure.
+  - MCP secret handling: only the `headersHelper` path is stored. The helper prints the header only to Claude Code. If the token is missing, the helper exits 1 and `/mcp` shows `board` failed (no secret in the error).
+  - Mac agents depend on Zettlab being reachable (the board is down when Zettlab is).
+  - Several agents writing at once is safe: each call is one transaction, and the last write wins per record.
+- **Verify added:**
+  - `routes/board.test.ts`:
+    - An `OPTIONS /api/board/assets` with Origin `companion-sketch://app` and `Access-Control-Request-Headers: authorization,content-type`, and no token → 204 with allow headers echoing that origin.
+    - The same with Origin `https://evil.example` → no `Access-Control-Allow-Origin`.
+    - `OPTIONS /api/mcp/board` or `/api/orchestrator/send` → no CORS headers.
+  - `board-mcp.test.ts`: initialize, tools/list (3 tools) and tools/call for each tool; a bad op → `isError`.
+  - The Mac `claude -p` call against a shape a client drew (Verify 3).
+  - Headless Chromium: the network panel shows the upload succeeding after its preflight.
+
+- **A3: P1 build notes (builder, 2026-11-18)**
+  - CORS allowlist is exactly `companion-sketch://app`: the P2 spike measured WKWebView sending that Origin (not `null`), so `null` is not allowed.
+  - Unplanned files: `package.json` also pins `@tldraw/store` and `@tldraw/state` at exactly `5.6.0` (the probe imports `Store` / `atom` directly, already transitive deps of sync-core). `server/wiring/brain-headless.test.ts` is new (it tests `writeBrainMcpConfig`: only `board`, 0600, no token). `docs/board-api.md` is new (the P1 endpoint + tool reference; `docs/brain-api.md` stays P3).
+  - `routes/brain.test.ts (+board auth)` is dropped, because A1 removed `/hooks/brain/board`. Board auth (401 without the token, `board_disabled`) lives in `routes/board.test.ts`.
+  - `routes/board.ts` re-checks `checkBearer` behind the global gate, as `/api/mcp/workers` does.
+  - Delete semantics: deleting a shape removes the bindings that touch it. The arrow's other-end binding stays, as in the tldraw editor. Verify 2(d) asserts that.
+  - `board_read` `image` also carries `path` (the host file the brain can Read) and `url`.
+  - `ClientWebSocketAdapter` is exported at runtime but left out of the 5.6.0 public types. The probe reaches it with one cast, and shims `window`/`document`/`requestAnimationFrame` outside a browser.
+
+**Analyst findings** (2 change-analyst reports, 2026-11-18; folded into the Files and Verify sections above)
+- **Orchestrator send / card (analyst 1):**
+  - The WS frame type is `"orchestrator"`, not `orchestrator_turn`. The change is additive and safe on shipped iOS.
+  - Server edits:
+    - Widen `TurnCard.kind` (`lib/orchestrator-chat.ts:36`).
+    - Add `canvas: "boolean"` to the `checked` map (`routes/orchestrator.ts:360`).
+    - The dedup guard at `:385-390` becomes `!voice && !canvas`.
+    - `deliveryLine` (`lib/brain.ts:67`) adds `(canvas)`.
+    - Document it in `docs/brain-api.md:59,71`.
+  - The read-board instruction lives **only** in `brain/CLAUDE.md`. It is never added per line (the `fitDelivery` cap is 4000) and never put into the stored `turn.text`, because `BrainFeed.settle` (BrainClient.swift:220) and PhoneV2Model:1125-1135 match the typed text.
+  - **The server ships first**: an old server silently drops `canvas:true`.
+  - New fixture `contracts/brain/orchestrator.card.canvas.json`, plus a server test decoding every `orchestrator.card.*.json`. Run `bun run contracts:sync` into the iOS repo; the strip branch also lacks `trace.headless.json` and `trace.worker.json`.
+- **Bridge / Make Real (analyst 2):**
+  - `web/tldraw-canvas` is not an archmap target, so bridge handlers are invisible to the map → file an adapter follow-up.
+  - The reply-handler list in `CompanionSketchStudio.swift:54-58` is hard-coded. The three new handlers must be added there, or `ask()` silently returns null. `reply()` returns `String?`, so objects are JSON-encoded in Swift and parsed in JS.
+  - Make Real's upload gets a timeout (it blocks `busy` in `main.tsx:46`).
+  - In local mode, the prompt omits both the PNG line and the board-tools line.
+  - Old `make-real/` files are kept, not deleted.
+  - Notes and outline stay in the prompt as a fallback for the ids race.
+  - `persist()` listens to all sources only when synced. save/flush do nothing while read-only or not synced.
+  - `native.load()` feeds only the local read-only store or the import. It never calls `loadSnapshot` into the live synced store.
+  - `native.ready()` must not wait on the sync config: bare-controller tests boot without one. `jeremiesBoardRoundTrips` stays local.
+- **Make Real decision (coordinator, Option A):** the board is the only output.
+  - Removed: the ```html reply instruction, the Place Brain Reply button, `makeRealSince`, `placedReplies`, Swift `placeLiveFrame`, JS `window.companion.addLiveFrame`, `SketchMakeReal.html(in:)`, `latestReplyHTML`, and their tests.
+  - New status text: "Sent to Brain, it will place the result on the board."
+
+**Out of scope:**
+- F1–F5 above (F5 is now done by A1), F7 (claude-config: global allow for `board_read` / `board_asset`), plus F6 (archmap adapters for `web/tldraw-canvas` bridge handlers and the brain's `bin/*` tools).
+- The phone app (no board on iPhone).
+- Brain cursor/presence.
+- Offline editing and merge.
+- Moving the board between hosts.
+- design-state / FigCraft (untouched).
+- Any tmux/herdr path.
+
 ### Change Plan — headless-desk (2026-11-18)
 **Request:** Go fully headless for desk and interactive sessions and retire all terminal-pane plumbing (tmux and herdr). Phone or Mac Companion → session = `claude -p --resume <sid> --output-format stream-json --verbose` (codex and gemini where their CLIs can resume), streaming into the feed. The slash picker is built from stream-json `system/init` (`slash_commands`, `skills`, `plugins`), with an init-only probe for sessions that have no headless turn yet. Delete the tmux, herdr, scrape, dialog-mirror, picker-driver and Esc pane code, plus the hook-side pane headers. Contracts used by iOS and Companion Canvas change additively where possible, with a migration for anything removed. PR #337 was reverted by #338: no tmux, no herdr.
 **Done when:**
