@@ -75,6 +75,29 @@ export function boardPresence(r: BoardRoom = boardRoom()): PresenceRecord[] {
   }
 }
 
+/** Close reason for a client on an older board schema; the Canvas shows it as is. */
+export const BOARD_CLIENT_TOO_OLD = "CLIENT_TOO_OLD: Mettre à jour le Canvas"
+
+/**
+ * Why a sync client's schema can't join the board, or null. tldraw's room only
+ * compares the sequences both sides have, so it accepts a client missing one
+ * (a pre-S1 Canvas, which then drops its live sync on the first ui-block) or
+ * carrying one the server lacks. Any difference is refused at connect:
+ * a sequence missing or lower → BOARD_CLIENT_TOO_OLD, unknown or higher →
+ * SERVER_TOO_OLD. A malformed schema is left to the room.
+ */
+export function boardSchemaMismatch(schema: unknown): string | null {
+  const ours = boardSchema.serialize().sequences
+  const theirs = (schema as { sequences?: unknown } | null)?.sequences
+  if (!theirs || typeof theirs !== "object") return null
+  const t = theirs as Record<string, unknown>
+  for (const [id, v] of Object.entries(t)) {
+    if (typeof v !== "number") return null
+    if (!Object.hasOwn(ours, id) || v > ours[id]!) return "SERVER_TOO_OLD"
+  }
+  return Object.entries(ours).some(([id, v]) => !Object.hasOwn(t, id) || (t[id] as number) < v) ? BOARD_CLIENT_TOO_OLD : null
+}
+
 export type ImportResult = { ok: true; imported: number } | { ok: false; status: number; error: string }
 
 const DOCUMENT_TYPES = new Set(["document", "page", "shape", "binding", "asset"])

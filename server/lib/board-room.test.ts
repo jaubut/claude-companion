@@ -12,7 +12,10 @@ process.env.COMPANION_DB_PATH = join(dir, "companion.db")
 process.env.COMPANION_AUTH_TOKEN ||= "board-test-token-0123456789abcdef"
 
 const { checkBearer, getAuthToken } = await import("./auth")
-const { boardPresence, boardRecords, boardRoom, closeBoardRoom, importBoard } = await import("./board-room")
+const { BOARD_CLIENT_TOO_OLD, boardPresence, boardRecords, boardRoom, closeBoardRoom, importBoard } = await import("./board-room")
+const { boardSchema } = await import("./board-schema")
+// @internal in 5.6.0's types, exported at runtime (TLSyncClient sends it in `connect`).
+const { getTlsyncProtocolVersion } = await import("@tldraw/sync-core") as unknown as { getTlsyncProtocolVersion(): number }
 const { boardRead, boardWrite } = await import("./board-tools")
 const { createBoardRoute } = await import("../routes/board")
 const { boardClose, boardMessage, boardOpen } = await import("../wiring/board")
@@ -138,5 +141,45 @@ describe("board room realtime (probe ↔ MCP / boardWrite)", () => {
     expect([r1, r2].filter((r) => r.ok)).toEqual([{ ok: true, imported: 1 }])
     expect([r1, r2].filter((r) => !r.ok)).toEqual([{ ok: false, status: 409, error: "board_not_empty" }])
     expect(boardRead({}).shapes.map((s) => s.text)).toEqual(["old"])
+  })
+})
+
+describe("board sync refuses a client on another board schema at connect", () => {
+  const ours = () => boardSchema.serialize()
+
+  /** A raw sync connect with `schema` → the first server message type, or the close. */
+  function connect(schema: unknown): Promise<{ type?: string; code?: number; reason?: string }> {
+    const ws = new WebSocket(`${base.replace("http", "ws")}/api/board/sync?token=${TOKEN}&sessionId=s${crypto.randomUUID().slice(0, 8)}`)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no answer")), 5000)
+      ws.onopen = () => ws.send(JSON.stringify({ type: "connect", connectRequestId: "c1", schema, protocolVersion: getTlsyncProtocolVersion(), lastServerClock: 0 }))
+      ws.onmessage = (e) => { clearTimeout(timer); ws.onclose = null; ws.close(); resolve({ type: (JSON.parse(String(e.data)) as { type: string }).type }) }
+      ws.onclose = (e) => { clearTimeout(timer); resolve({ code: e.code, reason: e.reason }) }
+    })
+  }
+
+  test("equal schema → connected", async () => {
+    expect(await connect(ours())).toEqual({ type: "connect" })
+  })
+
+  test("older (pre-S1: no ui-block / auto-layout-frame sequence, or a lower version) → 4099 « Mettre à jour le Canvas »", async () => {
+    const preS1 = ours()
+    delete preS1.sequences["com.tldraw.shape.ui-block"]
+    delete preS1.sequences["com.tldraw.shape.auto-layout-frame"]
+    expect(await connect(preS1)).toEqual({ code: 4099, reason: BOARD_CLIENT_TOO_OLD })
+    const lower = ours()
+    lower.sequences["com.tldraw.shape.note"] = lower.sequences["com.tldraw.shape.note"]! - 1
+    expect(await connect(lower)).toEqual({ code: 4099, reason: BOARD_CLIENT_TOO_OLD })
+  })
+
+  test("newer → 4099 SERVER_TOO_OLD (the room's own refusal, unchanged)", async () => {
+    const bumped = ours()
+    bumped.sequences["com.tldraw.shape.ui-block"] = bumped.sequences["com.tldraw.shape.ui-block"]! + 1
+    expect(await connect(bumped)).toEqual({ code: 4099, reason: "SERVER_TOO_OLD" })
+    // A sequence the server lacks (a newer client with a new shape type), even with another missing.
+    const mixed = ours()
+    delete mixed.sequences["com.tldraw.shape.ui-block"]
+    mixed.sequences["com.example.shape.future"] = 0
+    expect(await connect(mixed)).toEqual({ code: 4099, reason: "SERVER_TOO_OLD" })
   })
 })

@@ -6,13 +6,23 @@ Storage: `companion.db` tables `board_documents`, `board_tombstones`, `board_met
 
 | endpoint | in | out |
 |---|---|---|
-| `GET /api/board/sync?token=&sessionId=&storeId=` (WS) | tldraw sync protocol 5.6.0 | the room. A schema mismatch is refused at connect. `sessionId` `[A-Za-z0-9_-]{1,128}` is required (400 `bad_session`) |
+| `GET /api/board/sync?token=&sessionId=&storeId=` (WS) | tldraw sync protocol 5.6.0 | the room. Any board schema mismatch is refused at connect (see below). `sessionId` `[A-Za-z0-9_-]{1,128}` is required (400 `bad_session`) |
 | `POST /api/board/import` | `getSnapshot(store)` JSON (`{document:{store,schema}}`) or `{store,schema}` | `200 {ok, imported}` · `409 board_not_empty` · `400 bad_snapshot`. Only document records are kept, `data:` images become asset files, and every record is migrated and validated before anything is written. Concurrent imports: one wins |
 | `POST /api/board/assets` | raw body, `Content-Type` png/jpeg/gif/webp, ≤25 MB, bytes must match the type | `{ok, src, path}` · `415 unsupported_type` / `type_mismatch` · `413 too_large` |
 | `GET /api/board/assets/<file>?token=` | the file name from `src` | bytes, `Cache-Control: private, immutable` · `404` |
 | `GET /api/board/byq/thumbs/<kind>-<id>[.jpg\|.webp]?token=` | a BYQ library item, named as the iOS bundle's `byq-thumbs/` | image bytes (type from the file), `Cache-Control: private, max-age=86400` · `404`. Served from `~/.claude-companion/byq-thumbs/`; on a miss, fetched once from the item's `thumbnailUrl` in the mirror's `index.json` (https, BYQ's two CDN hosts only, ≤5 MB, real jpeg/webp/png bytes) and cached. Add `?v=<thumbHash>` from the manifest to bust caches |
 | `OPTIONS /api/board/*` | CORS preflight, answered **before** the Bearer gate | `204`. Only for Origin `companion-sketch://app` does it set `Allow-Origin` (echoed) and `Allow-Methods: GET, POST, OPTIONS`, `Allow-Headers: Authorization, Content-Type`, `Max-Age: 600`. Always `Vary: Origin`, and no credentials. No CORS outside `/api/board/*` |
 | `POST /api/mcp/board` | MCP Streamable HTTP (JSON-RPC, JSON responses). `GET` → 405 | `initialize` (returns `Mcp-Session-Id`), `tools/list`, `tools/call`. Notifications → 202 |
+
+**Schema check at connect** (`boardSchemaMismatch`, `server/lib/board-room.ts`). tldraw's room alone compares only the sequences both sides have. It would let in a client that lacks one, for example a pre-S1 Canvas, which then drops its live sync on the first `ui-block`. It would also let in a client with a sequence the server lacks. The socket compares the client's `connect` schema to the board's, sequence by sequence:
+
+| client schema | answer |
+|---|---|
+| equal | connected |
+| a sequence missing or at a lower version (older client) | close `4099`, reason `CLIENT_TOO_OLD: Mettre à jour le Canvas`. The Canvas shows the reason and keeps its read-only offline copy until it is updated |
+| a sequence unknown to the server or at a higher version (newer client) | close `4099`, reason `SERVER_TOO_OLD`. Deploy the server first |
+
+Clients match on the `CLIENT_TOO_OLD` prefix. Layout writes in S2 need nothing new here: the room validates every put against the props table below, and each client already batches its pushes (≤ 30/s).
 
 ## Board MCP tools
 
