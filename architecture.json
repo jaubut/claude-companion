@@ -753,7 +753,7 @@
         },
         {
           "path": "lib/board-room.ts",
-          "lines": 118,
+          "lines": 141,
           "kind": "lib",
           "exports": [
             "BoardRoom",
@@ -762,6 +762,8 @@
             "boardRecords",
             "PresenceRecord",
             "boardPresence",
+            "BOARD_CLIENT_TOO_OLD",
+            "boardSchemaMismatch",
             "ImportResult",
             "importBoard"
           ],
@@ -8580,7 +8582,7 @@
         },
         {
           "path": "wiring/board.ts",
-          "lines": 26,
+          "lines": 39,
           "kind": "lib",
           "exports": [
             "boardOpen",
@@ -18779,6 +18781,12 @@
             "wiring/brain-lead.ts",
             "wiring/resolver.ts",
             "wiring/worker-mcp.ts"
+          ]
+        },
+        "boardSchemaMismatch": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "wiring/board.ts"
           ]
         },
         "DEFAULT_BODY_AGENT": {

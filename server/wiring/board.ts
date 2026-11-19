@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun"
-import { boardRecords, boardRoom } from "../lib/board-room"
+import { boardRecords, boardRoom, boardSchemaMismatch } from "../lib/board-room"
 import { companionLog } from "../lib/log"
 import { type WsData, describeClient } from "../state"
 
@@ -17,7 +17,20 @@ export function boardOpen(ws: ServerWebSocket<WsData>): void {
 }
 
 export function boardMessage(ws: ServerWebSocket<WsData>, raw: string | Buffer): void {
-  boardRoom().handleSocketMessage(ws.data.board!.sessionId, typeof raw === "string" ? raw : raw.toString(), ws)
+  const sessionId = ws.data.board!.sessionId
+  const msg = typeof raw === "string" ? raw : raw.toString()
+  // TLSyncClient serializes `type` first; a connect is never chunked (tiny next to the 256K chunk size).
+  if (msg.startsWith('{"type":"connect"')) {
+    let schema: unknown
+    try { schema = (JSON.parse(msg) as { schema?: unknown }).schema } catch { /* the room reports it */ }
+    const refused = boardSchemaMismatch(schema)
+    if (refused) {
+      companionLog(`board refused ${describeClient("ws", ws.data.client)}: ${refused}`)
+      boardRoom().closeSession(sessionId, refused)
+      return
+    }
+  }
+  boardRoom().handleSocketMessage(sessionId, msg, ws)
 }
 
 export function boardClose(ws: ServerWebSocket<WsData>): void {
