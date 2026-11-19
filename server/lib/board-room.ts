@@ -5,6 +5,7 @@ import { NodeSqliteWrapper, SQLiteSyncStorage, TLSocketRoom } from "@tldraw/sync
 import type { TLRecord } from "@tldraw/tlschema"
 import { companionDbPath } from "./db-path"
 import { companionLog } from "./log"
+import { externalizeDataUrls } from "./board-assets"
 import { boardSchema } from "./board-schema"
 import type { BoardRecord } from "./board-records"
 
@@ -95,6 +96,8 @@ function importNow(snapshot: unknown, r: BoardRoom): ImportResult {
   const snap = (snapshot as { document?: unknown }).document ?? snapshot
   const { store, schema } = snap as { store?: unknown; schema?: unknown }
   if (!store || typeof store !== "object" || !schema || typeof schema !== "object") return { ok: false, status: 400, error: "bad_snapshot" }
+  // After the empty check, so a refused import writes no asset files.
+  externalizeDataUrls(store as Record<string, unknown>)
   const docs: Record<string, BoardRecord> = {}
   for (const [id, rec] of Object.entries(store as Record<string, BoardRecord>)) {
     if (rec && typeof rec === "object" && DOCUMENT_TYPES.has(rec.typeName)) docs[id] = rec

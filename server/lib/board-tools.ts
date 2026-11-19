@@ -174,9 +174,12 @@ function viewOf(s: Shape, ix: ReturnType<typeof index>, bindings: BoardRecord[],
 
 // ── board_write ──
 
+/** text / title / geo / color: a note is not a document; html has its own cap. */
+const BOARD_MAX_TEXT = 20_000
 const str = (v: unknown, at: number, name: string): string | undefined => {
   if (v === undefined) return undefined
   if (typeof v !== "string") throw new BoardOpError(`${name} must be a string`, at)
+  if (v.length > BOARD_MAX_TEXT) throw new BoardOpError(`${name} over ${BOARD_MAX_TEXT} characters`, at)
   return v
 }
 const fin = (v: unknown, at: number, name: string): number | undefined => {

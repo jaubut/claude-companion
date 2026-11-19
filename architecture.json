@@ -751,7 +751,7 @@
         },
         {
           "path": "lib/board-room.ts",
-          "lines": 115,
+          "lines": 118,
           "kind": "lib",
           "exports": [
             "BoardRoom",
@@ -776,6 +776,7 @@
           "imports": [
             "lib/db-path.ts",
             "lib/log.ts",
+            "lib/board-assets.ts",
             "lib/board-schema.ts",
             "lib/board-records.ts"
           ],
@@ -810,7 +811,7 @@
         },
         {
           "path": "lib/board-tools.ts",
-          "lines": 302,
+          "lines": 305,
           "kind": "lib",
           "exports": [
             "BOARD_MAX_OPS",
@@ -7411,7 +7412,7 @@
         },
         {
           "path": "routes/board.ts",
-          "lines": 114,
+          "lines": 116,
           "kind": "route-host",
           "exports": [
             "BOARD_SYNC_PATH",
@@ -11649,6 +11650,12 @@
           "callers": [
             "lib/board-room.ts",
             "lib/board-tools.ts"
+          ]
+        },
+        "externalizeDataUrls": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-room.ts"
           ]
         },
         "BoardShapeType": {
@@ -16754,8 +16761,7 @@
           "module": "lib/json-body.ts",
           "callers": [
             "routes/api.ts#* /api/feed",
-            "routes/board.ts",
-            "routes/board.ts#POST /api/board/import"
+            "routes/board.ts"
           ]
         },
         "resolveQuestion": {
@@ -16842,14 +16848,14 @@
             "routes/board.ts"
           ]
         },
-        "externalizeDataUrls": {
-          "module": "lib/board-assets.ts",
+        "importBoard": {
+          "module": "lib/board-room.ts",
           "callers": [
             "routes/board.ts#POST /api/board/import"
           ]
         },
-        "importBoard": {
-          "module": "lib/board-room.ts",
+        "BOARD_ASSET_MAX_BYTES": {
+          "module": "lib/board-assets.ts",
           "callers": [
             "routes/board.ts#POST /api/board/import"
           ]

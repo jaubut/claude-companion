@@ -452,6 +452,23 @@ Last updated: 2026-11-07
   - Delete semantics: deleting a shape removes the bindings that touch it. The arrow's other-end binding stays, as in the tldraw editor. Verify 2(d) asserts that.
   - `board_read` `image` also carries `path` (the host file the brain can Read) and `url`.
   - `ClientWebSocketAdapter` is exported at runtime but left out of the 5.6.0 public types. The probe reaches it with one cast, and shims `window`/`document`/`requestAnimationFrame` outside a browser.
+- **A4: table gaps from the PR #345 drift check (2026-11-18)**
+  - `server/lib/worker-supervisor.test.ts` (+5): a test that `buildHeadlessClaudeArgs({mcpConfig})` emits `--mcp-config <path>`. It sits next to the existing argv tests.
+  - Exports added by the new board modules, all owned by the rows that already list those files. They are constants, types and helpers that tests and sibling board modules import:
+    - `board-assets.ts`: `externalizeDataUrls`, `BOARD_ASSET_MAX_BYTES`, `BOARD_ASSET_PREFIX`, `SaveResult`.
+    - `board-room.ts`: `boardRecords`, `BoardRoom`, `PresenceRecord`, `ImportResult`.
+    - `board-tools.ts`: `parseBoardOps`, `BOARD_MAX_OPS`, `BOARD_MAX_HTML`, `BOARD_READ_CAP`, `BoardOpError`, `Rect`, `BoardPresenceView`, `BoardReadOpts`.
+    - `board-records.ts`: `BOARD_SHAPE_TYPES`, `BoardRecord`, `BoardShapeType`, `ShapeInput`.
+    - `board-mcp.ts`: `BoardMcpDeps`, `BoardMcpHandler`.
+    - `routes/board.ts`: `BoardRouteDeps`.
+    - `wiring/brain-headless.ts`: `writeBrainMcpConfig`. It implements the planned spawn-time config write and is tested by `brain-headless.test.ts`.
+  - Verify 1 "green" means no new failures. 6 `bun test` failures are pre-existing on `origin/main` (3508 pass / 6 fail on base) and are untouched by this PR.
+  - Security pass (PR #345): no critical, high or medium issues. Three of the four lows are fixed in this PR:
+    - The asset POST refuses an oversized `Content-Length` with 413 before buffering.
+    - `externalizeDataUrls` moved into `importNow` after the empty check, so a refused import writes no files.
+    - `text`, `title`, `geo` and `color` are capped at 20,000 characters in `parseBoardOps`.
+  - Kept: the absolute `path` in the asset POST and in `board_read` (the brain reads images by path). Room-level size caps for sync clients and rejecting external image `src` on import are follow-up F8.
+  - Verify step 3 (the live Zettlab probe, Mac `claude -p` via the board MCP, `/mcp` listing exactly one `board`, `ps` showing no token) runs after merge and deploy, plus `scripts/board-mcp-register.ts` on both hosts.
 
 **Analyst findings** (2 change-analyst reports, 2026-11-18; folded into the Files and Verify sections above)
 - **Orchestrator send / card (analyst 1):**

@@ -1,6 +1,6 @@
 import { checkBearer, unauthorized } from "../lib/auth"
 import { brainEnabled } from "../lib/brain"
-import { boardAssetFile, externalizeDataUrls, saveBoardAsset } from "../lib/board-assets"
+import { BOARD_ASSET_MAX_BYTES, boardAssetFile, saveBoardAsset } from "../lib/board-assets"
 import { type BoardMcpHandler, createBoardMcpHandler } from "../lib/board-mcp"
 import { type BoardRoom, importBoard } from "../lib/board-room"
 import { isObject, jsonObject } from "../lib/json-body"
@@ -82,12 +82,14 @@ export function createBoardRoute(deps: BoardRouteDeps = {}) {
     if (url.pathname === MCP_PATH) return serveMcp(req)
     if (url.pathname === "/api/board/import" && req.method === "POST") {
       const body = await jsonObject(req)
-      const snap = (isObject(body.document) ? body.document : body) as { store?: unknown }
-      if (isObject(snap.store)) externalizeDataUrls(snap.store)
       const out = await importBoard(body, deps.room?.())
       return out.ok ? Response.json(out) : Response.json(out, { status: out.status })
     }
     if (url.pathname === ASSETS_PATH && req.method === "POST") {
+      // Refuse before buffering: Bun would otherwise read up to its 128 MB body limit.
+      if (Number(req.headers.get("content-length") ?? 0) > BOARD_ASSET_MAX_BYTES) {
+        return Response.json({ ok: false, error: "too_large", max: BOARD_ASSET_MAX_BYTES }, { status: 413 })
+      }
       const saved = saveBoardAsset(new Uint8Array(await req.arrayBuffer()), req.headers.get("content-type"))
       return saved.ok ? Response.json({ ok: true, src: saved.src, path: saved.path }) : Response.json(saved, { status: saved.status })
     }

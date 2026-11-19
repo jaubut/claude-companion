@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { getAuthToken } from "../lib/auth"
 import { InMemorySyncStorage, TLSocketRoom } from "@tldraw/sync-core"
 import type { TLRecord } from "@tldraw/tlschema"
@@ -74,6 +74,9 @@ describe("board assets", () => {
     expect((await call("/api/board/assets", { method: "POST", body: PNG, headers: { "Content-Type": "image/png" } }, false))!.status).toBe(401)
     expect((await call(out.src, {}, false))!.status).toBe(401)
     expect((await call("/api/board/assets/..%2f..%2fauth.token"))!.status).toBe(404)
+    // Refused from Content-Length before the body is buffered.
+    const big = (await call("/api/board/assets", { method: "POST", body: PNG, headers: { "Content-Type": "image/png", "Content-Length": String(26 * 1024 * 1024) } }))!
+    expect(big.status).toBe(413)
   })
 })
 
@@ -89,6 +92,13 @@ describe("board import", () => {
     expect(await res.json()).toEqual({ ok: true, imported: 1 })
     const stored = boardRecords(room).find((r) => r.id === "asset:a1") as { props: { src: string } } | undefined
     expect(stored?.props.src).toMatch(/^\/api\/board\/assets\/[a-f0-9]{32}\.png$/)
+    // A refused import writes no asset files.
+    const assetDir = dirname((await (await call("/api/board/assets", { method: "POST", body: PNG, headers: { "Content-Type": "image/png" } }))!.json() as { path: string }).path)
+    const before = readdirSync(assetDir).length
+    const other = Buffer.from(PNG); other.writeUInt8(other.readUInt8(other.length - 1) ^ 1, other.length - 1)
+    const body2 = body.replace(PNG.toString("base64"), other.toString("base64"))
+    expect((await call("/api/board/import", { method: "POST", body: body2, headers: { "Content-Type": "application/json" } }))!.status).toBe(409)
+    expect(readdirSync(assetDir).length).toBe(before)
     expect((await call("/api/board/import", { method: "POST", body, headers: { "Content-Type": "application/json" } }))!.status).toBe(409)
   })
 })

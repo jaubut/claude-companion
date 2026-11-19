@@ -67,9 +67,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/model.ts` | 321 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
+| `lib/board-tools.ts` | 305 | lib | 12 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
-| `lib/board-tools.ts` | 302 | lib | 12 |  |
 | `lib/triage-pr.ts` | 296 | lib | 21 |  |
 | `wiring/auto-compact.ts` | 296 | lib | 6 | state: let statsDb · emits: inject_error |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
@@ -190,15 +190,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-task-store.ts` | 120 | lib | 16 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `routes/dialogs.ts` | 119 | route-host | 1 | routes: 2 |
+| `lib/board-room.ts` | 118 | lib | 8 | state: let room, let db, let importChain, DOCUMENT_TYPES: Set |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
 | `routes/command.ts` | 118 | route-host | 1 | state: let cachedAgyCommands · routes: 2 |
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/worker-progress-trace.ts` | 116 | lib | 5 |  |
-| `lib/board-room.ts` | 115 | lib | 8 | state: let room, let db, let importChain, DOCUMENT_TYPES: Set |
+| `routes/board.ts` | 116 | route-host | 5 | state: ALLOWED_ORIGINS: Set · route: POST /api/board/import |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
-| `routes/board.ts` | 114 | route-host | 5 | state: ALLOWED_ORIGINS: Set · route: POST /api/board/import |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
@@ -680,7 +680,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `tokenCount()` | `lib/push-tokens.ts` | `routes/api.ts`, `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token` |
 | `isSuperAuto()` | `lib/super-auto.ts` | `routes/api.ts#GET /api/super-auto`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `ws.ts` |
 | `listActivities()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `wiring/canvas.ts`, `ws.ts` |
-| `isObject()` | `lib/json-body.ts` | `routes/api.ts#* /api/feed`, `routes/board.ts`, `routes/board.ts#POST /api/board/import` |
 | `isKeyCommand()` | `lib/secret-store.ts` | `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
 | `handleKeyCommand()` | `lib/secret-store.ts` | `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `ws.ts` |
 | `CompactionStats()` | `lib/auto-compact-stats.ts` | `routes/body.ts`, `routes/body.ts#GET /api/body/tokens`, `wiring/auto-compact.ts` |
@@ -869,6 +868,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `waitingSummary()` | `lib/sessions.ts` | `routes/api.ts#* /api/status`, `ws.ts` |
 | `getActivity()` | `lib/activity.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `resolveApproval()` | `lib/pty-manager.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
+| `isObject()` | `lib/json-body.ts` | `routes/api.ts#* /api/feed`, `routes/board.ts` |
 | `resolveQuestion()` | `lib/questions.ts` | `routes/api.ts#* /api/feed`, `ws.ts` |
 | `TokensSnapshot()` | `lib/body-tokens.ts` | `routes/body.ts`, `wiring/body.ts` |
 | `bodyInvestigator()` | `wiring/body-investigate.ts` | `routes/body.ts`, `wiring/triage.ts` |
