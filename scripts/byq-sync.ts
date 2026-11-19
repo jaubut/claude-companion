@@ -20,11 +20,12 @@ for (const { slug, kind } of BYQ_MANIFEST.items) {
   const entry = byqIndex().get(thumb)
   if (!entry?.path) { failures.push(`${slug}: not in ${lib} (fetch it first)`); continue }
   const dir = join(lib, entry.path)
+  if (!existsSync(dir)) { failures.push(`${slug}: ${dir} missing`); continue }
   const tsx = readdirSync(dir).filter((f) => f.endsWith(".tsx"))
   if (tsx.length !== 1) { failures.push(`${slug}: expected one .tsx, found ${tsx.length}`); continue }
   const file = tsx[0]!
   const src = readFileSync(join(dir, file), "utf8")
-  const deps = [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((d) => d !== "react")
+  const deps = [...src.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((d) => d !== "react")
   if (deps.length) { failures.push(`${slug}: imports ${deps.join(", ")} (react only in v1)`); continue }
   let meta: { name?: string; category?: string[]; componentName?: string }
   try { meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) } catch { failures.push(`${slug}: unreadable meta.json`); continue }
@@ -47,7 +48,11 @@ for (const { slug, kind } of BYQ_MANIFEST.items) {
   })
 }
 
+for (const f of failures) console.error(`  ! ${f}`)
+// A partial sync never rewrites the committed manifest: it would drop the failed slugs.
+if (items.length < BYQ_MANIFEST.items.length) {
+  console.error(`byq-sync: ${items.length}/${BYQ_MANIFEST.items.length} items synced, ${BYQ_MANIFEST_PATH} left unchanged`)
+  process.exit(1)
+}
 writeFileSync(BYQ_MANIFEST_PATH, `${JSON.stringify({ ...BYQ_MANIFEST, items }, null, 2)}\n`)
 console.log(`byq-sync: ${items.length}/${BYQ_MANIFEST.items.length} items → ${BYQ_MANIFEST_PATH}, sources → ${SRC_DIR}`)
-for (const f of failures) console.error(`  ! ${f}`)
-if (items.length < BYQ_MANIFEST.items.length) process.exit(1)

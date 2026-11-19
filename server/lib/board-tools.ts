@@ -299,7 +299,7 @@ function update(store: Store, op: Extract<BoardOp, { op: "update" }>): string {
   const p = s.props
   const set = (k: string, v: unknown) => {
     if (v === undefined) return
-    if (!(k in p)) throw new Error(`a ${s.type} has no ${k}`)
+    if (!Object.hasOwn(p, k)) throw new Error(`a ${s.type} has no ${k}`)
     p[k] = v
   }
   if (op.text !== undefined) set("richText", toRichText(op.text))

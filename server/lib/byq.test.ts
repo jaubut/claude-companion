@@ -12,7 +12,9 @@ const home = mkdtempSync(join(tmpdir(), "cc-byq-home-"))
 const lib = mkdtempSync(join(tmpdir(), "cc-byq-lib-"))
 process.env.HOME = home
 process.env.BYQ_LIB = lib
-afterAll(() => Object.assign(process.env, saved))
+afterAll(() => {
+  for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+})
 writeFileSync(join(lib, "index.json"), JSON.stringify([
   { id: "ok-hero-1", kind: "component", thumbnailUrl: "https://ftspw3fevajkuozl.public.blob.vercel-storage.com/a.webp", path: null },
   { id: "evil-1", kind: "component", thumbnailUrl: "https://169.254.169.254/latest/meta-data", path: null },
@@ -20,8 +22,6 @@ writeFileSync(join(lib, "index.json"), JSON.stringify([
   { id: "svg-1", kind: "gem", thumbnailUrl: "https://byqsupply-components.netlify.app/x.svg", path: null },
 ]))
 const { BYQ_MANIFEST, byqThumb, byqThumbDir } = await import("./byq")
-// Bun caches os.homedir() at first use: clear this file's names wherever the cache is.
-for (const f of ["component-ok-hero-1.webp", "gem-svg-1.svg"]) rmSync(join(byqThumbDir(), f), { force: true })
 const WEBP = Buffer.concat([Buffer.from("RIFF\x00\x00\x00\x00WEBPVP8 ", "latin1"), Buffer.alloc(16)])
 
 describe("byq", () => {
@@ -59,5 +59,12 @@ describe("byq", () => {
     expect(existsSync(join(byqThumbDir(), "gem-svg-1.svg"))).toBe(false)
     const failing = (async () => { throw new Error("offline") }) as unknown as typeof fetch
     expect(await byqThumb("component-ok-hero-2", failing)).toBeNull()
+    const midBody = (async () => new Response(new ReadableStream({ pull(c) { c.error(new Error("reset")) } }))) as unknown as typeof fetch
+    expect(await byqThumb("component-ok-hero-1", midBody)).not.toBeNull() // cached from the test above
+    rmSync(join(byqThumbDir(), "component-ok-hero-1.webp"), { force: true })
+    expect(await byqThumb("component-ok-hero-1", midBody)).toBeNull()
+    const huge = (async () => new Response(WEBP, { headers: { "Content-Length": String(6 * 1024 * 1024) } })) as unknown as typeof fetch
+    expect(await byqThumb("component-ok-hero-1", huge)).toBeNull()
+    expect(existsSync(join(byqThumbDir(), "component-ok-hero-1.webp"))).toBe(false)
   })
 })

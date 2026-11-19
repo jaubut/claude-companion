@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createHash, randomUUID } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import manifest from "../../canvas-lib/byq/manifest.json"
@@ -31,7 +31,8 @@ export const BYQ_MANIFEST = manifest as ByqManifest
 export const BYQ_SLUGS: ReadonlySet<string> = new Set(BYQ_MANIFEST.items.map((i) => i.slug))
 
 export const byqLibDir = (): string => process.env.BYQ_LIB || join(homedir(), "work", "byq-lib")
-export const byqThumbDir = (): string => join(homedir(), ".claude-companion", "byq-thumbs")
+// process.env.HOME first: Bun caches os.homedir(), so tests' temp HOME would be ignored.
+export const byqThumbDir = (): string => join(process.env.HOME || homedir(), ".claude-companion", "byq-thumbs")
 
 export interface ByqIndexItem { id: string; kind: string; thumbnailUrl: string | null; path: string | null }
 
@@ -77,14 +78,19 @@ export async function byqThumb(name: string, fetcher: typeof fetch = fetch): Pro
   try { url = new URL(src) } catch { return null }
   if (url.protocol !== "https:" || !THUMB_HOSTS.has(url.hostname)) return null
   const res = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(15_000) }).catch(() => null)
-  if (!res?.ok) return null
-  const bytes = new Uint8Array(await res.arrayBuffer())
+  if (!res?.ok || Number(res.headers.get("content-length") ?? 0) > THUMB_MAX_BYTES) return null
+  const body = await res.arrayBuffer().catch(() => null)
+  if (!body) return null
+  const bytes = new Uint8Array(body)
   const mime = sniff(bytes)
   const ext = mime ? EXT[mime] : undefined
   if (!mime || !ext || bytes.byteLength > THUMB_MAX_BYTES) return null
   mkdirSync(byqThumbDir(), { recursive: true, mode: 0o700 })
   const path = join(byqThumbDir(), `${stem}.${ext}`)
-  writeFileSync(path, bytes, { mode: 0o600 })
+  // Temp + rename: a concurrent miss never truncates a file the route is streaming.
+  const tmp = `${path}.${randomUUID()}.tmp`
+  writeFileSync(tmp, bytes, { mode: 0o600 })
+  renameSync(tmp, path)
   return { path, mime }
 }
 
