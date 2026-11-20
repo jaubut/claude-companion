@@ -698,7 +698,7 @@
         },
         {
           "path": "lib/board-mcp.ts",
-          "lines": 99,
+          "lines": 139,
           "kind": "lib",
           "exports": [
             "BOARD_MCP_TOOLS",
@@ -713,6 +713,7 @@
           "apiCalls": [],
           "imports": [
             "lib/board-assets.ts",
+            "lib/board-render.ts",
             "lib/board-room.ts",
             "lib/board-tools.ts",
             "lib/worker-mcp.ts"
@@ -777,6 +778,31 @@
           "externals": [
             "@tldraw/tlschema",
             "@tldraw/utils"
+          ]
+        },
+        {
+          "path": "lib/board-render.ts",
+          "lines": 146,
+          "kind": "lib",
+          "exports": [
+            "BoardRenderOpts",
+            "renderBoardRegion"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-assets.ts",
+            "lib/board-records.ts",
+            "lib/board-room.ts",
+            "lib/board-tools.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "sharp"
           ]
         },
         {
@@ -847,8 +873,29 @@
           ]
         },
         {
+          "path": "lib/board-stroke.test-util.ts",
+          "lines": 13,
+          "kind": "lib",
+          "exports": [
+            "putStroke"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-room.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "@tldraw/tlschema"
+          ]
+        },
+        {
           "path": "lib/board-tools.ts",
-          "lines": 322,
+          "lines": 388,
           "kind": "lib",
           "exports": [
             "BOARD_MAX_OPS",
@@ -860,6 +907,12 @@
             "BoardReadOpts",
             "BoardOp",
             "BoardOpError",
+            "Shape",
+            "strokeSegments",
+            "BOARD_FONT",
+            "BoardIndex",
+            "intersects",
+            "boardScope",
             "boardRead",
             "parseBoardOps",
             "boardWrite"
@@ -11751,6 +11804,13 @@
             "lib/auto-judge.ts"
           ]
         },
+        "Rect": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts",
+            "lib/board-render.ts"
+          ]
+        },
         "BOARD_MAX_OPS": {
           "module": "lib/board-tools.ts",
           "callers": [
@@ -11761,18 +11821,14 @@
           "module": "lib/board-room.ts",
           "callers": [
             "lib/board-mcp.ts",
+            "lib/board-render.ts",
+            "lib/board-stroke.test-util.ts",
             "lib/board-tools.ts",
             "routes/board.ts"
           ]
         },
         "JsonRpcResponse": {
           "module": "lib/worker-mcp.ts",
-          "callers": [
-            "lib/board-mcp.ts"
-          ]
-        },
-        "boardRead": {
-          "module": "lib/board-tools.ts",
           "callers": [
             "lib/board-mcp.ts"
           ]
@@ -11785,6 +11841,18 @@
         },
         "toolResult": {
           "module": "lib/worker-mcp.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "boardRead": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-mcp.ts"
+          ]
+        },
+        "renderBoardRegion": {
+          "module": "lib/board-render.ts",
           "callers": [
             "lib/board-mcp.ts"
           ]
@@ -11811,6 +11879,7 @@
           "module": "lib/board-assets.ts",
           "callers": [
             "lib/board-mcp.ts",
+            "lib/board-render.ts",
             "lib/board-tools.ts",
             "routes/board.ts#POST /api/board/resolve-url"
           ]
@@ -11851,6 +11920,52 @@
             "lib/board-records.ts"
           ]
         },
+        "BoardIndex": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-render.ts"
+          ]
+        },
+        "richTextToPlain": {
+          "module": "lib/board-records.ts",
+          "callers": [
+            "lib/board-render.ts",
+            "lib/board-tools.ts"
+          ]
+        },
+        "BOARD_FONT": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-render.ts"
+          ]
+        },
+        "strokeSegments": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-render.ts"
+          ]
+        },
+        "BOARD_ASSET_PREFIX": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-render.ts",
+            "lib/board-tools.ts"
+          ]
+        },
+        "boardRoom": {
+          "module": "lib/board-room.ts",
+          "callers": [
+            "lib/board-render.ts",
+            "lib/board-tools.ts",
+            "wiring/board.ts"
+          ]
+        },
+        "boardScope": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-render.ts"
+          ]
+        },
         "boardSchema": {
           "module": "lib/board-schema.ts",
           "callers": [
@@ -11882,13 +11997,6 @@
             "lib/board-tools.ts"
           ]
         },
-        "boardRoom": {
-          "module": "lib/board-room.ts",
-          "callers": [
-            "lib/board-tools.ts",
-            "wiring/board.ts"
-          ]
-        },
         "boardRecords": {
           "module": "lib/board-room.ts",
           "callers": [
@@ -11902,20 +12010,8 @@
             "lib/board-tools.ts"
           ]
         },
-        "richTextToPlain": {
-          "module": "lib/board-records.ts",
-          "callers": [
-            "lib/board-tools.ts"
-          ]
-        },
         "BOARD_PROPS_TYPES": {
           "module": "lib/board-records.ts",
-          "callers": [
-            "lib/board-tools.ts"
-          ]
-        },
-        "BOARD_ASSET_PREFIX": {
-          "module": "lib/board-assets.ts",
           "callers": [
             "lib/board-tools.ts"
           ]
@@ -21388,6 +21484,7 @@
             "lib/board-records.ts",
             "lib/board-room.ts",
             "lib/board-schema.ts",
+            "lib/board-stroke.test-util.ts",
             "lib/board-tools.ts"
           ]
         },
@@ -21413,6 +21510,7 @@
           "version": "0.35.5",
           "modules": [
             "lib/board-page-capture.ts",
+            "lib/board-render.ts",
             "lib/board-url-resolve.ts",
             "lib/link-media-palette.ts",
             "lib/link-media.ts",

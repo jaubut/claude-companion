@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { InMemorySyncStorage, TLSocketRoom } from "@tldraw/sync-core"
 import type { TLRecord } from "@tldraw/tlschema"
+import sharp from "sharp"
+import { renderBoardRegion } from "./board-render"
+import { putStroke } from "./board-stroke.test-util"
 import { type BoardRoom, boardPresence, boardRecords } from "./board-room"
 import { boardSchema } from "./board-schema"
 import { BoardOpError, boardRead, boardWrite, parseBoardOps } from "./board-tools"
@@ -127,5 +130,55 @@ describe("board tools", () => {
     await refused([{ op: "update", id: "shape:f", props: { bg: "red" } }], 0)
     await refused([{ op: "update", id: "shape:n", props: { color: "red" } }], 0)
     await refused([{ op: "create", type: "ui-block", props: { slug: "fit-text-01", w: 0 } }], 0)
+  })
+
+  test("draw / highlight: page bounds from the decoded points (scaleX applied); rect scopes the read", async () => {
+    const room = newRoom()
+    await putStroke(room, "shape:ink", "draw", [{ x: 10, y: 20 }, { x: 60, y: 70 }, { x: 110, y: 20 }], { x: 100, y: 50 }, 2)
+    await putStroke(room, "shape:hl", "highlight", [{ x: -5, y: 0 }, { x: 45, y: 10 }], { x: 1000, y: 1000 })
+    validateAll(room)
+    const read = boardRead({}, room)
+    expect(read.shapes.find((s) => s.id === "shape:ink")!.page).toEqual({ x: 120, y: 70, w: 200, h: 50 })
+    expect(read.shapes.find((s) => s.id === "shape:hl")!.page).toEqual({ x: 995, y: 1000, w: 50, h: 10 })
+    expect(boardRead({ rect: { x: 300, y: 100, w: 10, h: 10 } }, room).shapes.map((s) => s.id)).toEqual(["shape:ink"])
+    expect(boardRead({ rect: { x: 330, y: 0, w: 600, h: 60 } }, room).shapes).toEqual([])
+  })
+
+  test("renderBoardRegion: a valid PNG with the stroke's red along its path, white elsewhere", async () => {
+    const room = newRoom()
+    await putStroke(room, "shape:ink", "draw", [{ x: 10, y: 20 }, { x: 60, y: 70 }, { x: 110, y: 20 }], { x: 100, y: 50 }, 2)
+    await boardWrite(parseBoardOps([{ op: "create", type: "note", id: "shape:n", x: 2000, y: 2000, text: "far & <away>" }]), "t", room)
+    const out = await renderBoardRegion({ ids: ["shape:ink"] }, room)
+    expect(out.shapeCount).toBe(1)
+    expect(out.rect).toEqual({ x: 88, y: 38, w: 264, h: 114 })
+    expect([...out.png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const { data, info } = await sharp(out.png).raw().toBuffer({ resolveWithObject: true })
+    expect([info.width, info.height]).toEqual([660, 285]) // scale 2.5 (the cap)
+    const px = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
+    const [r, g, b] = px(Math.round((220 - 88) * 2.5), Math.round((120 - 38) * 2.5)) // the middle point (60·2, 70) + (100, 50)
+    expect(r).toBeGreaterThan(180)
+    expect(g).toBeLessThan(120)
+    expect(b).toBeLessThan(120)
+    expect(px(5, 5)).toEqual([255, 255, 255])
+    const all = await renderBoardRegion({ rect: { x: 0, y: 0, w: 4000, h: 2500 }, maxDim: 800 }, room)
+    expect(all.shapeCount).toBe(2)
+    expect((await sharp(all.png).metadata()).width).toBe(800)
+    await expect(renderBoardRegion({ rect: { x: 0, y: 0, w: 0, h: 10 } }, room)).rejects.toThrow("rect")
+  })
+
+  test("a bound arrow's bounds span its ends; text gets a height; XML-invalid chars don't break the render", async () => {
+    const room = newRoom()
+    await boardWrite(parseBoardOps([
+      { op: "create", type: "geo", id: "shape:a", x: 1000, y: 1000, w: 100, h: 100 },
+      { op: "create", type: "geo", id: "shape:b", x: 1400, y: 1000, w: 100, h: 100 },
+      { op: "create", type: "arrow", id: "shape:ar", from: "shape:a", to: "shape:b" },
+      { op: "create", type: "text", id: "shape:t", x: 0, y: 0, text: "one\ntwo \x1b[31m\x0c\ud800\ufffe\uffff" },
+    ]), "t", room)
+    const read = boardRead({}, room)
+    expect(read.shapes.find((s) => s.id === "shape:ar")!.page).toEqual({ x: 1050, y: 1050, w: 400, h: 0 })
+    expect(read.shapes.find((s) => s.id === "shape:t")!.page.h).toBe(60)
+    expect(boardRead({ rect: { x: 1200, y: 1040, w: 10, h: 20 } }, room).shapes.map((s) => s.id)).toEqual(["shape:ar"])
+    expect((await renderBoardRegion({ ids: ["shape:ar"] }, room)).rect).toEqual({ x: 1018, y: 1018, w: 464, h: 64 })
+    expect((await renderBoardRegion({ ids: ["shape:t"] }, room)).shapeCount).toBe(1)
   })
 })

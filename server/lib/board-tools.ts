@@ -1,4 +1,4 @@
-import { toRichText } from "@tldraw/tlschema"
+import { b64Vecs, toRichText } from "@tldraw/tlschema"
 import { BOARD_ASSET_PREFIX, boardAssetFile } from "./board-assets"
 import { type BoardRecord, BOARD_PROPS_TYPES, BOARD_SHAPE_TYPES, type BoardShapeType, buildArrowBindings, buildShape, nextIndex, richTextToPlain } from "./board-records"
 import { BYQ_SLUGS } from "./byq"
@@ -49,7 +49,8 @@ export interface BoardPresenceView {
   lastActivity: number | null
 }
 
-export interface BoardReadOpts { ids?: string[]; focus?: boolean; html?: boolean }
+/** `rect` (page coordinates, ignored with `ids`): the shapes on Jeremie's page that intersect it. */
+export interface BoardReadOpts { ids?: string[]; focus?: boolean; html?: boolean; rect?: Rect }
 
 export type BoardOp =
   | { op: "create"; type: BoardShapeType; id?: string; parentId?: string; x?: number; y?: number; text?: string; geo?: string; color?: string; w?: number; h?: number; from?: string; to?: string; html?: string; title?: string; props?: Record<string, unknown> }
@@ -60,10 +61,49 @@ export class BoardOpError extends Error {
   constructor(message: string, readonly at: number) { super(message) }
 }
 
-type Shape = BoardRecord & { type: string; parentId: string; index: string; x: number; y: number; rotation: number; props: Record<string, unknown>; meta: Record<string, unknown> }
+export type Shape = BoardRecord & { type: string; parentId: string; index: string; x: number; y: number; rotation: number; props: Record<string, unknown>; meta: Record<string, unknown> }
 
 const isShape = (r: BoardRecord): r is Shape => r.typeName === "shape"
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+
+/** A draw / highlight stroke's points per segment, shape-local (scaleX / scaleY applied). */
+export function strokeSegments(s: Shape): Array<{ type: string; points: Array<{ x: number; y: number }> }> {
+  const segs = Array.isArray(s.props.segments) ? (s.props.segments as Array<{ type?: unknown; path?: unknown; dim?: unknown }>) : []
+  const sx = num(s.props.scaleX) ?? 1
+  const sy = num(s.props.scaleY) ?? 1
+  return segs.filter((g) => typeof g.path === "string").map((g) => ({
+    type: String(g.type),
+    points: b64Vecs.decodePoints(g.path as string, g.dim === 2 ? 2 : g.dim === 3 ? 3 : undefined).map((p) => ({ x: p.x * sx, y: p.y * sy })),
+  }))
+}
+
+/** tldraw's font size per `size` prop (text, labels); a line is 1.25 × that. */
+export const BOARD_FONT: Record<string, number> = { s: 18, m: 24, l: 36, xl: 44 }
+
+const spanOf = (pts: Array<{ x: number; y: number }>): Rect => {
+  const xs = pts.map((p) => p.x)
+  const ys = pts.map((p) => p.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+
+/** The shape-local box a stroke's points span, a text's estimated lines, else 0,0 + its stored size. */
+function localBox(s: Shape): Rect {
+  if (s.type === "draw" || s.type === "highlight") {
+    const pts = strokeSegments(s).flatMap((g) => g.points)
+    if (pts.length) return spanOf(pts)
+  }
+  const { w, h } = sizeOf(s)
+  if (s.type === "text") {
+    // ponytail: no font metrics; 0.6 em per character, no wrapping of a fixed-width text.
+    const lines = (s.props.richText ? richTextToPlain(s.props.richText) : "").split("\n")
+    const font = (BOARD_FONT[String(s.props.size)] ?? 24) * (num(s.props.scale) ?? 1)
+    const est = Math.max(...lines.map((l) => l.length)) * font * 0.6
+    return { x: 0, y: 0, w: s.props.autoSize === true ? Math.max(w ?? 0, est) : w ?? est, h: lines.length * font * 1.25 }
+  }
+  return { x: 0, y: 0, w: w ?? 0, h: h ?? 0 }
+}
 
 /** A shape's own size; null where the record stores none (a note is 200 × scale). */
 function sizeOf(s: Shape): { w: number | null; h: number | null } {
@@ -74,6 +114,8 @@ function sizeOf(s: Shape): { w: number | null; h: number | null } {
   const h = num(p.h)
   return { w: w === null ? null : w * (s.type === "geo" || s.type === "text" ? scale : 1), h: h === null ? null : h * (s.type === "geo" ? scale : 1) + (num(p.growY) ?? 0) }
 }
+
+export type BoardIndex = ReturnType<typeof index>
 
 function index(records: BoardRecord[]) {
   const byId = new Map(records.map((r) => [r.id, r]))
@@ -102,12 +144,28 @@ function index(records: BoardRecord[]) {
     for (const id of ids) walk(id)
     return out
   }
-  const rectOf = (s: Shape): Rect => {
+  const boundTo = new Map<string, string>()
+  for (const r of records) if (r.typeName === "binding" && r.type === "arrow") boundTo.set(`${String(r.fromId)} ${String((r.props as { terminal?: unknown })?.terminal)}`, String(r.toId))
+  /** An arrow end in page coordinates: its bound shape's centre (hw / hh = half its box), else at + the stored point. */
+  const end = (s: Shape, t: "start" | "end", depth: number): { x: number; y: number; hw: number; hh: number } => {
+    const to = byId.get(boundTo.get(`${s.id} ${t}`) ?? "")
+    if (to && isShape(to) && depth < 8) {
+      const r = rect(to, depth + 1)
+      return { x: r.x + r.w / 2, y: r.y + r.h / 2, hw: r.w / 2, hh: r.h / 2 }
+    }
     const at = pageOf(s)
-    const { w, h } = sizeOf(s)
-    return { x: at.x, y: at.y, w: w ?? 0, h: h ?? 0 }
+    const v = s.props[t] as { x?: unknown; y?: unknown } | undefined
+    return { x: at.x + (num(v?.x) ?? 0), y: at.y + (num(v?.y) ?? 0), hw: 0, hh: 0 }
   }
-  return { byId, shapes, children, pageOf, descendants, rectOf }
+  const rect = (s: Shape, depth: number): Rect => {
+    if (s.type === "arrow") return spanOf([end(s, "start", depth), end(s, "end", depth)])
+    const at = pageOf(s)
+    const b = localBox(s)
+    return { x: at.x + b.x, y: at.y + b.y, w: b.w, h: b.h }
+  }
+  const rectOf = (s: Shape): Rect => rect(s, 0)
+  const arrowEnd = (s: Shape, t: "start" | "end") => end(s, t, 0)
+  return { byId, shapes, children, pageOf, descendants, rectOf, arrowEnd }
 }
 
 function presenceView(p: PresenceRecord): BoardPresenceView {
@@ -122,9 +180,10 @@ function presenceView(p: PresenceRecord): BoardPresenceView {
   }
 }
 
-const intersects = (a: Rect, b: Rect): boolean => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h
+export const intersects = (a: Rect, b: Rect): boolean => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h
 
-export function boardRead(opts: BoardReadOpts = {}, room: BoardRoom = boardRoom()): { ok: true; pages: Array<{ id: string; name: string }>; shapes: BoardShapeView[]; presence: BoardPresenceView[]; truncated?: true } {
+/** What a read (or a render) covers: `pick` holds the scoped shape ids. */
+export function boardScope(opts: BoardReadOpts, room: BoardRoom) {
   const records = boardRecords(room)
   const ix = index(records)
   const presence = boardPresence(room).map(presenceView)
@@ -136,10 +195,17 @@ export function boardRead(opts: BoardReadOpts = {}, room: BoardRoom = boardRoom(
   } else {
     const pageId = me?.pageId && pages.some((p) => p.id === me.pageId) ? me.pageId : pages[0]?.id ?? null
     const onPage = ix.shapes.filter((s) => ix.pageOf(s).pageId === pageId)
-    if (opts.focus && me?.selection.length) pick = ix.descendants(me.selection.filter((id) => ix.byId.has(id)))
-    else if (opts.focus && me?.viewport) pick = new Set(onPage.filter((s) => intersects(ix.rectOf(s), me.viewport!)).map((s) => s.id))
+    const within = (r: Rect) => new Set(onPage.filter((s) => intersects(ix.rectOf(s), r)).map((s) => s.id))
+    if (opts.rect) pick = within(opts.rect)
+    else if (opts.focus && me?.selection.length) pick = ix.descendants(me.selection.filter((id) => ix.byId.has(id)))
+    else if (opts.focus && me?.viewport) pick = within(me.viewport)
     else pick = new Set(onPage.map((s) => s.id))
   }
+  return { records, ix, presence, pages, pick }
+}
+
+export function boardRead(opts: BoardReadOpts = {}, room: BoardRoom = boardRoom()): { ok: true; pages: Array<{ id: string; name: string }>; shapes: BoardShapeView[]; presence: BoardPresenceView[]; truncated?: true } {
+  const { records, ix, presence, pages, pick } = boardScope(opts, room)
   const bindings = records.filter((r) => r.typeName === "binding" && r.type === "arrow")
   const views: BoardShapeView[] = []
   for (const s of ix.shapes) {
@@ -154,7 +220,7 @@ function viewOf(s: Shape, ix: ReturnType<typeof index>, bindings: BoardRecord[],
   const p = s.props
   const at = ix.pageOf(s)
   const { w, h } = sizeOf(s)
-  const v: BoardShapeView = { id: s.id, type: s.type, parentId: s.parentId, pageId: at.pageId, x: s.x, y: s.y, w, h, page: { x: at.x, y: at.y, w: w ?? 0, h: h ?? 0 }, rotation: s.rotation }
+  const v: BoardShapeView = { id: s.id, type: s.type, parentId: s.parentId, pageId: at.pageId, x: s.x, y: s.y, w, h, page: ix.rectOf(s), rotation: s.rotation }
   if (p.richText) v.text = richTextToPlain(p.richText)
   if (typeof p.geo === "string") v.geo = p.geo
   if (typeof p.color === "string") v.color = p.color
