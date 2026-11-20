@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { listSessions, recordSession } from "../lib/sessions"
-import { BRAIN_DIR, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, writeBrainMcpConfig } from "./brain-headless"
+import { BRAIN_DIR, HEADLESS_BRAIN_PANE, brainFamilyForModel, createHeadlessBrainRunner, resolveBrainSessionModel, writeBrainMcpConfig } from "./brain-headless"
 
 // The brain's --mcp-config (canvas-board-sync A1): only `board`, loopback, 0600, no token.
 
@@ -50,5 +50,24 @@ describe("headless brain fresh spawn", () => {
     const brainSessions = listSessions().filter((s) => s.taskId === BRAIN_AGENT)
     expect(brainSessions).toHaveLength(1)
     expect(brainSessions[0]!.sessionId).not.toBe("stale-7-day-session-id")
+  })
+})
+
+describe("brain family and Gemini 4 resolution", () => {
+  test("classifies Gemini 4 and Orchestrator models as gemini, Claude models as claude", () => {
+    expect(brainFamilyForModel("gemini-4-carbon-high")).toBe("gemini")
+    expect(brainFamilyForModel("Gemini 4 Carbon (High)")).toBe("gemini")
+    expect(brainFamilyForModel("Gemini 4 Argon (Medium)")).toBe("gemini")
+    expect(brainFamilyForModel("gemini-pro-orchestrator")).toBe("gemini")
+    expect(brainFamilyForModel("orchestrator")).toBe("gemini")
+    expect(brainFamilyForModel("claude-opus-5-5")).toBe("claude")
+    expect(brainFamilyForModel("claude-sonnet-5-5")).toBe("claude")
+  })
+
+  test("resolves default model from picker, COMPANION_BRAIN_DEFAULT_MODEL, or COMPANION_BRAIN_FAMILY=gemini", () => {
+    expect(resolveBrainSessionModel("Gemini 4 Carbon (High)", {})).toBe("Gemini 4 Carbon (High)")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_DEFAULT_MODEL: "gemini-4-argon-medium" })).toBe("gemini-4-argon-medium")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-carbon-high")
+    expect(resolveBrainSessionModel("auto", {})).toBe("claude-opus-5-5")
   })
 })

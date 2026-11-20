@@ -73,6 +73,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain.ts` | 300 | lib | 52 |  |
 | `lib/triage-pr.ts` | 296 | lib | 21 |  |
 | `wiring/auto-compact.ts` | 296 | lib | 6 | state: let statsDb · emits: inject_error |
+| `wiring/brain-headless.ts` | 296 | lib | 8 |  |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/ended-sessions.ts` | 287 | lib | 17 |  |
@@ -99,7 +100,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-model-router.ts` | 249 | lib | 15 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
-| `wiring/brain-headless.ts` | 242 | lib | 6 |  |
 | `wiring/auto-deploy.ts` | 241 | lib | 15 | state: let live |
 | `lib/ops-triage.ts` | 239 | lib | 15 |  |
 | `lib/body-tokens.ts` | 238 | lib | 16 |  |
@@ -581,6 +581,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts` |
 | `herdrSendKey()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/submit-confirm.ts` |
 | `ESC_SETTLE_MS()` | `lib/command-list.ts` | `lib/command-scrape.ts`, `lib/key-gate.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/model.ts#POST /api/model/cancel` |
+| `SpawnedWorkerHandle()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts`, `lib/worker-turn-watch.ts`, `wiring/brain-headless.ts` |
 | `Channel()` | `lib/orchestrator-channels.ts` | `lib/dispatch-poller.ts`, `lib/front-door.ts`, `routes/orchestrator.ts`, `wiring/body.ts` |
 | `brainText()` | `lib/brain.ts` | `lib/front-door.ts`, `lib/orchestrator-brain.ts`, `routes/brain.ts`, `wiring/brain.ts` |
 | `TASK_ID_RE()` | `lib/worker-invocation.ts` | `lib/github-webhook.ts`, `lib/worker-pr-link.ts`, `lib/worker-supervisor.ts`, `lib/worker-task-store.ts` |
@@ -644,7 +645,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WorkerProgress()` | `lib/worker-invocation.ts` | `lib/brain-trace.ts`, `lib/builder-jobs.ts`, `lib/worker-supervisor.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/canvas.ts`, `lib/transcript.ts`, `wiring/events.ts` |
 | `herdrSendText()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
-| `SpawnedWorkerHandle()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts`, `lib/worker-turn-watch.ts` |
+| `buildHeadlessClaudeArgs()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
+| `defaultSpawnWorker()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
 | `isAgentPidAlive()` | `lib/agent-pid.ts` | `lib/desk-runner.ts`, `lib/session-prune-gone.ts`, `lib/sessions.ts` |
 | `defaultKillPid()` | `lib/worker-pid.ts` | `lib/desk-runner.ts`, `lib/worker-invocation.ts`, `lib/worker-supervisor.ts` |
 | `AGY_BRAIN_TASK_ID()` | `lib/agy-feed.ts` | `lib/discover.ts`, `routes/model.ts`, `routes/model.ts#POST /api/model/set` |
@@ -758,9 +760,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `readSecretValue()` | `lib/secret-store.ts` | `lib/dashboard-client.ts`, `lib/receipt-jev.ts` |
 | `SpawnWorkerOpts()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
 | `defaultLoadAgentSecrets()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
-| `buildHeadlessClaudeArgs()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
 | `buildHeadlessCodexArgs()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
-| `defaultSpawnWorker()` | `lib/worker-invocation.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
 | `defaultGetParentPid()` | `lib/worker-pid.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
 | `defaultIsPidAlive()` | `lib/worker-pid.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
 | `defaultGetPidIdentity()` | `lib/worker-pid.ts` | `lib/desk-runner.ts`, `lib/worker-supervisor.ts` |
@@ -861,6 +861,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `workerReceipt()` | `lib/worker-pr-link.ts` | `lib/worker-mcp.ts`, `lib/worker-progress-trace.ts` |
 | `BuilderReport()` | `lib/builder-jobs.ts` | `lib/worker-progress-trace.ts`, `lib/worker-supervisor.ts` |
 | `reportTurn()` | `lib/worker-task-store.ts` | `lib/worker-receipt-outbox.ts`, `lib/worker-turns.ts` |
+| `buildHeadlessGeminiArgs()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
+| `parseStreamJsonLine()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
 | `workerStateFile()` | `lib/worker-task-store.ts` | `lib/worker-supervisor.ts`, `wiring/worker-mcp.ts` |
 | `PersistedTaskRecord()` | `lib/worker-task-store.ts` | `lib/worker-supervisor.ts`, `lib/worker-turns.ts` |
 | `defaultResolveRepoDir()` | `lib/worker-worktree.ts` | `lib/worker-supervisor.ts`, `wiring/brain-lead.ts` |

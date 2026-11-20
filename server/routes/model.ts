@@ -51,7 +51,7 @@ function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
   // A desk turn passes the id as --model: its own family, never the router's "auto".
   if (isDeskRow(session)) return HEADLESS_MODELS.filter((m) => m.family === session.agent && m.id !== "auto")
   if (session.taskId === "brain") {
-    return HEADLESS_MODELS.filter((m) => m.family === "claude")
+    return HEADLESS_MODELS.filter((m) => m.family === "claude" || m.family === "gemini")
   }
   if (session.taskId === AGY_BRAIN_TASK_ID || session.agent === "gemini") {
     return HEADLESS_MODELS.filter((m) => m.family === "gemini")
