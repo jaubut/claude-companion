@@ -100,9 +100,20 @@ describe("Jev worker model router", () => {
       reason: "cross_module",
       source: "jev",
     })
+
+    const borderlineCross = pickWorkerModelFromOutcome(workerJev("cross_module", 0.62, 0.1, 0.1), {
+      repo: "tls-dashboard-v2",
+      title: "Add badge to 3 cards",
+      prompt: "Update CardA.vue, CardB.vue, and CardC.vue.",
+    })
+    expect(borderlineCross).toMatchObject({
+      model: "claude-sonnet-5-5",
+      reason: "fallback",
+      source: "code",
+    })
   })
 
-  test("escalates turn 3+ retries to claude-opus-5-5 and preserves explicit or turn-2 models without calling Jev", async () => {
+  test("preserves existing model on turns 2-4 (warm cache) and escalates at turn 5+", async () => {
     let called = 0
     const mockFetch = (async () => {
       called++
@@ -121,11 +132,17 @@ describe("Jev worker model router", () => {
     )
     expect(keepTurn2).toEqual({ model: "claude-sonnet-5-5", reason: "session_keep", source: "code", jevMs: 0 })
 
-    const retryTurn3 = await decideWorkerModel(
+    const keepTurn3 = await decideWorkerModel(
       { repo: "r", title: "t", prompt: "p", turnCount: 3, existingModel: "claude-sonnet-5-5" },
       { enabled: true, jev: { key: "k", fetch: mockFetch } },
     )
-    expect(retryTurn3).toEqual({ model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 })
+    expect(keepTurn3).toEqual({ model: "claude-sonnet-5-5", reason: "session_keep", source: "code", jevMs: 0 })
+
+    const retryTurn5 = await decideWorkerModel(
+      { repo: "r", title: "t", prompt: "p", turnCount: 5, existingModel: "claude-sonnet-5-5" },
+      { enabled: true, jev: { key: "k", fetch: mockFetch } },
+    )
+    expect(retryTurn5).toEqual({ model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 })
     expect(called).toBe(0)
   })
 

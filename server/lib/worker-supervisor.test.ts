@@ -726,12 +726,14 @@ sleep 30 & wait $!
       expect(t4.ok && [t4.task.turnCount, t4.task.model]).toEqual([4, HAIKU])
       finish()
 
-      // Never picked: the router's model keeps on turn 2 and escalates to Opus from turn 3.
+      // Never picked: the router's model keeps on turns 2-4 (warm cache) and escalates to Opus from turn 5.
       await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build" }); finish()
-      const r2 = await inject(sup, "routed-1", "Turn 2"); finish()
-      expect(r2.ok && r2.task.model).toBe("claude-sonnet-5-5")
-      const r3 = await inject(sup, "routed-1", "Turn 3"); finish()
-      expect(r3.ok && r3.task.model).toBe("claude-opus-5-5")
+      for (const turn of [2, 3, 4]) {
+        const r = await inject(sup, "routed-1", `Turn ${turn}`); finish()
+        expect(r.ok && r.task.model).toBe("claude-sonnet-5-5")
+      }
+      const r5 = await inject(sup, "routed-1", "Turn 5"); finish()
+      expect(r5.ok && r5.task.model).toBe("claude-opus-5-5")
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

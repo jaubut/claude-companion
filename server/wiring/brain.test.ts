@@ -58,7 +58,7 @@ interface Harness {
   }
 }
 
-function harness(): Harness {
+function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean } = {}): Harness {
   const h: Harness = {
     delivered: [], frames: [], pushes: 0, spawns: 0, stops: 0,
     set: { alive: false, paused: false, sessions: [], reply: { status: 200, body: { ok: true } }, now: 1_000_000, spawn: { ok: true, app: "herdr", herdrPane: "p_brain", sessionName: "brain" }, agentPane: "", agentStatus: "", transcriptReply: "", resumes: [], interrupts: 0 },
@@ -84,6 +84,8 @@ function harness(): Harness {
     dispatch: { query: async (_sql: string, args: unknown[]) => h.set.query?.(args) ?? [] } as never,
     host: "test",
     log: () => {},
+    eventCoalesceMs: opts.eventCoalesceMs,
+    middayRollover: opts.middayRollover,
   })
   return h
 }
@@ -565,5 +567,66 @@ describe("activity", () => {
     h.w.noteActivity("sid-brain", { phase: "pre", tool: "Read", input: {}, toolUseId: "y" })
     expect(h.w.status().activity).toBeNull()
     expect(h.frames.length).toBe(before)
+  })
+})
+
+describe("event triage & mid-day rollover", () => {
+  test("silences noisy system events (Brain merged, done, duplicate 8-char handoff PR ready, routine deploys)", async () => {
+    const h = harness({ eventCoalesceMs: 30 })
+    await upBrain(h)
+    const off = chat.onTurnAppended(h.w.onTurn)
+    try {
+      chat.appendTurn("orchestrator", "Brain merged jaubut/r#1 (fix): routine", null, "brain")
+      chat.appendTurn("orchestrator", "done [eaedcf7f] handoff — Foo\nhttps://github.com/jaubut/r/pull/1", null, "brain")
+      chat.appendTurn("orchestrator", "PR ready [eaedcf7f] handoff — Foo\nhttps://github.com/jaubut/r/pull/1", null, "brain")
+      chat.appendTurn("orchestrator", "Deploying claude-companion 1111111→2222222 (1 commit): restarting", null, "brain")
+      chat.appendTurn("orchestrator", "claude-companion restarted at 2222222 (deploy 1111111→2222222 done)", null, "brain")
+      await Bun.sleep(50)
+      expect(h.delivered).toEqual([])
+    } finally {
+      off()
+      h.w.stop()
+    }
+  })
+
+  test("coalesces bursts of batchable worker receipts into one Brain turn, while user turns flush immediately", async () => {
+    const h = harness({ eventCoalesceMs: 40 })
+    await upBrain(h)
+    const off = chat.onTurnAppended(h.w.onTurn)
+    try {
+      const a = chat.appendTurn("orchestrator", "PR ready [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] repoA — https://github.com/jaubut/repoA/pull/1", null, "brain")
+      const b = chat.appendTurn("orchestrator", "completed [bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb] repoB — done", null, "brain")
+      await Bun.sleep(10)
+      expect(h.delivered).toHaveLength(0) // still coalescing
+      await Bun.sleep(50)
+      expect(h.delivered).toHaveLength(1)
+      expect(h.delivered[0]!.text).toContain(`[event ${a.id}]`)
+      expect(h.delivered[0]!.text).toContain(`[event ${b.id}]`)
+      await h.w.onStop("sid-brain", "noted")
+
+      // Next burst preempted immediately by a user turn
+      const c = chat.appendTurn("orchestrator", "completed [cccccccccccccccccccccccccccccccc] repoC — done", null, "brain")
+      const u = userTurn("status?")
+      h.w.enqueue(u)
+      await Bun.sleep(5)
+      expect(h.delivered).toHaveLength(2)
+      expect(h.delivered[1]!.text).toContain(`[event ${c.id}]`)
+      expect(h.delivered[1]!.text).toContain(`[turn ${u.id}] status?`)
+    } finally {
+      off()
+      h.w.stop()
+    }
+  })
+
+  test("middayRollover triggers a real fresh-session rollover past 55% context after 60s quiet", async () => {
+    const h = harness({ middayRollover: true })
+    await upBrain(h)
+    h.set.ctx = 60
+    h.set.now += 65_000
+    await h.w.tick()
+    expect(h.delivered.at(-1)?.text).toContain("[rollover]")
+    await h.w.onStop("sid-brain", "rollover ready")
+    expect(h.spawns).toBe(1)
+    expect(h.set.resumes.at(-1)).toBeNull()
   })
 })
