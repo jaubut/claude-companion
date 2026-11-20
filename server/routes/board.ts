@@ -1,6 +1,7 @@
 import { checkBearer, unauthorized } from "../lib/auth"
 import { brainEnabled } from "../lib/brain"
 import { BOARD_ASSET_MAX_BYTES, boardAssetFile, saveBoardAsset } from "../lib/board-assets"
+import { resolveBoardUrl } from "../lib/board-url-resolve"
 import { type BoardMcpHandler, createBoardMcpHandler } from "../lib/board-mcp"
 import { type BoardRoom, importBoard } from "../lib/board-room"
 import { byqThumb } from "../lib/byq"
@@ -86,6 +87,13 @@ export function createBoardRoute(deps: BoardRouteDeps = {}) {
     if (url.pathname === "/api/board/import" && req.method === "POST") {
       const body = await jsonObject(req)
       const out = await importBoard(body, deps.room?.())
+      return out.ok ? Response.json(out) : Response.json(out, { status: out.status })
+    }
+    if (url.pathname === "/api/board/resolve-url" && req.method === "POST") {
+      const body = await jsonObject(req)
+      const rawUrl = typeof body?.url === "string" ? body.url : ""
+      if (!rawUrl.trim()) return Response.json({ ok: false, error: "url_required" }, { status: 400 })
+      const out = await resolveBoardUrl(rawUrl)
       return out.ok ? Response.json(out) : Response.json(out, { status: out.status })
     }
     if (url.pathname === ASSETS_PATH && req.method === "POST") {

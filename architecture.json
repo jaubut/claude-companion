@@ -854,6 +854,39 @@
           ]
         },
         {
+          "path": "lib/board-url-resolve.ts",
+          "lines": 244,
+          "kind": "lib",
+          "exports": [
+            "RESOLVE_TIMEOUT_MS",
+            "BOARD_MAX_IMAGES",
+            "ResolvedUrlKind",
+            "ResolvedBoardImage",
+            "ResolveUrlOutcome",
+            "ResolveUrlDeps",
+            "parsePublicHttpUrl",
+            "isPinterestHost",
+            "isDirectImageUrl",
+            "extractMetaTag",
+            "upgradePinimgUrl",
+            "extractPinterestImages",
+            "resolveBoardUrl"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-assets.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "sharp"
+          ]
+        },
+        {
           "path": "lib/body-agent.ts",
           "lines": 145,
           "kind": "lib",
@@ -7524,7 +7557,7 @@
         },
         {
           "path": "routes/board.ts",
-          "lines": 124,
+          "lines": 132,
           "kind": "route-host",
           "exports": [
             "BOARD_SYNC_PATH",
@@ -7543,6 +7576,11 @@
               "method": "POST",
               "path": "/api/board/import",
               "prefix": false
+            },
+            {
+              "method": "POST",
+              "path": "/api/board/resolve-url",
+              "prefix": false
             }
           ],
           "apiCalls": [],
@@ -7550,6 +7588,7 @@
             "lib/auth.ts",
             "lib/brain.ts",
             "lib/board-assets.ts",
+            "lib/board-url-resolve.ts",
             "lib/board-mcp.ts",
             "lib/board-room.ts",
             "lib/byq.ts",
@@ -10637,7 +10676,7 @@
           "callers": [
             "companion-server.ts#* /ws",
             "lib/request-gate.ts",
-            "routes/board.ts#POST /api/board/import",
+            "routes/board.ts#POST /api/board/resolve-url",
             "routes/brain.ts",
             "routes/builder-jobs.ts#POST /hooks/builder-progress",
             "routes/copy-jobs.ts#POST /hooks/copy-progress",
@@ -10652,7 +10691,7 @@
           "module": "lib/auth.ts",
           "callers": [
             "companion-server.ts#* /ws",
-            "routes/board.ts#POST /api/board/import",
+            "routes/board.ts#POST /api/board/resolve-url",
             "routes/brain.ts",
             "routes/github-webhook.ts",
             "routes/records.ts",
@@ -11743,7 +11782,7 @@
           "callers": [
             "lib/board-mcp.ts",
             "lib/board-tools.ts",
-            "routes/board.ts#POST /api/board/import"
+            "routes/board.ts#POST /api/board/resolve-url"
           ]
         },
         "rpcErr": {
@@ -11873,6 +11912,20 @@
           "module": "lib/board-records.ts",
           "callers": [
             "lib/board-tools.ts"
+          ]
+        },
+        "saveBoardAsset": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-url-resolve.ts",
+            "routes/board.ts#POST /api/board/resolve-url"
+          ]
+        },
+        "BOARD_ASSET_MAX_BYTES": {
+          "module": "lib/board-assets.ts",
+          "callers": [
+            "lib/board-url-resolve.ts",
+            "routes/board.ts#POST /api/board/resolve-url"
           ]
         },
         "BodyComponentDetail": {
@@ -16664,6 +16717,7 @@
             "routes/api.ts#* /api/feed",
             "routes/auto-compact.ts#POST /api/auto-compact/cancel",
             "routes/board.ts#POST /api/board/import",
+            "routes/board.ts#POST /api/board/resolve-url",
             "routes/command.ts#POST /api/command/suggest",
             "routes/command.ts#POST /api/command/list",
             "routes/dialogs.ts#POST /api/dialog/key",
@@ -17043,22 +17097,16 @@
             "routes/board.ts#POST /api/board/import"
           ]
         },
-        "BOARD_ASSET_MAX_BYTES": {
-          "module": "lib/board-assets.ts",
+        "resolveBoardUrl": {
+          "module": "lib/board-url-resolve.ts",
           "callers": [
-            "routes/board.ts#POST /api/board/import"
-          ]
-        },
-        "saveBoardAsset": {
-          "module": "lib/board-assets.ts",
-          "callers": [
-            "routes/board.ts#POST /api/board/import"
+            "routes/board.ts#POST /api/board/resolve-url"
           ]
         },
         "byqThumb": {
           "module": "lib/byq.ts",
           "callers": [
-            "routes/board.ts#POST /api/board/import"
+            "routes/board.ts#POST /api/board/resolve-url"
           ]
         },
         "BodySnapshot": {
@@ -21310,6 +21358,7 @@
         "sharp": {
           "version": "0.35.5",
           "modules": [
+            "lib/board-url-resolve.ts",
             "lib/link-media-palette.ts",
             "lib/link-media.ts",
             "lib/media.ts",
