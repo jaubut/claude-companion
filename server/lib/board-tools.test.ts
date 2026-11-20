@@ -172,7 +172,7 @@ describe("board tools", () => {
       { op: "create", type: "geo", id: "shape:a", x: 1000, y: 1000, w: 100, h: 100 },
       { op: "create", type: "geo", id: "shape:b", x: 1400, y: 1000, w: 100, h: 100 },
       { op: "create", type: "arrow", id: "shape:ar", from: "shape:a", to: "shape:b" },
-      { op: "create", type: "text", id: "shape:t", x: 0, y: 0, text: "one\ntwo \x1b[31m\x0c\ud800" },
+      { op: "create", type: "text", id: "shape:t", x: 0, y: 0, text: "one\ntwo \x1b[31m\x0c\ud800\ufffe\uffff" },
     ]), "t", room)
     const read = boardRead({}, room)
     expect(read.shapes.find((s) => s.id === "shape:ar")!.page).toEqual({ x: 1050, y: 1050, w: 400, h: 0 })

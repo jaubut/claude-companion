@@ -28,7 +28,7 @@ const STROKE: Record<string, number> = { s: 2, m: 3.5, l: 6, xl: 10 }
 
 const color = (v: unknown) => PALETTE[String(v)] ?? PALETTE.black!
 // Characters XML 1.0 forbids (control chars, lone surrogates, U+FFFE/FFFF) would make librsvg reject the whole SVG.
-const XML_INVALID = /[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
+const XML_INVALID = /[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
 const esc = (s: string) => s.replace(XML_INVALID, "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 const n = (v: number) => (Math.round(v * 100) / 100).toString()
 const numOr = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d)
