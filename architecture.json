@@ -722,6 +722,33 @@
           "externals": []
         },
         {
+          "path": "lib/board-page-capture.ts",
+          "lines": 167,
+          "kind": "lib",
+          "exports": [
+            "CAPTURE_VIEWPORT_W",
+            "CAPTURE_VIEWPORT_H",
+            "CAPTURE_MAX_HEIGHT",
+            "CAPTURE_NAV_TIMEOUT_MS",
+            "CapturedPage",
+            "findChromiumExecutable",
+            "captureFullPageScreenshot"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-url-resolve.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "playwright-core"
+          ]
+        },
+        {
           "path": "lib/board-records.ts",
           "lines": 109,
           "kind": "lib",
@@ -855,7 +882,7 @@
         },
         {
           "path": "lib/board-url-resolve.ts",
-          "lines": 329,
+          "lines": 351,
           "kind": "lib",
           "exports": [
             "RESOLVE_TIMEOUT_MS",
@@ -879,7 +906,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/board-assets.ts"
+            "lib/board-assets.ts",
+            "lib/board-page-capture.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -11792,6 +11820,12 @@
             "lib/board-mcp.ts"
           ]
         },
+        "parsePublicHttpUrl": {
+          "module": "lib/board-url-resolve.ts",
+          "callers": [
+            "lib/board-page-capture.ts"
+          ]
+        },
         "LIVE_FRAME_TYPE": {
           "module": "lib/board-schema.ts",
           "callers": [
@@ -11922,11 +11956,23 @@
             "routes/board.ts#POST /api/board/resolve-url"
           ]
         },
+        "CapturedPage": {
+          "module": "lib/board-page-capture.ts",
+          "callers": [
+            "lib/board-url-resolve.ts"
+          ]
+        },
         "BOARD_ASSET_MAX_BYTES": {
           "module": "lib/board-assets.ts",
           "callers": [
             "lib/board-url-resolve.ts",
             "routes/board.ts#POST /api/board/resolve-url"
+          ]
+        },
+        "captureFullPageScreenshot": {
+          "module": "lib/board-page-capture.ts",
+          "callers": [
+            "lib/board-url-resolve.ts"
           ]
         },
         "BodyComponentDetail": {
@@ -21354,6 +21400,12 @@
           "version": "5.6.0",
           "modules": [
             "lib/board-schema.ts"
+          ]
+        },
+        "playwright-core": {
+          "version": "1.65.1",
+          "modules": [
+            "lib/board-page-capture.ts"
           ]
         },
         "sharp": {

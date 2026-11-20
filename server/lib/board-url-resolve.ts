@@ -1,5 +1,6 @@
 import sharp from "sharp"
 import { BOARD_ASSET_MAX_BYTES, saveBoardAsset } from "./board-assets"
+import { captureFullPageScreenshot, type CapturedPage } from "./board-page-capture"
 
 // Resolves any pasted public HTTP(S) URL (Pinterest pin/board, direct image, or any web page
 // with Open Graph / Twitter / hero images) into locally stored board assets
@@ -13,7 +14,7 @@ export const BOARD_MAX_IMAGES = 16
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
-export type ResolvedUrlKind = "pin" | "board" | "image"
+export type ResolvedUrlKind = "pin" | "board" | "image" | "page"
 
 export interface ResolvedBoardImage {
   src: string
@@ -30,6 +31,7 @@ export interface ResolveUrlDeps {
   fetch?: typeof fetch
   save?: typeof saveBoardAsset
   probeSize?: (bytes: Uint8Array) => Promise<{ w: number; h: number }>
+  capturePage?: (url: string) => Promise<CapturedPage | null>
 }
 
 const PRIVATE_HOST_RE =
@@ -251,6 +253,7 @@ export async function resolveBoardUrl(rawUrl: string, deps: ResolveUrlDeps = {})
   const fetchFn = deps.fetch ?? fetch
   const saveFn = deps.save ?? saveBoardAsset
   const probeFn = deps.probeSize ?? defaultProbeSize
+  const captureFn = deps.capturePage ?? captureFullPageScreenshot
 
   // Fast path: direct image URL (including i.pinimg.com).
   if (isDirectImageUrl(parsed)) {
@@ -284,6 +287,25 @@ export async function resolveBoardUrl(rawUrl: string, deps: ResolveUrlDeps = {})
     if (!saved.ok) return { ok: false, status: saved.status, error: saved.error }
     const { w, h } = await probeFn(bytes)
     return { ok: true, kind: "image", title: "Image", sourceUrl: finalUrl.toString(), images: [{ src: saved.src, w, h, mime: ct }] }
+  }
+
+  // For any non-Pinterest web page, render a full-page desktop screenshot so the user
+  // can design and annotate directly on the page. Fall back to OG/hero image if capture fails.
+  if (!isPinterestHost(finalUrl.hostname)) {
+    const shot = await captureFn(finalUrl.toString())
+    if (shot) {
+      const saved = saveFn(shot.bytes, shot.mime)
+      if (saved.ok) {
+        const { w, h } = await probeFn(shot.bytes)
+        return {
+          ok: true,
+          kind: "page",
+          title: shot.title,
+          sourceUrl: shot.finalUrl,
+          images: [{ src: saved.src, w, h, mime: shot.mime }],
+        }
+      }
+    }
   }
 
   const html = (await res.text()).slice(0, 1_500_000)
