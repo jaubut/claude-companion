@@ -10,6 +10,7 @@ import { transcriptPath } from "../lib/session-titles"
 import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "../lib/sessions"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
 import { type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
+import { agyBin, buildHeadlessGeminiArgs } from "../lib/worker-invocation"
 import { brainWorkers } from "./brain-workers"
 import { commandCatalog } from "../lib/command-catalog"
 
@@ -35,17 +36,32 @@ export function getBrainModel(): string {
   return getKv("brain_model") || "auto"
 }
 
-export function resolveBrainSessionModel(configured: string): string {
+export type BrainFamily = "claude" | "gemini"
+
+export function brainFamilyForModel(model: string): BrainFamily {
+  const m = model.trim().toLowerCase()
+  if (m.startsWith("gemini") || m.startsWith("orchestrator")) return "gemini"
+  return "claude"
+}
+
+export function resolveBrainSessionModel(configured: string, env: Record<string, string | undefined> = process.env): string {
   const norm = configured.trim()
   if (norm && norm.toLowerCase() !== "auto") return norm
-  return process.env.COMPANION_BRAIN_DEFAULT_MODEL?.trim() || "claude-opus-5-5"
+  const envModel = env.COMPANION_BRAIN_DEFAULT_MODEL?.trim()
+  if (envModel) return envModel
+  if (env.COMPANION_BRAIN_FAMILY?.trim().toLowerCase() === "gemini") return "gemini-4-carbon-high"
+  return "claude-opus-5-5"
 }
+
+const AGY_BOOT_PREFIX =
+  "[System: Read ./CLAUDE.md and ./AGENTS.md and follow them strictly. You are the read-only Brain: never edit or write files; use bin/* CLI tools and MCP servers.]\n\n"
 
 export function createHeadlessBrainRunner(hooks: {
   noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void
   onStop(sid: string, reply: string): Promise<void>
 }) {
   let currentSessionId = ""
+  let agyConversationId = ""
   let sessionModel: string | null = null
   let sessionStarted = false
   let brainAlive = false
@@ -56,13 +72,22 @@ export function createHeadlessBrainRunner(hooks: {
   let sweptLegacyHerdr = false
   let mcpConfig = ""
 
+  function purgeStaleBrainSessions(): void {
+    for (const s of listSessions()) {
+      if (s.taskId === BRAIN_AGENT || s.herdrPane === HEADLESS_BRAIN_PANE) {
+        removeSessionByKey(s.key)
+      }
+    }
+  }
+
   function syncSession(activeTurnModel?: string): Session | null {
     if (!brainAlive || !currentSessionId) return null
     const model = activeTurnModel || sessionModel || resolveBrainSessionModel(getBrainModel())
+    const family = brainFamilyForModel(model)
     const busyNow = activeHandle !== null || delivering
     const s = recordSession({
       cwd: BRAIN_DIR,
-      agent: "claude",
+      agent: family,
       sessionId: currentSessionId,
       label: "brain",
       title: "Brain",
@@ -82,8 +107,18 @@ export function createHeadlessBrainRunner(hooks: {
     setModel(model: string): void {
       const m = model.trim()
       if (!m) return
+      const prevFamily = sessionModel ? brainFamilyForModel(sessionModel) : null
+      const nextModel = resolveBrainSessionModel(m)
+      const nextFamily = brainFamilyForModel(nextModel)
       setKv("brain_model", m)
-      sessionModel = resolveBrainSessionModel(m)
+      sessionModel = nextModel
+      if (prevFamily && prevFamily !== nextFamily) {
+        // Family switched (Claude <-> Gemini): start a fresh CLI conversation without
+        // breaking brain.ts's adopted sessionId or leaking a Claude UUID into agy.
+        agyConversationId = ""
+        setKv("agy_conversation_id", "")
+        sessionStarted = false
+      }
       syncSession(sessionModel)
     },
     async alive(): Promise<boolean> {
@@ -103,18 +138,22 @@ export function createHeadlessBrainRunner(hooks: {
       }
       ensureFolderTrusted(BRAIN_DIR)
       mcpConfig = writeBrainMcpConfig()
-      const hasResumeTranscript = !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
+      sessionModel = resolveBrainSessionModel(getBrainModel())
+      const family = brainFamilyForModel(sessionModel)
+      const savedAgyConv = resume ? (getKv("agy_conversation_id") || "").trim() : ""
+      const hasResumeTranscript = family === "gemini"
+        ? !!savedAgyConv
+        : !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
       if (!hasResumeTranscript) {
         // Purge stale brain sessions from the in-memory registry so tick() never
         // re-adopts the previous session id after a rollover or fresh restart.
-        for (const s of listSessions()) {
-          if (s.taskId === BRAIN_AGENT || s.herdrPane === HEADLESS_BRAIN_PANE) {
-            removeSessionByKey(s.key)
-          }
-        }
+        purgeStaleBrainSessions()
+        agyConversationId = ""
+        setKv("agy_conversation_id", "")
+      } else if (family === "gemini") {
+        agyConversationId = savedAgyConv
       }
-      currentSessionId = hasResumeTranscript ? resume! : randomUUID()
-      sessionModel = resolveBrainSessionModel(getBrainModel())
+      currentSessionId = hasResumeTranscript && resume ? resume : randomUUID()
       sessionStarted = hasResumeTranscript
       brainAlive = true
       lastTurnReply = ""
@@ -155,23 +194,33 @@ export function createHeadlessBrainRunner(hooks: {
       // per-model prompt cache stays warm (no Opus <-> Sonnet mid-session thrashing).
       const turnModel = sessionModel ?? resolveBrainSessionModel(getBrainModel())
       sessionModel = turnModel
+      const family = brainFamilyForModel(turnModel)
       if (!brainAlive || currentSessionId !== turnSid) {
         delivering = false
         return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
       }
-      const args = buildHeadlessClaudeArgs({
-        prompt: text,
-        sessionId: turnSid,
-        resume: sessionStarted,
-        mode: "auto",
-        model: turnModel,
-        mcpConfig: mcpConfig || undefined,
-      })
+      const cmd = family === "gemini" ? agyBin() : "claude"
+      const args = family === "gemini"
+        ? buildHeadlessGeminiArgs({
+            prompt: agyConversationId ? text : `${AGY_BOOT_PREFIX}${text}`,
+            sessionId: agyConversationId,
+            resume: !!agyConversationId,
+            mode: "auto",
+            model: turnModel,
+          })
+        : buildHeadlessClaudeArgs({
+            prompt: text,
+            sessionId: turnSid,
+            resume: sessionStarted,
+            mode: "auto",
+            model: turnModel,
+            mcpConfig: mcpConfig || undefined,
+          })
       lastTurnReply = ""
       let settled = false
       try {
         const handle = defaultSpawnWorker({
-          cmd: "claude",
+          cmd,
           args,
           cwd: BRAIN_DIR,
           env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1", COMPANION_BOARD_CALLER: "brain" },
@@ -181,7 +230,12 @@ export function createHeadlessBrainRunner(hooks: {
             const ev = parseStreamJsonLine(line)
             if (!ev) return
             if (ev.sessionId) {
-              currentSessionId = ev.sessionId
+              if (family === "gemini") {
+                agyConversationId = ev.sessionId
+                setKv("agy_conversation_id", ev.sessionId)
+              } else {
+                currentSessionId = ev.sessionId
+              }
               sessionStarted = true
             }
             if (ev.assistantText) {

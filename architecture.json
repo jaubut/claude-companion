@@ -8842,13 +8842,15 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 242,
+          "lines": 296,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
             "writeBrainMcpConfig",
             "getBrainModel",
+            "BrainFamily",
+            "brainFamilyForModel",
             "resolveBrainSessionModel",
             "createHeadlessBrainRunner"
           ],
@@ -8866,6 +8868,7 @@
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/worker-supervisor.ts",
+            "lib/worker-invocation.ts",
             "wiring/brain-workers.ts",
             "lib/command-catalog.ts"
           ],
@@ -12854,7 +12857,8 @@
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-supervisor.ts",
-            "lib/worker-turn-watch.ts"
+            "lib/worker-turn-watch.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "SpawnWorkerOpts": {
@@ -12875,7 +12879,8 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "buildHeadlessCodexArgs": {
@@ -12889,7 +12894,8 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "defaultGetParentPid": {
@@ -16415,13 +16421,15 @@
         "buildHeadlessGeminiArgs": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "parseStreamJsonLine": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "buildWorkerEnv": {
@@ -19171,6 +19179,12 @@
             "wiring/brain-headless.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "agyBin": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
           ]
         },
         "AgentLookup": {
