@@ -4,11 +4,10 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
-import { decideBrainTurnModel } from "../lib/jev-model-router"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { companionLog } from "../lib/log"
 import { transcriptPath } from "../lib/session-titles"
-import { type Session, recordSession, setSessionModel } from "../lib/sessions"
+import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "../lib/sessions"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
 import { type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
 import { brainWorkers } from "./brain-workers"
@@ -36,11 +35,18 @@ export function getBrainModel(): string {
   return getKv("brain_model") || "auto"
 }
 
+export function resolveBrainSessionModel(configured: string): string {
+  const norm = configured.trim()
+  if (norm && norm.toLowerCase() !== "auto") return norm
+  return process.env.COMPANION_BRAIN_DEFAULT_MODEL?.trim() || "claude-opus-5-5"
+}
+
 export function createHeadlessBrainRunner(hooks: {
   noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void
   onStop(sid: string, reply: string): Promise<void>
 }) {
   let currentSessionId = ""
+  let sessionModel: string | null = null
   let sessionStarted = false
   let brainAlive = false
   let activeHandle: SpawnedWorkerHandle | null = null
@@ -52,7 +58,7 @@ export function createHeadlessBrainRunner(hooks: {
 
   function syncSession(activeTurnModel?: string): Session | null {
     if (!brainAlive || !currentSessionId) return null
-    const model = activeTurnModel || getBrainModel()
+    const model = activeTurnModel || sessionModel || resolveBrainSessionModel(getBrainModel())
     const busyNow = activeHandle !== null || delivering
     const s = recordSession({
       cwd: BRAIN_DIR,
@@ -77,7 +83,8 @@ export function createHeadlessBrainRunner(hooks: {
       const m = model.trim()
       if (!m) return
       setKv("brain_model", m)
-      syncSession()
+      sessionModel = resolveBrainSessionModel(m)
+      syncSession(sessionModel)
     },
     async alive(): Promise<boolean> {
       if (brainAlive && currentSessionId) {
@@ -97,11 +104,21 @@ export function createHeadlessBrainRunner(hooks: {
       ensureFolderTrusted(BRAIN_DIR)
       mcpConfig = writeBrainMcpConfig()
       const hasResumeTranscript = !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
+      if (!hasResumeTranscript) {
+        // Purge stale brain sessions from the in-memory registry so tick() never
+        // re-adopts the previous session id after a rollover or fresh restart.
+        for (const s of listSessions()) {
+          if (s.taskId === BRAIN_AGENT || s.herdrPane === HEADLESS_BRAIN_PANE) {
+            removeSessionByKey(s.key)
+          }
+        }
+      }
       currentSessionId = hasResumeTranscript ? resume! : randomUUID()
+      sessionModel = resolveBrainSessionModel(getBrainModel())
       sessionStarted = hasResumeTranscript
       brainAlive = true
       lastTurnReply = ""
-      syncSession()
+      syncSession(sessionModel)
       return { ok: true, app: "herdr", herdrPane: HEADLESS_BRAIN_PANE, sessionName: BRAIN_AGENT }
     },
     async stopAgent(): Promise<void> {
@@ -134,16 +151,10 @@ export function createHeadlessBrainRunner(hooks: {
       }
       delivering = true
       const turnSid = currentSessionId
-      let turnModel = getBrainModel()
-      try {
-        const decision = await decideBrainTurnModel(text, turnModel)
-        turnModel = decision.model
-        if (decision.source === "jev" || decision.reason === "control_turn") {
-          companionLog(`brain model-router → ${turnModel} (${decision.reason}, ${decision.jevMs}ms)`)
-        }
-      } catch {
-        // Fallback to configured model on any unexpected error.
-      }
+      // Keep one consistent model for the lifetime of a session so Anthropic's
+      // per-model prompt cache stays warm (no Opus <-> Sonnet mid-session thrashing).
+      const turnModel = sessionModel ?? resolveBrainSessionModel(getBrainModel())
+      sessionModel = turnModel
       if (!brainAlive || currentSessionId !== turnSid) {
         delivering = false
         return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })

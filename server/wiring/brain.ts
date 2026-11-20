@@ -6,8 +6,9 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
+import { classifyBrainEvent } from "../lib/brain-event-triage"
 import {
   clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
@@ -71,6 +72,10 @@ export interface BrainDeps {
   dispatch: DispatchWiring
   host: string
   log(msg: string): void
+  /** Coalesce window (ms) for batchable system events before waking the Brain (0 = immediate). */
+  eventCoalesceMs?: number
+  /** Headless mode: use mid-day fresh-session rollover instead of no-op /compact. */
+  middayRollover?: boolean
 }
 
 export function emitTrace(rows: TraceRow[]): void {
@@ -98,10 +103,17 @@ export function createBrainWiring(deps: BrainDeps) {
   /** A control turn ([flush], [rollover]) is in flight: its reply is not a thread turn. */
   let control: "flush" | "rollover" | null = null
   let lastReplyText = ""
+  let turnsSinceReset = 0
   let timer: ReturnType<typeof setInterval> | null = null
+  let coalesceTimer: ReturnType<typeof setTimeout> | null = null
+  const coalesceMs = deps.eventCoalesceMs ?? 0
   /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
   let selfWrite = 0
   let ticking = false
+
+  function clearCoalesce(): void {
+    if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null }
+  }
 
   const trace = (rows: Array<TraceRow | null>, out = rows.filter((r): r is TraceRow => !!r)): void => {
     if (out.length) deps.broadcast({ type: "brain_trace", op: "row", rows: out })
@@ -174,11 +186,24 @@ export function createBrainWiring(deps: BrainDeps) {
     try { orchEmit(appendTurn("orchestrator", text, taskId, BRAIN_THREAD)) } finally { selfWrite-- }
   }
 
-  /** A system turn landed in the brain thread (receipt, approval, merge…): the brain hears it on its next turn. */
+  /** A system turn landed in the brain thread (receipt, approval, merge…): triage before waking the brain. */
   function wake(turn: Turn): void {
     if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator" || selfWrite > 0) return
+    const disposition = classifyBrainEvent(turn)
+    if (disposition === "silent") return
     try {
       enqueueDelivery(turn.id, turn.createdAt)
+      if (disposition === "batch" && coalesceMs > 0) {
+        if (!coalesceTimer) {
+          coalesceTimer = setTimeout(() => {
+            coalesceTimer = null
+            void flush()
+          }, coalesceMs)
+          coalesceTimer.unref?.()
+        }
+        return
+      }
+      clearCoalesce()
       void flush()
     } catch (err) {
       deps.log(`[brain] wake failed: ${(err as Error)?.message ?? String(err)}`)
@@ -258,7 +283,10 @@ export function createBrainWiring(deps: BrainDeps) {
     }
     forgetSession()
     pane = ""
-    if (fresh) setKv("session_id", "")
+    if (fresh) {
+      setKv("session_id", "")
+      turnsSinceReset = 0
+    }
     const r = await deps.spawn(getKv("session_id") || null)
     spawnedAt = deps.now()
     if (!r.ok) {
@@ -281,7 +309,10 @@ export function createBrainWiring(deps: BrainDeps) {
     // A late Stop after the transcript fallback carries the same reply: once only.
     if (!was && text && text !== lastReplyText && text.toLowerCase() !== QUIET_REPLY) say(text)
     if (text) lastReplyText = text
-    if (!was) trace(userIds(clearTyped()).map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+    if (!was) {
+      turnsSinceReset++
+      trace(userIds(clearTyped()).map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+    }
     if (was === "flush") {
       // Memory is on disk: compact now, unless Jeremie spoke meanwhile.
       if (sessionKey && openDeliveries().length === 0 && !deps.paused.read()) {
@@ -366,7 +397,7 @@ export function createBrainWiring(deps: BrainDeps) {
     }
   }
 
-  /** Idle compaction and the 04:00 rollover — only between turns. */
+  /** Idle compaction / mid-day rollover and the 04:00 rollover — only between turns. */
   async function maintain(): Promise<void> {
     if (busy || !sessionKey || deps.paused.read()) return
     const now = deps.now()
@@ -376,6 +407,18 @@ export function createBrainWiring(deps: BrainDeps) {
       const out = await type(rolloverPrompt(await memoryRef()))
       if (out === "ok") control = "rollover"
       else setBusy(false)
+      return
+    }
+    if (deps.middayRollover) {
+      const ctxPct = deps.contextPct(sessionKey)
+      if (openDeliveries().length === 0 && middayRolloverDue({ lastTurnAt: lastActivity, contextPct: ctxPct, turnsSinceReset, now, busy })) {
+        deps.log(`[brain] mid-day rollover due (ctx=${ctxPct ?? "?"}%, turns=${turnsSinceReset})`)
+        setBusy(true)
+        const out = await type(rolloverPrompt(await memoryRef()))
+        if (out === "ok") control = "rollover"
+        else setBusy(false)
+        return
+      }
       return
     }
     if (compactedAt < lastActivity && idleCompactDue({ lastTurnAt: lastActivity, contextPct: deps.contextPct(sessionKey), now, busy })) {
@@ -403,12 +446,14 @@ export function createBrainWiring(deps: BrainDeps) {
     },
 
     stop(): void {
+      clearCoalesce()
       if (timer) clearInterval(timer); timer = null
     },
 
     /** A user turn in the brain thread (POST /api/orchestrator/send). Never throws: the turn is already persisted. */
     enqueue(turn: Turn): void {
       try {
+        clearCoalesce()
         enqueueDelivery(turn.id, turn.createdAt)
         lastActivity = deps.now()
         if (compacting && sessionKey) {
@@ -590,4 +635,6 @@ export const brainWiring = createBrainWiring({
   dispatch: dispatchWiring,
   host: HOST_INFO.name,
   log: companionLog,
+  eventCoalesceMs: 15_000,
+  middayRollover: true,
 })

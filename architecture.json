@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19",
+  "generatedAt": "2026-11-20",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -1168,6 +1168,27 @@
           "externals": []
         },
         {
+          "path": "lib/brain-event-triage.ts",
+          "lines": 67,
+          "kind": "lib",
+          "exports": [
+            "BrainEventDisposition",
+            "BrainEventCandidate",
+            "classifyBrainEvent"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/brain-store.ts",
           "lines": 105,
           "kind": "lib",
@@ -1274,7 +1295,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 277,
+          "lines": 300,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1307,6 +1328,11 @@
             "IDLE_COMPACT_MS",
             "IDLE_COMPACT_PCT",
             "idleCompactDue",
+            "MIDDAY_ROLLOVER_PCT",
+            "MIDDAY_ROLLOVER_HARD_PCT",
+            "MIDDAY_ROLLOVER_QUIET_MS",
+            "MIDDAY_ROLLOVER_TURNS",
+            "middayRolloverDue",
             "compactText",
             "ROLLOVER_HOUR",
             "rolloverDue",
@@ -2912,7 +2938,7 @@
         },
         {
           "path": "lib/jev-model-router.ts",
-          "lines": 244,
+          "lines": 249,
           "kind": "lib",
           "exports": [
             "JEV_ROUTER_TIMEOUT_MS",
@@ -2922,6 +2948,8 @@
             "WORKER_SCOPE_CRITERIA",
             "WORKER_QUESTIONS",
             "workerRouterState",
+            "WORKER_RETRY_ESCALATION_TURN",
+            "CROSS_MODULE_OPUS_MIN_PROB",
             "pickWorkerModelFromOutcome",
             "decideWorkerModel",
             "BrainTurnModelDecision",
@@ -8780,13 +8808,14 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 231,
+          "lines": 242,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
             "writeBrainMcpConfig",
             "getBrainModel",
+            "resolveBrainSessionModel",
             "createHeadlessBrainRunner"
           ],
           "state": [],
@@ -8797,7 +8826,6 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-store.ts",
-            "lib/jev-model-router.ts",
             "lib/last-assistant.ts",
             "lib/log.ts",
             "lib/session-titles.ts",
@@ -8996,7 +9024,7 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 136,
+          "lines": 189,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",
@@ -9123,7 +9151,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 594,
+          "lines": 641,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -9153,6 +9181,7 @@
             "lib/log.ts",
             "state.ts",
             "lib/brain.ts",
+            "lib/brain-event-triage.ts",
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "wiring/brain-activity.ts",
@@ -10444,6 +10473,7 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
             "routes/worker-mcp.ts",
+            "wiring/brain-headless.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
             "wiring/canvas.ts",
@@ -11354,7 +11384,6 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain-headless.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-update-branch.ts",
@@ -12192,6 +12221,35 @@
             "lib/body-tokens.ts"
           ]
         },
+        "BRAIN_THREAD": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-event-triage.ts",
+            "lib/brain-workers.ts",
+            "routes/brain.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-handoff.ts",
+            "wiring/brain-lead.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "isRoutineLeadAck": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-event-triage.ts",
+            "wiring/brain-lead.ts"
+          ]
+        },
         "WorkerProgress": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -12239,27 +12297,6 @@
             "wiring/brain-task-cancel.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
-          ]
-        },
-        "BRAIN_THREAD": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "lib/brain-workers.ts",
-            "routes/brain.ts",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/auto-deploy.ts",
-            "wiring/brain-handoff.ts",
-            "wiring/brain-lead.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain-task-cancel.ts",
-            "wiring/brain.ts",
-            "wiring/orchestrator.ts",
-            "wiring/worker-mcp.ts"
           ]
         },
         "Judgement": {
@@ -15091,7 +15128,8 @@
             "lib/session-prune-gone.ts",
             "lib/worker-session.ts",
             "routes/hooks.ts",
-            "routes/hooks.ts#POST /hooks/session-end"
+            "routes/hooks.ts#POST /hooks/session-end",
+            "wiring/brain-headless.ts"
           ]
         },
         "WaitingKind": {
@@ -19087,12 +19125,6 @@
             "wiring/brain.ts"
           ]
         },
-        "decideBrainTurnModel": {
-          "module": "lib/jev-model-router.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
         "AgentLookup": {
           "module": "wiring/takeover-liveness.ts",
           "callers": [
@@ -19122,12 +19154,6 @@
         },
         "spawnInTmuxDetached": {
           "module": "lib/spawn-session.ts",
-          "callers": [
-            "wiring/brain-lead.ts"
-          ]
-        },
-        "isRoutineLeadAck": {
-          "module": "lib/brain.ts",
           "callers": [
             "wiring/brain-lead.ts"
           ]
@@ -19336,6 +19362,12 @@
             "wiring/brain.ts"
           ]
         },
+        "middayRolloverDue": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "compactText": {
           "module": "lib/brain.ts",
           "callers": [
@@ -19440,6 +19472,12 @@
         },
         "createBrainActivity": {
           "module": "wiring/brain-activity.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "classifyBrainEvent": {
+          "module": "lib/brain-event-triage.ts",
           "callers": [
             "wiring/brain.ts"
           ]

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { writeBrainMcpConfig } from "./brain-headless"
+import { BRAIN_AGENT } from "../lib/brain"
+import { listSessions, recordSession } from "../lib/sessions"
+import { BRAIN_DIR, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, writeBrainMcpConfig } from "./brain-headless"
 
 // The brain's --mcp-config (canvas-board-sync A1): only `board`, loopback, 0600, no token.
 
@@ -20,5 +22,33 @@ describe("writeBrainMcpConfig", () => {
     expect(cfg.mcpServers.board!.headersHelper).toMatch(/scripts\/board-mcp-headers\.sh$/)
     expect(raw).not.toContain(process.env.COMPANION_AUTH_TOKEN!)
     expect(raw.toLowerCase()).not.toContain("bearer")
+  })
+})
+
+describe("headless brain fresh spawn", () => {
+  test("spawn(null) purges stale brain sessions so tick() cannot re-adopt an old session_id", async () => {
+    recordSession({
+      cwd: BRAIN_DIR,
+      agent: "claude",
+      sessionId: "stale-7-day-session-id",
+      label: "brain",
+      title: "Brain",
+      taskId: BRAIN_AGENT,
+      herdrPane: HEADLESS_BRAIN_PANE,
+      herdrAgent: BRAIN_AGENT,
+      agentStatus: "idle",
+      pid: "99999",
+    }, { sessionIdConfirmed: true })
+    expect(listSessions().some((s) => s.sessionId === "stale-7-day-session-id")).toBe(true)
+
+    const runner = createHeadlessBrainRunner({
+      noteActivity: () => {},
+      onStop: async () => {},
+    })
+    const res = await runner.spawn(null)
+    expect(res.ok).toBe(true)
+    const brainSessions = listSessions().filter((s) => s.taskId === BRAIN_AGENT)
+    expect(brainSessions).toHaveLength(1)
+    expect(brainSessions[0]!.sessionId).not.toBe("stale-7-day-session-id")
   })
 })

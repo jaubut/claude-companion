@@ -142,6 +142,29 @@ export function idleCompactDue(i: { lastTurnAt: number; contextPct: number | nul
   return !i.busy && i.contextPct !== null && i.contextPct > IDLE_COMPACT_PCT && i.now - i.lastTurnAt >= IDLE_COMPACT_MS
 }
 
+export const MIDDAY_ROLLOVER_PCT = 55
+export const MIDDAY_ROLLOVER_HARD_PCT = 75
+export const MIDDAY_ROLLOVER_QUIET_MS = 60_000
+export const MIDDAY_ROLLOVER_TURNS = 35
+
+/**
+ * Mid-day headless session rollover: flushes memory and boots a fresh session UUID so
+ * the Brain never drags a 150k+ token transcript across hundreds of turns.
+ * Fires when idle 60s past 55% context, immediately between turns past 75%, or after 35 turns.
+ */
+export function middayRolloverDue(i: {
+  lastTurnAt: number
+  contextPct: number | null
+  turnsSinceReset: number
+  now: number
+  busy: boolean
+}): boolean {
+  if (i.busy) return false
+  if (i.contextPct !== null && i.contextPct >= MIDDAY_ROLLOVER_HARD_PCT) return true
+  if (i.contextPct !== null && i.contextPct >= MIDDAY_ROLLOVER_PCT && i.now - i.lastTurnAt >= MIDDAY_ROLLOVER_QUIET_MS) return true
+  return i.turnsSinceReset >= MIDDAY_ROLLOVER_TURNS
+}
+
 /** The typed `/compact keep: …` for the brain (one line, short: lib/inject-verified.ts caps it). */
 export function compactText(memoryRef: string | null, openTurns: number): string {
   return `/compact keep: you are the Companion brain (brain/CLAUDE.md); memory note ${memoryRef ?? "not set"}; ${openTurns} open turns; pending proposals and dispatched task ids; Jeremie's latest asks.`

@@ -89,10 +89,15 @@ export function workerRouterState(input: WorkerModelInput): Record<string, unkno
 const isWorkerScope = (s: string): s is WorkerScope =>
   s === "single_spot" || s === "focused_feature" || s === "cross_module"
 
+/** Turn count at which repeated worker retries escalate to Opus (turns 2-4 keep the session's warm cache). */
+export const WORKER_RETRY_ESCALATION_TURN = 5
+/** Confidence bar for `cross_module` Opus routing (keeps routine multi-file PRs on Sonnet). */
+export const CROSS_MODULE_OPUS_MIN_PROB = 0.75
+
 /** Deterministic truth table mapping Jev's judgments + turn count to a Claude worker model. */
 export function pickWorkerModelFromOutcome(out: JevOutcome, input: WorkerModelInput): WorkerModelDecision {
   const turnCount = input.turnCount ?? 1
-  if (turnCount >= 3) {
+  if (turnCount >= WORKER_RETRY_ESCALATION_TURN) {
     return { model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: out.latencyMs }
   }
   if (!out.ok) {
@@ -120,7 +125,7 @@ export function pickWorkerModelFromOutcome(out: JevOutcome, input: WorkerModelIn
   if (moneyOrData !== null && moneyOrData >= 0.65) {
     return { model: "claude-opus-5-5", reason: "money_or_data_integrity", source: "jev", jevMs: out.latencyMs, judgments }
   }
-  if (scope === "cross_module" && scopeProb >= 0.5) {
+  if (scope === "cross_module" && scopeProb >= CROSS_MODULE_OPUS_MIN_PROB) {
     return { model: "claude-opus-5-5", reason: "cross_module", source: "jev", jevMs: out.latencyMs, judgments }
   }
   if (scope === "single_spot") {
@@ -146,7 +151,7 @@ export async function decideWorkerModel(
     }
   }
   const turnCount = input.turnCount ?? 1
-  if (turnCount >= 3) {
+  if (turnCount >= WORKER_RETRY_ESCALATION_TURN) {
     return { model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 }
   }
   if (turnCount >= 2 && input.existingModel && input.existingModel.toLowerCase() !== "auto") {

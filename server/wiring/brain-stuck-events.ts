@@ -15,15 +15,20 @@ import { orchEmit } from "./orchestrator"
 
 const POLL_MS = 60_000
 const CURSOR_KEY = "stuck-events-cursor"
+const SEEN_KEY = "stuck-events-seen"
+const COOLDOWN_MS = 6 * 60 * 60_000
 const REASON_MAX = 200
 /** Below the brain's 4,000-character delivery, with room for the first line's framing. */
 const SUMMARY_CHARS = 3_500
+/**
+ * Non-terminal `loop-round-3` is intentionally omitted: the shepherd is still actively
+ * working the PR. Only terminal loop stops and stuck states wake the brain.
+ */
 const KINDS: Readonly<Record<string, string>> = {
   "stuck-parked": "parked",
   "stuck-no-review": "no review",
   "stuck-main-red": "main CI red",
   "stuck-main-cancelled": "main CI cancelled",
-  "loop-round-3": "loop round 3",
   "loop-repeat": "loop repeat",
   "loop-budget": "loop budget",
   "loop-stop": "loop stop",
@@ -40,6 +45,10 @@ export interface StuckEventsDeps {
   getCursor: () => string | null
   setCursor: (id: string) => void
   log: (line: string) => void
+  now?: () => number
+  cooldownMs?: number
+  getSeen?: () => Record<string, number>
+  setSeen?: (seen: Record<string, number>) => void
 }
 
 function parse(raw: unknown): Record<string, unknown> | null {
@@ -68,6 +77,33 @@ export function stuckLine(m: Record<string, unknown>): string | null {
 export function createStuckEvents(deps: StuckEventsDeps) {
   let timer: ReturnType<typeof setInterval> | null = null
   let ticking = false
+  const nowFn = deps.now ?? Date.now
+  const cooldownMs = deps.cooldownMs ?? COOLDOWN_MS
+  const memSeen: Record<string, number> = {}
+
+  const loadSeen = (): Record<string, number> => (deps.getSeen ? deps.getSeen() : memSeen)
+  const saveSeen = (seen: Record<string, number>): void => {
+    if (deps.setSeen) deps.setSeen(seen)
+    else Object.assign(memSeen, seen)
+  }
+
+  /** True if `(repo#pr, kind)` was already posted within `cooldownMs`. */
+  function isDuplicate(m: Record<string, unknown>, now: number): boolean {
+    const name = ref(m)
+    if (!name || cooldownMs <= 0) return false
+    const key = `${name}:${String(m.kind)}`
+    const seen = loadSeen()
+    const prev = seen[key]
+    if (typeof prev === "number" && now - prev < cooldownMs) return true
+    // Prune expired entries so the kv stays bounded.
+    const next: Record<string, number> = {}
+    for (const [k, ts] of Object.entries(seen)) {
+      if (now - ts < cooldownMs) next[k] = ts
+    }
+    next[key] = now
+    saveSeen(next)
+    return false
+  }
 
   const read = async (after: string): Promise<Array<{ id: string; meta: Record<string, unknown> | null }>> =>
     (await deps.exec(SQL, [Number(after)])).rows.map((r) => ({ id: String(r.id), meta: parse(r.meta) }))
@@ -99,10 +135,14 @@ export function createStuckEvents(deps: StuckEventsDeps) {
     try {
       const cursor = deps.getCursor()
       if (cursor === null) return await backlog()
+      const now = nowFn()
       for (const r of await read(cursor)) {
         const line = r.meta?.stuck_key ? stuckLine(r.meta) : null
-        if (line) deps.event(line)
-        else if (r.meta?.stuck_key || !r.meta) deps.log(`[stuck-events] row ${r.id} skipped`)
+        if (line) {
+          if (!isDuplicate(r.meta!, now)) deps.event(line)
+        } else if (r.meta?.stuck_key || !r.meta) {
+          if (r.meta?.kind !== "loop-round-3") deps.log(`[stuck-events] row ${r.id} skipped`)
+        }
         deps.setCursor(r.id)
       }
     } catch (err) {
@@ -124,11 +164,24 @@ export function createStuckEvents(deps: StuckEventsDeps) {
   }
 }
 
+function readSeenKv(): Record<string, number> {
+  const raw = getKv(SEEN_KEY)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+
 const stuckEvents = createStuckEvents({
   exec: (sql, args) => dispatchWiring.exec(sql, args),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   getCursor: () => getKv(CURSOR_KEY),
   setCursor: (id) => setKv(CURSOR_KEY, id),
+  getSeen: readSeenKv,
+  setSeen: (seen) => setKv(SEEN_KEY, JSON.stringify(seen)),
   log: companionLog,
 })
 

@@ -22,7 +22,7 @@ export const LIST_MAX_LINES = 30
 export const PROMPT_MAX_TASKS = 300
 
 export function tasksChatModel(env: Record<string, string | undefined> = process.env): string {
-  return env.COMPANION_TASKS_CHAT_MODEL || "claude-opus-5-5"
+  return env.COMPANION_TASKS_CHAT_MODEL || "claude-sonnet-5-5"
 }
 
 const DAY_WORDS = "today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|next week|this week|" +
