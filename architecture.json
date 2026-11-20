@@ -723,7 +723,7 @@
         },
         {
           "path": "lib/board-page-capture.ts",
-          "lines": 195,
+          "lines": 211,
           "kind": "lib",
           "exports": [
             "CAPTURE_VIEWPORT_W",

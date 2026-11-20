@@ -101,6 +101,7 @@ export async function captureFullPageScreenshot(url: string): Promise<CapturedPa
       viewport: { width: CAPTURE_VIEWPORT_W, height: CAPTURE_VIEWPORT_H },
       deviceScaleFactor: 1,
       userAgent: DESKTOP_UA,
+      reducedMotion: "reduce",
     })
     const page = await context.newPage()
 
@@ -133,27 +134,42 @@ export async function captureFullPageScreenshot(url: string): Promise<CapturedPa
       .catch(() => {})
     await new Promise((r) => setTimeout(r, 500))
 
-    // Scroll through the page in steps to trigger lazy-loaded images and scroll-reveal sections.
+    // Scroll through the page in steps to trigger IntersectionObserver reveals and
+    // scroll-mounted dynamic sections (blog/newsletter/schedule embeds, lazy images).
     await page.evaluate(
       `(async () => {
         const maxH = ${CAPTURE_MAX_HEIGHT};
         const getH = () => Math.max(document.body ? document.body.scrollHeight : 0, document.documentElement ? document.documentElement.scrollHeight : 0, 900);
-        const step = 700;
+        const step = 600;
         let y = step;
         let steps = 0;
-        while (y < Math.min(getH(), maxH) && steps < 18) {
+        while (y < Math.min(getH(), maxH) && steps < 22) {
           window.scrollTo(0, y);
-          await new Promise((r) => setTimeout(r, 160));
+          await new Promise((r) => setTimeout(r, 240));
           y += step;
           steps++;
         }
+        window.scrollTo(0, Math.min(getH(), maxH));
+        await new Promise((r) => setTimeout(r, 300));
+      })()`,
+    )
+
+    // Wait for any scroll-triggered API fetches / embeds / lazy images to finish loading.
+    await Promise.race([
+      page.waitForLoadState("networkidle").catch(() => {}),
+      new Promise((r) => setTimeout(r, 3_500)),
+    ])
+
+    // Return to top, wait for any newly mounted images to decode, and let transitions settle.
+    await page.evaluate(
+      `(async () => {
         window.scrollTo(0, 0);
         const imgs = Array.from(document.images || []).filter((img) => !img.complete);
         await Promise.race([
           Promise.all(imgs.map((img) => img.decode ? img.decode().catch(() => {}) : Promise.resolve())),
-          new Promise((r) => setTimeout(r, 1500)),
+          new Promise((r) => setTimeout(r, 2000)),
         ]);
-        await new Promise((r) => setTimeout(r, 450));
+        await new Promise((r) => setTimeout(r, 600));
       })()`,
     )
 
