@@ -21,89 +21,73 @@ describe("parseTriageVerdict", () => {
 })
 
 describe("triageOpsEvents", () => {
-  test("uses Gemini direct API when GEMINI_API_KEY is available and ignores routine PR ready", async () => {
-    let seenUrl = ""
-    const mockFetch = (async (url: string | URL) => {
-      seenUrl = String(url)
-      return Response.json({
-        candidates: [{ content: { parts: [{ text: '{"action":"ignore","reason":"clean PR waiting on CI/shepherd"}' }] } }],
-      })
-    }) as unknown as typeof fetch
-
+  test("defaults to agy subscription CLI (gemini-3.8-flash-low) with zero API keys", async () => {
+    let seenArgs: string[] = []
     const res = await triageOpsEvents(
       [{ id: "e1", text: "PR ready [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] tls-dashboard-v2 — https://github.com/jaubut/tls-dashboard-v2/pull/455" }],
-      { mode: "live", geminiKey: "gem-test", openrouterKey: "or-test", fetch: mockFetch },
+      {
+        mode: "live",
+        runAgy: async (_cmd, args) => {
+          seenArgs = args
+          return { ok: true, text: '{"action":"ignore","reason":"clean PR waiting on CI"}' }
+        },
+      },
     )
-    expect(seenUrl).toContain("generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+    expect(seenArgs).toContain("gemini-3.8-flash-low")
+    expect(seenArgs).toContain("--disable-slash-commands")
     expect(res).toMatchObject({
       action: "ignore",
       verdict: "ignore",
-      provider: "gemini",
-      model: "gemini-2.5-flash",
-      reason: "clean PR waiting on CI/shepherd",
+      provider: "agy",
+      model: "gemini-3.8-flash-low",
+      reason: "clean PR waiting on CI",
     })
   })
 
-  test("falls back to OpenRouter google/gemini-2.5-flash when only OPENROUTER_API_KEY is set", async () => {
-    let seenUrl = ""
-    const mockFetch = (async (url: string | URL) => {
-      seenUrl = String(url)
-      return Response.json({
-        choices: [{ message: { content: '{"action":"escalate","reason":"lead requests merge"}' } }],
-      })
-    }) as unknown as typeof fetch
-
+  test("agy provider fails open to escalate on timeout or non-zero exit", async () => {
     const res = await triageOpsEvents(
-      [{ id: "e2", text: "[from lead-claude-companion] merge jaubut/claude-companion#353: green + 2 approvals" }],
-      { mode: "live", geminiKey: null, openrouterKey: "or-test", fetch: mockFetch },
+      [{ id: "e1", text: "stuck r#1" }],
+      { mode: "live", runAgy: async () => ({ ok: false, error: "agy_timeout" }) },
     )
-    expect(seenUrl).toContain("openrouter.ai/api/v1/chat/completions")
-    expect(res).toMatchObject({
-      action: "escalate",
-      verdict: "escalate",
-      provider: "openrouter",
-      model: "google/gemini-2.5-flash",
-    })
+    expect(res).toMatchObject({ action: "escalate", provider: "agy", error: "agy_timeout" })
   })
 
   test("shadow mode records ignore verdict while still escalating to Brain", async () => {
-    const mockFetch = (async () => Response.json({
-      choices: [{ message: { content: '{"action":"ignore","reason":"routine completion"}' } }],
-    })) as unknown as typeof fetch
-
     const res = await triageOpsEvents(
       [{ id: "e3", text: "completed [bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb] repo — all tests pass" }],
-      { mode: "shadow", geminiKey: null, openrouterKey: "or-test", fetch: mockFetch },
+      { mode: "shadow", runAgy: async () => ({ ok: true, text: '{"action":"ignore","reason":"routine completion"}' }) },
     )
     expect(res.verdict).toBe("ignore")
     expect(res.action).toBe("escalate")
   })
 
-  test("fails open to escalate on missing key, HTTP 500, or network throw", async () => {
-    const noKey = await triageOpsEvents([{ id: "e1", text: "stuck r#1" }], { mode: "live", geminiKey: null, openrouterKey: null })
+  test("optional http provider uses GEMINI_API_KEY or OPENROUTER_API_KEY and fails open on error", async () => {
+    let seenUrl = ""
+    const mockFetch = (async (url: string | URL) => {
+      seenUrl = String(url)
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: '{"action":"ignore","reason":"clean PR"}' }] } }],
+      })
+    }) as unknown as typeof fetch
+
+    const res = await triageOpsEvents(
+      [{ id: "e1", text: "PR ready [x]" }],
+      { mode: "live", provider: "http", geminiKey: "gem-test", openrouterKey: null, fetch: mockFetch },
+    )
+    expect(seenUrl).toContain("generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+    expect(res).toMatchObject({ action: "ignore", provider: "gemini" })
+
+    const noKey = await triageOpsEvents([{ id: "e1", text: "stuck r#1" }], {
+      mode: "live", provider: "http", geminiKey: null, openrouterKey: null,
+    })
     expect(noKey).toMatchObject({ action: "escalate", provider: "none", error: "no_api_key" })
-
-    const errRes = await triageOpsEvents([{ id: "e1", text: "stuck r#1" }], {
-      mode: "live",
-      geminiKey: "gem-test",
-      fetch: (async () => new Response("err", { status: 500 })) as unknown as typeof fetch,
-    })
-    expect(errRes).toMatchObject({ action: "escalate", error: "gemini_http_500" })
-
-    const netRes = await triageOpsEvents([{ id: "e1", text: "stuck r#1" }], {
-      mode: "live",
-      geminiKey: "gem-test",
-      fetch: (async () => { throw new Error("timeout") }) as unknown as typeof fetch,
-    })
-    expect(netRes).toMatchObject({ action: "escalate", reason: "network_error" })
   })
 
-  test("off mode skips HTTP completely", async () => {
+  test("off mode skips execution completely", async () => {
     let called = 0
     const res = await triageOpsEvents([{ id: "e1", text: "completed [x]" }], {
       mode: "off",
-      geminiKey: "gem-test",
-      fetch: (async () => { called++; return new Response("{}") }) as unknown as typeof fetch,
+      runAgy: async () => { called++; return { ok: true, text: "{}" } },
     })
     expect(called).toBe(0)
     expect(res.action).toBe("escalate")
