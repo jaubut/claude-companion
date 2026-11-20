@@ -3609,10 +3609,12 @@
         },
         {
           "path": "lib/ops-triage.ts",
-          "lines": 239,
+          "lines": 331,
           "kind": "lib",
           "exports": [
             "OPS_TRIAGE_TIMEOUT_MS",
+            "OPS_TRIAGE_HTTP_TIMEOUT_MS",
+            "DEFAULT_AGY_TRIAGE_MODEL",
             "DEFAULT_GEMINI_MODEL",
             "DEFAULT_OPENROUTER_MODEL",
             "GEMINI_API_BASE",
@@ -3622,10 +3624,12 @@
             "OpsTriageProvider",
             "OpsTriageEvent",
             "OpsTriageDecision",
+            "RunAgyFn",
             "OpsTriageOpts",
             "opsTriageMode",
             "resolveVaultKey",
             "parseTriageVerdict",
+            "defaultRunAgy",
             "triageOpsEvents"
           ],
           "state": [],
@@ -3634,7 +3638,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/jev.ts"
+            "lib/jev.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -13971,6 +13976,13 @@
             "lib/ops-triage.ts"
           ]
         },
+        "agyBin": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/ops-triage.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
         "parseCliResult": {
           "module": "lib/cli-json.ts",
           "callers": [
@@ -19179,12 +19191,6 @@
             "wiring/brain-headless.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
-          ]
-        },
-        "agyBin": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
           ]
         },
         "AgentLookup": {
