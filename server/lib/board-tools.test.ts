@@ -165,4 +165,20 @@ describe("board tools", () => {
     expect((await sharp(all.png).metadata()).width).toBe(800)
     await expect(renderBoardRegion({ rect: { x: 0, y: 0, w: 0, h: 10 } }, room)).rejects.toThrow("rect")
   })
+
+  test("a bound arrow's bounds span its ends; text gets a height; XML-invalid chars don't break the render", async () => {
+    const room = newRoom()
+    await boardWrite(parseBoardOps([
+      { op: "create", type: "geo", id: "shape:a", x: 1000, y: 1000, w: 100, h: 100 },
+      { op: "create", type: "geo", id: "shape:b", x: 1400, y: 1000, w: 100, h: 100 },
+      { op: "create", type: "arrow", id: "shape:ar", from: "shape:a", to: "shape:b" },
+      { op: "create", type: "text", id: "shape:t", x: 0, y: 0, text: "one\ntwo \x1b[31m\x0c\ud800" },
+    ]), "t", room)
+    const read = boardRead({}, room)
+    expect(read.shapes.find((s) => s.id === "shape:ar")!.page).toEqual({ x: 1050, y: 1050, w: 400, h: 0 })
+    expect(read.shapes.find((s) => s.id === "shape:t")!.page.h).toBe(60)
+    expect(boardRead({ rect: { x: 1200, y: 1040, w: 10, h: 20 } }, room).shapes.map((s) => s.id)).toEqual(["shape:ar"])
+    expect((await renderBoardRegion({ ids: ["shape:ar"] }, room)).rect).toEqual({ x: 1018, y: 1018, w: 464, h: 64 })
+    expect((await renderBoardRegion({ ids: ["shape:t"] }, room)).shapeCount).toBe(1)
+  })
 })

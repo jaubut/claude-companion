@@ -51,12 +51,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/triage-engine.ts` | 402 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
 | `lib/body-investigator.ts` | 389 | lib | 25 |  |
+| `lib/board-tools.ts` | 388 | lib | 18 |  |
 | `lib/body-investigate-engine.ts` | 383 | lib | 20 | state: PUSH_SEVERITIES: Set · emits: orchestrator, orchestrator_channel, orchestrator_task |
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/design-state.ts` | 382 | lib | 9 | state: ALLOWED_SCALES: Set, let activePromptProvider |
 | `lib/herdr.ts` | 367 | lib | 34 | state: let clientMod, spawnedAgents: Map |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
-| `lib/board-tools.ts` | 360 | lib | 17 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/board-url-resolve.ts` | 351 | lib | 14 |  |
 | `lib/orchestrator-chat.ts` | 346 | lib | 27 | state: appendedListeners: Set |
@@ -165,13 +165,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/merge-gate.ts` | 153 | lib | 7 |  |
-| `lib/board-render.ts` | 152 | lib | 2 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
 | `routes/body.ts` | 149 | route-host | 3 | routes: 5 |
 | `wiring/pane-mirror.ts` | 147 | lib | 7 | state: mirrors: Map, viewers: WeakMap |
+| `lib/board-render.ts` | 146 | lib | 2 |  |
 | `lib/body-agent.ts` | 145 | lib | 14 |  |
 | `lib/hook-common.ts` | 145 | lib | 10 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |

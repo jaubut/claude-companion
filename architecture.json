@@ -782,7 +782,7 @@
         },
         {
           "path": "lib/board-render.ts",
-          "lines": 152,
+          "lines": 146,
           "kind": "lib",
           "exports": [
             "BoardRenderOpts",
@@ -895,7 +895,7 @@
         },
         {
           "path": "lib/board-tools.ts",
-          "lines": 360,
+          "lines": 388,
           "kind": "lib",
           "exports": [
             "BOARD_MAX_OPS",
@@ -909,6 +909,7 @@
             "BoardOpError",
             "Shape",
             "strokeSegments",
+            "BOARD_FONT",
             "BoardIndex",
             "intersects",
             "boardScope",
@@ -11930,6 +11931,12 @@
           "callers": [
             "lib/board-render.ts",
             "lib/board-tools.ts"
+          ]
+        },
+        "BOARD_FONT": {
+          "module": "lib/board-tools.ts",
+          "callers": [
+            "lib/board-render.ts"
           ]
         },
         "strokeSegments": {

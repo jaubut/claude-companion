@@ -77,19 +77,31 @@ export function strokeSegments(s: Shape): Array<{ type: string; points: Array<{ 
   }))
 }
 
-/** The shape-local box a stroke's points span, else 0,0 + its stored size. */
+/** tldraw's font size per `size` prop (text, labels); a line is 1.25 × that. */
+export const BOARD_FONT: Record<string, number> = { s: 18, m: 24, l: 36, xl: 44 }
+
+const spanOf = (pts: Array<{ x: number; y: number }>): Rect => {
+  const xs = pts.map((p) => p.x)
+  const ys = pts.map((p) => p.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+
+/** The shape-local box a stroke's points span, a text's estimated lines, else 0,0 + its stored size. */
 function localBox(s: Shape): Rect {
   if (s.type === "draw" || s.type === "highlight") {
     const pts = strokeSegments(s).flatMap((g) => g.points)
-    if (pts.length) {
-      const xs = pts.map((p) => p.x)
-      const ys = pts.map((p) => p.y)
-      const x = Math.min(...xs)
-      const y = Math.min(...ys)
-      return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
-    }
+    if (pts.length) return spanOf(pts)
   }
   const { w, h } = sizeOf(s)
+  if (s.type === "text") {
+    // ponytail: no font metrics; 0.6 em per character, no wrapping of a fixed-width text.
+    const lines = (s.props.richText ? richTextToPlain(s.props.richText) : "").split("\n")
+    const font = (BOARD_FONT[String(s.props.size)] ?? 24) * (num(s.props.scale) ?? 1)
+    const est = Math.max(...lines.map((l) => l.length)) * font * 0.6
+    return { x: 0, y: 0, w: s.props.autoSize === true ? Math.max(w ?? 0, est) : w ?? est, h: lines.length * font * 1.25 }
+  }
   return { x: 0, y: 0, w: w ?? 0, h: h ?? 0 }
 }
 
@@ -132,12 +144,28 @@ function index(records: BoardRecord[]) {
     for (const id of ids) walk(id)
     return out
   }
-  const rectOf = (s: Shape): Rect => {
+  const boundTo = new Map<string, string>()
+  for (const r of records) if (r.typeName === "binding" && r.type === "arrow") boundTo.set(`${String(r.fromId)} ${String((r.props as { terminal?: unknown })?.terminal)}`, String(r.toId))
+  /** An arrow end in page coordinates: its bound shape's centre (hw / hh = half its box), else at + the stored point. */
+  const end = (s: Shape, t: "start" | "end", depth: number): { x: number; y: number; hw: number; hh: number } => {
+    const to = byId.get(boundTo.get(`${s.id} ${t}`) ?? "")
+    if (to && isShape(to) && depth < 8) {
+      const r = rect(to, depth + 1)
+      return { x: r.x + r.w / 2, y: r.y + r.h / 2, hw: r.w / 2, hh: r.h / 2 }
+    }
+    const at = pageOf(s)
+    const v = s.props[t] as { x?: unknown; y?: unknown } | undefined
+    return { x: at.x + (num(v?.x) ?? 0), y: at.y + (num(v?.y) ?? 0), hw: 0, hh: 0 }
+  }
+  const rect = (s: Shape, depth: number): Rect => {
+    if (s.type === "arrow") return spanOf([end(s, "start", depth), end(s, "end", depth)])
     const at = pageOf(s)
     const b = localBox(s)
     return { x: at.x + b.x, y: at.y + b.y, w: b.w, h: b.h }
   }
-  return { byId, shapes, children, pageOf, descendants, rectOf }
+  const rectOf = (s: Shape): Rect => rect(s, 0)
+  const arrowEnd = (s: Shape, t: "start" | "end") => end(s, t, 0)
+  return { byId, shapes, children, pageOf, descendants, rectOf, arrowEnd }
 }
 
 function presenceView(p: PresenceRecord): BoardPresenceView {

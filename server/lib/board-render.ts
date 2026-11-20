@@ -3,7 +3,7 @@ import sharp from "sharp"
 import { BOARD_ASSET_PREFIX, boardAssetFile } from "./board-assets"
 import { richTextToPlain } from "./board-records"
 import { type BoardRoom, boardRoom } from "./board-room"
-import { type BoardIndex, type Rect, type Shape, boardScope, strokeSegments } from "./board-tools"
+import { BOARD_FONT, type BoardIndex, type Rect, type Shape, boardScope, strokeSegments } from "./board-tools"
 
 // A picture of the live board for agents (handwriting included): the scoped
 // shapes as one SVG in z-order, rasterized by sharp on white. Approximates
@@ -25,10 +25,11 @@ const PALETTE: Record<string, string> = {
   violet: "#ae3ec9", "light-violet": "#da77f2",
 }
 const STROKE: Record<string, number> = { s: 2, m: 3.5, l: 6, xl: 10 }
-const FONT: Record<string, number> = { s: 18, m: 24, l: 36, xl: 44 }
 
 const color = (v: unknown) => PALETTE[String(v)] ?? PALETTE.black!
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+// Characters XML 1.0 forbids (control chars, lone surrogates, U+FFFE/FFFF) would make librsvg reject the whole SVG.
+const XML_INVALID = /[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
+const esc = (s: string) => s.replace(XML_INVALID, "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 const n = (v: number) => (Math.round(v * 100) / 100).toString()
 const numOr = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d)
 
@@ -42,13 +43,13 @@ const centredText = (text: string, w: number, h: number, size: number, fill: str
   textSvg(text, w / 2, h / 2 - ((text.split("\n").length - 1) * size * 1.25) / 2 + size * 0.35, size, fill, "middle")
 
 /** One shape in its own local frame (the caller wraps it in translate + rotate). */
-function shapeSvg(s: Shape, ix: BoardIndex, bindings: Array<{ fromId: string; toId: string; terminal: string }>): string {
+function shapeSvg(s: Shape, ix: BoardIndex): string {
   const p = s.props
   const scale = numOr(p.scale, 1)
   const { w, h } = ix.rectOf(s)
   const stroke = color(p.color)
   const text = p.richText ? richTextToPlain(p.richText) : ""
-  const font = (FONT[String(p.size)] ?? 24) * scale
+  const font = (BOARD_FONT[String(p.size)] ?? 24) * scale
   if (s.type === "draw" || s.type === "highlight") {
     const hl = s.type === "highlight"
     const width = (STROKE[String(p.size)] ?? 3.5) * scale * (hl ? 4 : 1)
@@ -70,14 +71,8 @@ function shapeSvg(s: Shape, ix: BoardIndex, bindings: Array<{ fromId: string; to
   if (s.type === "arrow") {
     const at = ix.pageOf(s)
     const end = (t: "start" | "end") => {
-      const b = bindings.find((x) => x.fromId === s.id && x.terminal === t)
-      const to = b && ix.byId.get(b.toId)
-      if (to && to.typeName === "shape") {
-        const r = ix.rectOf(to as Shape)
-        return { x: r.x + r.w / 2 - at.x, y: r.y + r.h / 2 - at.y, hw: r.w / 2, hh: r.h / 2 }
-      }
-      const v = p[t] as { x?: unknown; y?: unknown } | undefined
-      return { x: numOr(v?.x, 0), y: numOr(v?.y, 0), hw: 0, hh: 0 }
+      const e = ix.arrowEnd(s, t)
+      return { ...e, x: e.x - at.x, y: e.y - at.y }
     }
     // A bound end stops at its shape's box edge, not at its centre (over the label).
     const edge = (from: { x: number; y: number; hw: number; hh: number }, toward: { x: number; y: number }) => {
@@ -139,11 +134,10 @@ export async function renderBoardRegion(opts: BoardRenderOpts, room: BoardRoom =
   const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, maxDim / Math.max(rect.w, rect.h)))
   const W = Math.max(1, Math.round(rect.w * scale))
   const H = Math.max(1, Math.round(rect.h * scale))
-  const bindings = records.filter((r) => r.typeName === "binding" && r.type === "arrow").map((b) => ({ fromId: String(b.fromId), toId: String(b.toId), terminal: String((b.props as { terminal?: unknown })?.terminal) }))
   const body = ordered.map((s) => {
     const at = ix.pageOf(s)
     const rot = s.rotation ? ` rotate(${n((s.rotation * 180) / Math.PI)})` : ""
-    return `<g transform="translate(${n(at.x)} ${n(at.y)})${rot}">${shapeSvg(s, ix, bindings)}</g>`
+    return `<g transform="translate(${n(at.x)} ${n(at.y)})${rot}">${shapeSvg(s, ix)}</g>`
   }).join("")
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="#ffffff"/><g transform="scale(${scale}) translate(${n(-rect.x)} ${n(-rect.y)})">${body}</g></svg>`
   const png = await sharp(Buffer.from(svg)).flatten({ background: "#ffffff" }).png().toBuffer()
