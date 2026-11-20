@@ -94,4 +94,33 @@ describe("board-url-resolve", () => {
       ],
     })
   })
+
+  test("resolveBoardUrl captures full-page screenshot for non-Pinterest web URLs", async () => {
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+    const mockFetch = (async () =>
+      new Response("<html><head><title>Linear</title></head></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      })) as unknown as typeof fetch
+
+    const out = await resolveBoardUrl("https://linear.app/method", {
+      fetch: mockFetch,
+      capturePage: async () => ({
+        bytes: fakeJpeg,
+        mime: "image/jpeg",
+        title: "Linear Method",
+        finalUrl: "https://linear.app/method",
+      }),
+      save: () => ({ ok: true, src: "/api/board/assets/page123.jpg", path: "/tmp/page123.jpg", file: "page123.jpg", mime: "image/jpeg" }),
+      probeSize: async () => ({ w: 1440, h: 4800 }),
+    })
+
+    expect(out).toEqual({
+      ok: true,
+      kind: "page",
+      title: "Linear Method",
+      sourceUrl: "https://linear.app/method",
+      images: [{ src: "/api/board/assets/page123.jpg", w: 1440, h: 4800, mime: "image/jpeg" }],
+    })
+  })
 })
