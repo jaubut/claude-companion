@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { chromium } from "playwright-core"
+import sharp from "sharp"
 import { parsePublicHttpUrl } from "./board-url-resolve"
 
 export const CAPTURE_VIEWPORT_W = 1440
@@ -112,48 +113,75 @@ export async function captureFullPageScreenshot(url: string): Promise<CapturedPa
       return route.abort("blockedbyclient")
     })
 
-    await page.goto(parsed.toString(), {
-      waitUntil: "domcontentloaded",
-      timeout: CAPTURE_NAV_TIMEOUT_MS,
-    })
+    // Wait for full document load (catching timeout so slow analytics scripts don't block capture).
+    await page
+      .goto(parsed.toString(), {
+        waitUntil: "load",
+        timeout: CAPTURE_NAV_TIMEOUT_MS,
+      })
+      .catch(async () => {
+        await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {})
+      })
 
-    // Give assets & web fonts a brief window to finish loading.
+    // Give SPA hydration, assets & web fonts time to settle.
     await Promise.race([
       page.waitForLoadState("networkidle").catch(() => {}),
-      new Promise((r) => setTimeout(r, 3_500)),
+      new Promise((r) => setTimeout(r, 4_000)),
     ])
     await page
-      .evaluate("Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), new Promise((r) => setTimeout(r, 1200))])")
+      .evaluate("Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), new Promise((r) => setTimeout(r, 1500))])")
       .catch(() => {})
+    await new Promise((r) => setTimeout(r, 500))
 
-    // Scroll through the page in steps to trigger lazy-loaded images and scroll reveals.
-    const totalHeight = await page.evaluate(
+    // Scroll through the page in steps to trigger lazy-loaded images and scroll-reveal sections.
+    await page.evaluate(
       `(async () => {
         const maxH = ${CAPTURE_MAX_HEIGHT};
         const getH = () => Math.max(document.body ? document.body.scrollHeight : 0, document.documentElement ? document.documentElement.scrollHeight : 0, 900);
-        const target = Math.min(getH(), maxH);
-        const step = 800;
+        const step = 700;
+        let y = step;
         let steps = 0;
-        for (let y = step; y < target && steps < 14; y += step, steps++) {
+        while (y < Math.min(getH(), maxH) && steps < 18) {
           window.scrollTo(0, y);
-          await new Promise((r) => setTimeout(r, 110));
+          await new Promise((r) => setTimeout(r, 160));
+          y += step;
+          steps++;
         }
         window.scrollTo(0, 0);
-        await new Promise((r) => setTimeout(r, 250));
-        return Math.max(900, Math.min(getH(), maxH));
+        const imgs = Array.from(document.images || []).filter((img) => !img.complete);
+        await Promise.race([
+          Promise.all(imgs.map((img) => img.decode ? img.decode().catch(() => {}) : Promise.resolve())),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
+        await new Promise((r) => setTimeout(r, 450));
       })()`,
-    ) as number
+    )
 
-    const buf = await page.screenshot({
+    const rawBuf = await page.screenshot({
       type: "jpeg",
       quality: 88,
-      clip: { x: 0, y: 0, width: CAPTURE_VIEWPORT_W, height: totalHeight },
+      fullPage: true,
     })
+
+    // Cap extremely tall infinite-scroll pages cleanly at CAPTURE_MAX_HEIGHT.
+    let finalBytes: Uint8Array = new Uint8Array(rawBuf)
+    try {
+      const meta = await sharp(rawBuf).metadata()
+      if (meta.width && meta.height && meta.height > CAPTURE_MAX_HEIGHT) {
+        const cropped = await sharp(rawBuf)
+          .extract({ left: 0, top: 0, width: meta.width, height: CAPTURE_MAX_HEIGHT })
+          .jpeg({ quality: 88 })
+          .toBuffer()
+        finalBytes = new Uint8Array(cropped)
+      }
+    } catch {
+      /* keep rawBuf */
+    }
 
     const title = (await page.title().catch(() => "")).trim() || parsed.hostname
     const finalUrl = parsePublicHttpUrl(page.url())?.toString() ?? parsed.toString()
     return {
-      bytes: new Uint8Array(buf),
+      bytes: finalBytes,
       mime: "image/jpeg",
       title,
       finalUrl,
