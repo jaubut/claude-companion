@@ -9,6 +9,7 @@ import { createBoardRoute } from "../routes/board"
 import { saveBoardAsset } from "./board-assets"
 import type { BoardRoom } from "./board-room"
 import { boardSchema } from "./board-schema"
+import { putStroke } from "./board-stroke.test-util"
 
 // The board MCP over its route (A1): initialize, tools/list, each tool, isError.
 
@@ -28,12 +29,12 @@ async function rpc(method: string, params: Record<string, unknown> = {}, headers
 const result = (r: { body: Record<string, unknown> }) => r.body.result as { structuredContent?: Record<string, unknown>; content: Array<Record<string, unknown>>; isError?: boolean }
 
 describe("board MCP", () => {
-  test("initialize hands a session id; tools/list has the 3 tools; notifications → 202; GET → 405", async () => {
+  test("initialize hands a session id; tools/list has the 4 tools; notifications → 202; GET → 405", async () => {
     const init = await rpc("initialize", { clientInfo: { name: "claude-code" } })
     expect((init.body.result as { serverInfo: { name: string } }).serverInfo.name).toBe("companion-board")
     expect(init.headers.get("mcp-session-id")).toBeTruthy()
     const list = await rpc("tools/list")
-    expect((list.body.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual(["board_read", "board_write", "board_asset"])
+    expect((list.body.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual(["board_read", "board_write", "board_asset", "board_render"])
     expect((await rpc("notifications/initialized")).status).toBe(202)
     const url = new URL("http://127.0.0.1/api/mcp/board")
     expect((await route(new Request(url.href, { headers: { Authorization: `Bearer ${TOKEN}` } }), url))!.status).toBe(405)
@@ -73,6 +74,21 @@ describe("board MCP", () => {
     const r = result(await rpc("tools/call", { name: "board_asset", arguments: { file: saved.file } }))
     expect(r.content[0]).toEqual({ type: "image", data: png.toString("base64"), mimeType: "image/png" })
     expect(result(await rpc("tools/call", { name: "board_asset", arguments: { file: "../auth.token" } })).isError).toBe(true)
+  })
+
+  test("board_read render:true + rect → PNG + the read; board_render → PNG + {ok, rect, shapeCount}; a bad rect → isError", async () => {
+    await putStroke(room, "shape:pen", "draw", [{ x: 0, y: 0 }, { x: 80, y: 40 }], { x: 5000, y: 5000 })
+    const rect = { x: 4990, y: 4990, w: 100, h: 60 }
+    const r = result(await rpc("tools/call", { name: "board_read", arguments: { render: true, rect } }))
+    expect(r.content[0]).toMatchObject({ type: "image", mimeType: "image/png" })
+    expect(Buffer.from(r.content[0]!.data as string, "base64").subarray(1, 4).toString()).toBe("PNG")
+    expect((JSON.parse(r.content[1]!.text as string) as { shapes: Array<{ id: string }> }).shapes.map((s) => s.id)).toEqual(["shape:pen"])
+    const plain = result(await rpc("tools/call", { name: "board_read", arguments: { rect } }))
+    expect(plain.content.map((c) => c.type)).toEqual(["text"])
+    const br = result(await rpc("tools/call", { name: "board_render", arguments: { ids: ["shape:pen"] } }))
+    expect(br.content[0]).toMatchObject({ type: "image", mimeType: "image/png" })
+    expect(JSON.parse(br.content[1]!.text as string)).toEqual({ ok: true, rect: { x: 4968, y: 4968, w: 144, h: 104 }, shapeCount: 1 })
+    expect(result(await rpc("tools/call", { name: "board_render", arguments: { rect: { x: 0, y: 0, w: -1, h: 5 } } })).isError).toBe(true)
   })
 
   test("an unknown tool → JSON-RPC error", async () => {
