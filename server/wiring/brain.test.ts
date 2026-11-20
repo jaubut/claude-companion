@@ -58,7 +58,7 @@ interface Harness {
   }
 }
 
-function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean } = {}): Harness {
+function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean; triageEvents?: Parameters<typeof mod.createBrainWiring>[0]["triageEvents"] } = {}): Harness {
   const h: Harness = {
     delivered: [], frames: [], pushes: 0, spawns: 0, stops: 0,
     set: { alive: false, paused: false, sessions: [], reply: { status: 200, body: { ok: true } }, now: 1_000_000, spawn: { ok: true, app: "herdr", herdrPane: "p_brain", sessionName: "brain" }, agentPane: "", agentStatus: "", transcriptReply: "", resumes: [], interrupts: 0 },
@@ -86,6 +86,7 @@ function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean } = 
     log: () => {},
     eventCoalesceMs: opts.eventCoalesceMs,
     middayRollover: opts.middayRollover,
+    triageEvents: opts.triageEvents,
   })
   return h
 }
@@ -628,5 +629,53 @@ describe("event triage & mid-day rollover", () => {
     await h.w.onStop("sid-brain", "rollover ready")
     expect(h.spawns).toBe(1)
     expect(h.set.resumes.at(-1)).toBeNull()
+  })
+
+  test("stateless ops triage drops ignored pure-event batches without waking Brain, escalates actionable ones, and never gates user turns", async () => {
+    let calls = 0
+    const h = harness({
+      triageEvents: async (events) => {
+        calls++
+        const actionable = events.some((e) => e.text.includes("merge "))
+        return {
+          action: actionable ? "escalate" : "ignore",
+          verdict: actionable ? "escalate" : "ignore",
+          reason: actionable ? "lead merge request" : "clean PR waiting on CI",
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          latencyMs: 120,
+          mode: "live",
+        }
+      },
+    })
+    await upBrain(h)
+    const off = chat.onTurnAppended(h.w.onTurn)
+    try {
+      // Routine PR ready → ignored by Flash, Brain never wakes, outbox cleared
+      chat.appendTurn("orchestrator", "PR ready [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] repoA — https://github.com/jaubut/repoA/pull/1", null, "brain")
+      await Bun.sleep(10)
+      expect(calls).toBe(1)
+      expect(h.delivered).toHaveLength(0)
+      expect(store.openDeliveries()).toEqual([])
+
+      // Actionable lead merge request → escalated to Brain
+      const m = chat.appendTurn("orchestrator", "[from lead-repoA] merge jaubut/repoA#1: green + 2 approvals", null, "brain")
+      await Bun.sleep(10)
+      expect(calls).toBe(2)
+      expect(h.delivered).toHaveLength(1)
+      expect(h.delivered[0]!.text).toContain(`[event ${m.id}]`)
+      await h.w.onStop("sid-brain", "Merged.")
+
+      // User turn → bypasses triage completely
+      const u = userTurn("hey brain")
+      h.w.enqueue(u)
+      await Bun.sleep(10)
+      expect(calls).toBe(2)
+      expect(h.delivered).toHaveLength(2)
+      expect(h.delivered[1]!.text).toBe(`[turn ${u.id}] hey brain`)
+    } finally {
+      off()
+      h.w.stop()
+    }
   })
 })

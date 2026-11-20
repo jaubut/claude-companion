@@ -6,11 +6,12 @@ import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
   BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, brainText, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import { classifyBrainEvent } from "../lib/brain-event-triage"
+import { type OpsTriageDecision, type OpsTriageEvent, triageOpsEvents } from "../lib/ops-triage"
 import {
-  clearTyped, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
+  clearTyped, dismissDeliveries, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
   openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
@@ -76,6 +77,8 @@ export interface BrainDeps {
   eventCoalesceMs?: number
   /** Headless mode: use mid-day fresh-session rollover instead of no-op /compact. */
   middayRollover?: boolean
+  /** Stateless cheap Ops Triage (Gemini Flash) called on pure-event batches before waking the Brain. */
+  triageEvents?: (events: OpsTriageEvent[]) => Promise<OpsTriageDecision>
 }
 
 export function emitTrace(rows: TraceRow[]): void {
@@ -110,6 +113,7 @@ export function createBrainWiring(deps: BrainDeps) {
   /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
   let selfWrite = 0
   let ticking = false
+  let triaging = false
 
   function clearCoalesce(): void {
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null }
@@ -249,11 +253,34 @@ export function createBrainWiring(deps: BrainDeps) {
   async function flush(): Promise<void> {
     // A lost post-compact SessionStart must not hold delivery forever.
     if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
-    if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
+    if (deps.paused.read() || busy || compacting || triaging || state !== "up" || !target()) return
     const seed = pendingSeed
     const queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && queued.length === 0) return
     const { turns, ids } = fitQueued(queued, turnsOf(queued))
+    if (!seed && deps.triageEvents && turns.length > 0 && turns.every((t) => t.role === "orchestrator" && classifyBrainEvent({ threadId: BRAIN_THREAD, role: "orchestrator", text: t.text, card: t.card ?? null }) === "batch")) {
+      triaging = true
+      let ignored = false
+      try {
+        const d = await deps.triageEvents(turns.map((t) => ({ id: t.id, text: brainText(t), cardKind: t.card?.kind ?? null })))
+        if (d.provider !== "none") {
+          deps.log(`[brain] ops-triage (${d.mode}) ${d.verdict}→${d.action} [${d.provider}/${d.model} ${d.latencyMs}ms]: ${d.reason}${d.error ? ` (${d.error})` : ""}`)
+        }
+        if (d.action === "ignore") {
+          dismissDeliveries(ids)
+          ignored = true
+        }
+      } catch (err) {
+        deps.log(`[brain] ops-triage failed (escalating): ${(err as Error)?.message ?? String(err)}`)
+      } finally {
+        triaging = false
+      }
+      if (ignored) {
+        // Re-check outbox in case a user turn arrived while triaging.
+        if (takeDeliveries().length > 0) void flush()
+        return
+      }
+    }
     const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
     if (busy || !target()) return
     setBusy(true)
@@ -637,4 +664,5 @@ export const brainWiring = createBrainWiring({
   log: companionLog,
   eventCoalesceMs: 15_000,
   middayRollover: true,
+  triageEvents: triageOpsEvents,
 })
