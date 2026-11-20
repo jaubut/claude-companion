@@ -93,7 +93,7 @@ describe("GET /api/body/tokens read model", () => {
     expect(body).toEqual({
       ok: true, generated_at: new Date(NOW).toISOString(), range: "7d", since: "2026-09-29", pricing_as_of: PRICING_AS_OF,
       totals: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0, usd: null, unpriced_tokens: 0 },
-      by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [],
+      by_provider: [], by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [],
     })
     expect(calls).toHaveLength(1)
   })
@@ -155,6 +155,21 @@ describe("GET /api/body/tokens read model", () => {
     const { query } = sqliteQuery(ROWS)
     const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: async () => { throw new Error("EACCES") } })
     expect(body.top_sessions.every((s) => s.name === null)).toBe(true)
+  })
+
+  test("by_provider splits claude, gemini, and codex totals and prices them", async () => {
+    const { query } = sqliteQuery([
+      { host: "zettlab", back: 0, session: "c1", source: "main", model: "claude-opus-5-5", input: 1_000_000, output: 100_000 },
+      { host: "zettlab", back: 0, session: "g1", source: "main", model: "gemini-4-carbon-high", input: 500_000, cache_read: 500_000, output: 50_000 },
+      { host: "zettlab", back: 0, session: "x1", source: "main", model: "gpt-5.4", input: 200_000, output: 20_000 },
+    ])
+    const body = await buildTokens(query, "today", { now: () => NOW, sessionNames: names })
+    expect(body.by_provider.map((p) => [p.provider, p.total])).toEqual([
+      ["claude", 1_100_000],
+      ["gemini", 1_050_000],
+      ["codex", 220_000],
+    ])
+    expect(body.by_provider.every((p) => p.usd !== null && p.usd > 0 && p.unpriced_tokens === 0)).toBe(true)
   })
 })
 
