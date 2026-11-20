@@ -2028,7 +2028,7 @@
         },
         {
           "path": "lib/desk-runner.ts",
-          "lines": 417,
+          "lines": 418,
           "kind": "lib",
           "exports": [
             "DESK_PANE_PREFIX",
@@ -5227,7 +5227,7 @@
         },
         {
           "path": "lib/sessions.ts",
-          "lines": 654,
+          "lines": 660,
           "kind": "lib",
           "exports": [
             "Session",

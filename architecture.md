@@ -8,13 +8,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 299 modules, cap 600)
 
-⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (654), `lib/worker-supervisor.ts` (604), `wiring/brain.ts` (669)
+⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (660), `lib/worker-supervisor.ts` (604), `wiring/brain.ts` (669)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1276 ⚠ 1276 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `wiring/brain.ts` | 669 ⚠ 669 > cap 600 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
-| `lib/sessions.ts` | 654 ⚠ 654 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
+| `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/worker-supervisor.ts` | 604 ⚠ 604 > cap 600 | lib | 6 |  |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
@@ -42,7 +42,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `lib/desk-runner.ts` | 417 | lib | 16 | state: let secretsOnce · emits: inject_error |
+| `lib/desk-runner.ts` | 418 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
