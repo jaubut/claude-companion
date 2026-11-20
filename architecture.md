@@ -123,6 +123,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/subscriptions.ts` | 214 | lib | 8 | state: let cache |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
+| `lib/board-page-capture.ts` | 211 | lib | 7 |  |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `wiring/worker-mcp.ts` | 211 | lib | 8 | state: lastTursoSync: Map, let relayStarted, let relaying, let relayAgain |
@@ -140,7 +141,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `ws.ts` | 198 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/trips.ts` | 196 | lib | 5 |  |
-| `lib/board-page-capture.ts` | 195 | lib | 7 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `wiring/desk-deliver.ts` | 193 | lib | 3 | emits: inject_error |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
