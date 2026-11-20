@@ -723,7 +723,7 @@
         },
         {
           "path": "lib/board-page-capture.ts",
-          "lines": 167,
+          "lines": 195,
           "kind": "lib",
           "exports": [
             "CAPTURE_VIEWPORT_W",
@@ -745,7 +745,8 @@
           "listeners": [],
           "sheets": 0,
           "externals": [
-            "playwright-core"
+            "playwright-core",
+            "sharp"
           ]
         },
         {
@@ -21411,6 +21412,7 @@
         "sharp": {
           "version": "0.35.5",
           "modules": [
+            "lib/board-page-capture.ts",
             "lib/board-url-resolve.ts",
             "lib/link-media-palette.ts",
             "lib/link-media.ts",

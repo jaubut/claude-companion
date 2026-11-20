@@ -140,6 +140,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `ws.ts` | 198 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/trips.ts` | 196 | lib | 5 |  |
+| `lib/board-page-capture.ts` | 195 | lib | 7 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `wiring/desk-deliver.ts` | 193 | lib | 3 | emits: inject_error |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
@@ -156,7 +157,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
-| `lib/board-page-capture.ts` | 167 | lib | 7 |  |
 | `lib/tool-format.ts` | 166 | lib | 6 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `routes/triage.ts` | 165 | lib | 2 |  |
@@ -318,7 +318,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 | package | version | modules | targets |
 |---|---|---|---|
-| `sharp` | 0.35.5 | 5 | server |
+| `sharp` | 0.35.5 | 6 | server |
 | `@tldraw/tlschema` | 5.6.0 | 4 | server |
 | `@tldraw/sync-core` | 5.6.0 | 1 | server |
 | `@tldraw/utils` | 5.6.0 | 1 | server |
