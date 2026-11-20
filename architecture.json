@@ -1088,7 +1088,7 @@
         },
         {
           "path": "lib/body-tokens.ts",
-          "lines": 238,
+          "lines": 249,
           "kind": "lib",
           "exports": [
             "TOKEN_RANGES",
@@ -1097,6 +1097,7 @@
             "TokenTotals",
             "TokenSession",
             "TokenSource",
+            "TokenProvider",
             "TokensResponse",
             "parseRange",
             "localDay",
@@ -3482,7 +3483,7 @@
         },
         {
           "path": "lib/model-prices.ts",
-          "lines": 95,
+          "lines": 110,
           "kind": "lib",
           "exports": [
             "PRICING_AS_OF",

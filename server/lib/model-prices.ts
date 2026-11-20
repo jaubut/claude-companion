@@ -44,10 +44,24 @@ export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   "claude-sonnet-4": p(3, 3.75, 0.3, 15),
   "claude-haiku-4-5": p(1, 1.25, 0.1, 5),
   "claude-3-5-haiku": p(0.8, 1, 0.08, 4),
+  // Gemini / Antigravity list-price estimates ($/MTok)
+  "gemini-4-hydrogen": p(4, 4, 0.4, 20),
+  "gemini-4-carbon": p(2.5, 2.5, 0.25, 15),
+  "gemini-4-argon": p(1.25, 1.25, 0.125, 7.5),
+  "gemini-4-neon": p(1.25, 1.25, 0.125, 7.5),
+  "gemini-pro-orchestrator": p(2.5, 2.5, 0.25, 15),
+  "gemini-3.8-flash": p(0.3, 0.3, 0.03, 2.5),
+  "gemini-3.1-pro": p(2, 2, 0.2, 12),
+  "gemini-2.5-flash": p(0.3, 0.3, 0.03, 2.5),
+  // OpenAI / Codex list-price estimates ($/MTok)
+  "gpt-5.4": p(2.5, 2.5, 0.25, 15),
+  "gpt-5": p(1.25, 1.25, 0.125, 10),
+  "o3": p(2, 2, 0.5, 8),
 }
 
 const IDS = Object.keys(MODEL_PRICES)
-const SUFFIX = /^(-\d{8}|\[|@)/
+const EFFORT_SUFFIXES = ["low", "medium", "high", "xhigh", "max", "preview"] as const
+const SUFFIX = /^(-\d{8}|-(?:low|medium|high|xhigh|max|preview)$|\[|@)/
 
 export function priceFor(model: string): ModelPrice | null {
   for (const id of IDS) {
@@ -76,7 +90,8 @@ export function usdFor(model: string, t: TokenCounts): number | null {
 // case-sensitive like priceFor. Ids are fixed literals from the table above.
 
 function matchSql(id: string): string {
-  return `(model = '${id}' OR model GLOB '${id}-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' OR model GLOB '${id}[[]*' OR model GLOB '${id}@*')`
+  const efforts = EFFORT_SUFFIXES.map((s) => `'${id}-${s}'`).join(", ")
+  return `(model = '${id}' OR model IN (${efforts}) OR model GLOB '${id}-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' OR model GLOB '${id}[[]*' OR model GLOB '${id}@*')`
 }
 
 /** Per-row USD expression; NULL for an unpriced model (SUM skips it). */

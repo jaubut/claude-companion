@@ -59,6 +59,8 @@ export interface TokenSource {
   unpriced_tokens: number
 }
 
+export type TokenProvider = "claude" | "gemini" | "codex"
+
 export interface TokensResponse {
   ok: true
   generated_at: string
@@ -68,6 +70,7 @@ export interface TokensResponse {
   /** Day the price table (lib/model-prices.ts) was read from the pricing page. */
   pricing_as_of: string
   totals: TokenTotals
+  by_provider: (TokenTotals & { provider: TokenProvider })[]
   by_host: (TokenTotals & { host: string })[]
   by_day: (TokenTotals & { day: string })[]
   top_sessions: TokenSession[]
@@ -102,6 +105,11 @@ const SUMS =
 const TOTAL = "COALESCE(SUM(input),0) + COALESCE(SUM(output),0) + COALESCE(SUM(cache_read),0) + COALESCE(SUM(cache_creation),0)"
 const TABLE_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('token_usage', 'token_sessions')"
 const TOTALS_SQL = `SELECT ${SUMS} FROM token_usage WHERE day >= ?`
+const PROVIDER_SQL =
+  "CASE WHEN LOWER(model) LIKE 'claude%' THEN 'claude' " +
+  "WHEN LOWER(model) LIKE 'gemini%' OR LOWER(model) LIKE 'orchestrator%' THEN 'gemini' " +
+  "ELSE 'codex' END"
+const BY_PROVIDER_SQL = `SELECT ${PROVIDER_SQL} AS provider, ${SUMS}, ${TOTAL} AS total FROM token_usage WHERE day >= ? GROUP BY provider ORDER BY total DESC, provider`
 const BY_HOST_SQL = `SELECT host, ${SUMS}, ${TOTAL} AS total FROM token_usage WHERE day >= ? GROUP BY host ORDER BY total DESC, host`
 const BY_DAY_SQL = `SELECT day, ${SUMS} FROM token_usage WHERE day >= ? GROUP BY day ORDER BY day`
 const TOP_SESSIONS_SQL =
@@ -176,11 +184,12 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
   // Collector not deployed yet → an empty view, not a 503.
   const tables = new Set((await query(TABLE_SQL, [])).map((r) => String(r.name)))
   if (!tables.has("token_usage")) {
-    return { ...base, totals: emptyTotals(), by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [] }
+    return { ...base, totals: emptyTotals(), by_provider: [], by_host: [], by_day: [], top_sessions: [], top_agents: [], top_skills: [] }
   }
   const source = (prefix: string): [string, SqlArg[]] => [TOP_SOURCE_SQL, [prefix.length + 1, since, `${prefix}%`, TOP_LIMIT]]
-  const [totals, byHost, byDay, sessions, agents, skills, names] = await Promise.all([
+  const [totals, byProvider, byHost, byDay, sessions, agents, skills, names] = await Promise.all([
     query(TOTALS_SQL, [since]),
+    query(BY_PROVIDER_SQL, [since]),
     query(BY_HOST_SQL, [since]),
     query(BY_DAY_SQL, [since]),
     query(tables.has("token_sessions") ? TOP_SESSIONS_JOIN_SQL : TOP_SESSIONS_SQL, [since, TOP_LIMIT]),
@@ -189,9 +198,11 @@ export async function buildTokens(query: QueryFn, range: TokenRange, opts: Build
     (opts.sessionNames ?? liveSessionNames)().catch(() => new Map<string, string>()),
   ])
   const toSource = (r: Row): TokenSource => ({ name: String(r.name ?? ""), total: num(r.total), ...costOf(r) })
+  const asProvider = (v: unknown): TokenProvider => (v === "claude" || v === "gemini" || v === "codex" ? v : "codex")
   return {
     ...base,
     totals: totalsOf(totals[0]),
+    by_provider: byProvider.map((r) => ({ provider: asProvider(r.provider), ...totalsOf(r) })),
     by_host: byHost.map((r) => ({ host: String(r.host ?? ""), ...totalsOf(r) })),
     by_day: byDay.map((r) => ({ day: String(r.day ?? ""), ...totalsOf(r) })),
     top_sessions: sessions.map((r) => {

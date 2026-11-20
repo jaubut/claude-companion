@@ -98,11 +98,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 255 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
 | `lib/dialog-watch.ts` | 250 | lib | 6 |  |
+| `lib/body-tokens.ts` | 249 | lib | 17 |  |
 | `lib/jev-model-router.ts` | 249 | lib | 15 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
 | `wiring/auto-deploy.ts` | 241 | lib | 15 | state: let live |
-| `lib/body-tokens.ts` | 238 | lib | 16 |  |
 | `companion-server.ts` | 233 | route-host | 1 | routes: 10 |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
 | `routes/vault.ts` | 230 | lib | 1 |  |
@@ -202,6 +202,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `lib/brain-store.ts` | 111 | lib | 15 |  |
+| `lib/model-prices.ts` | 110 | lib | 8 |  |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
@@ -215,7 +216,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/request-gate.ts` | 96 | lib | 6 | state: NAMES: Set, let tailscaleName |
 | `routes/worker-mcp.ts` | 96 | route-host | 3 | route: * /api/mcp/workers |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
-| `lib/model-prices.ts` | 95 | lib | 8 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `lib/turso-test-db.test-util.ts` | 93 | lib | 5 |  |
