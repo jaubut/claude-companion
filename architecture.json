@@ -1190,7 +1190,7 @@
         },
         {
           "path": "lib/brain-store.ts",
-          "lines": 105,
+          "lines": 111,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -1202,6 +1202,7 @@
             "requeueDeliveries",
             "markMaybe",
             "clearTyped",
+            "dismissDeliveries",
             "getKv",
             "setKv",
             "proposeSeen",
@@ -3601,6 +3602,39 @@
             "lib/sent-files.ts",
             "lib/turso.ts",
             "lib/voice-memo.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/ops-triage.ts",
+          "lines": 239,
+          "kind": "lib",
+          "exports": [
+            "OPS_TRIAGE_TIMEOUT_MS",
+            "DEFAULT_GEMINI_MODEL",
+            "DEFAULT_OPENROUTER_MODEL",
+            "GEMINI_API_BASE",
+            "OPENROUTER_ENDPOINT",
+            "OpsTriageMode",
+            "OpsTriageAction",
+            "OpsTriageProvider",
+            "OpsTriageEvent",
+            "OpsTriageDecision",
+            "OpsTriageOpts",
+            "opsTriageMode",
+            "resolveVaultKey",
+            "parseTriageVerdict",
+            "triageOpsEvents"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/jev.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9151,7 +9185,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 641,
+          "lines": 669,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -9182,6 +9216,7 @@
             "state.ts",
             "lib/brain.ts",
             "lib/brain-event-triage.ts",
+            "lib/ops-triage.ts",
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "wiring/brain-activity.ts",
@@ -13308,7 +13343,8 @@
           "callers": [
             "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain.ts"
           ]
         },
         "RouteDecision": {
@@ -13915,6 +13951,18 @@
           "module": "lib/canvas.ts",
           "callers": [
             "lib/note-media.ts"
+          ]
+        },
+        "jevKeySources": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/ops-triage.ts"
+          ]
+        },
+        "envLineValue": {
+          "module": "lib/jev.ts",
+          "callers": [
+            "lib/ops-triage.ts"
           ]
         },
         "parseCliResult": {
@@ -19434,6 +19482,12 @@
             "wiring/brain.ts"
           ]
         },
+        "dismissDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "takeDeliveries": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -19470,6 +19524,18 @@
             "wiring/brain.ts"
           ]
         },
+        "OpsTriageEvent": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "OpsTriageDecision": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "createBrainActivity": {
           "module": "wiring/brain-activity.ts",
           "callers": [
@@ -19497,6 +19563,12 @@
         },
         "createHeadlessBrainRunner": {
           "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "triageOpsEvents": {
+          "module": "lib/ops-triage.ts",
           "callers": [
             "wiring/brain.ts"
           ]

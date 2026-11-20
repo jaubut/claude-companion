@@ -81,6 +81,12 @@ export function clearTyped(): string[] {
   return ids
 }
 
+/** Remove queued system event turns dismissed by stateless ops triage (never deletes typed turns). */
+export function dismissDeliveries(ids: string[]): void {
+  const q = db.query("DELETE FROM brain_outbox WHERE turn_id = ? AND state = 'queued'")
+  for (const id of ids) q.run(id)
+}
+
 export function getKv(k: string): string | null {
   return (db.query("SELECT v FROM brain_kv WHERE k = ?").get(k) as { v: string } | null)?.v ?? null
 }
