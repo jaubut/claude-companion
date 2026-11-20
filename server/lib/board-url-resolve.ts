@@ -1,9 +1,10 @@
 import sharp from "sharp"
 import { BOARD_ASSET_MAX_BYTES, saveBoardAsset } from "./board-assets"
 
-// Resolves a pasted URL (Pinterest pin, Pinterest board, pin.it shortlink, or direct image)
-// into locally stored board assets (`/api/board/assets/<hash>.<ext>`) with real pixel dimensions.
-// Used by `POST /api/board/resolve-url` so pasting a Pinterest link in Mac or iPad Canvas
+// Resolves any pasted public HTTP(S) URL (Pinterest pin/board, direct image, or any web page
+// with Open Graph / Twitter / hero images) into locally stored board assets
+// (`/api/board/assets/<hash>.<ext>`) with real pixel dimensions.
+// Used by `POST /api/board/resolve-url` so pasting a link in Mac or iPad Canvas
 // drops the actual image(s) (or a framed board grid) instead of raw link text.
 
 export const RESOLVE_TIMEOUT_MS = 8_000
@@ -127,6 +128,83 @@ export function extractPinterestImages(html: string, finalUrl: URL, max = BOARD_
   return { kind: isPin ? "pin" : "board", title, urls }
 }
 
+function resolveRelativeUrl(candidate: string | null, base: URL): string | null {
+  if (!candidate) return null
+  const trimmed = candidate.trim()
+  if (!trimmed || trimmed.startsWith("data:")) return null
+  try {
+    const abs = new URL(trimmed, base)
+    return parsePublicHttpUrl(abs.toString()) ? abs.toString() : null
+  } catch {
+    return null
+  }
+}
+
+function extractTitleTag(html: string): string | null {
+  const m = html.match(/<title[^>]*>([^<]+)<\/title>/i)
+  return m?.[1] ? decodeHtmlEntities(m[1]) : null
+}
+
+function extractLinkHref(html: string, rel: string): string | null {
+  const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const patterns = [
+    new RegExp(`<link[^>]+rel=["']${escaped}["'][^>]+href=["']([^"']+)["']`, "i"),
+    new RegExp(`<link[^>]+href=["']([^"']+)["'][^>]+rel=["']${escaped}["']`, "i"),
+  ]
+  for (const re of patterns) {
+    const m = html.match(re)
+    if (m?.[1]) return decodeHtmlEntities(m[1])
+  }
+  return null
+}
+
+/**
+ * Extract prioritized preview image candidate URLs from any web page:
+ * 1. Open Graph (`og:image:secure_url`, `og:image:url`, `og:image`)
+ * 2. Twitter Card (`twitter:image:src`, `twitter:image`)
+ * 3. `<link rel="image_src">`
+ * 4. First non-icon `<img>` on the page as fallback
+ */
+export function extractGenericPageImages(html: string, finalUrl: URL): { kind: "image"; title: string; urls: string[] } {
+  const title =
+    extractMetaTag(html, "og:title") ||
+    extractMetaTag(html, "twitter:title") ||
+    extractTitleTag(html) ||
+    finalUrl.hostname
+
+  const rawCandidates: Array<string | null> = [
+    extractMetaTag(html, "og:image:secure_url"),
+    extractMetaTag(html, "og:image:url"),
+    extractMetaTag(html, "og:image"),
+    extractMetaTag(html, "twitter:image:src"),
+    extractMetaTag(html, "twitter:image"),
+    extractLinkHref(html, "image_src"),
+  ]
+
+  // Fallback: scan first few <img> tags for a raster image that isn't a tiny icon/logo/pixel.
+  const imgRe = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi
+  let scanned = 0
+  for (const m of html.matchAll(imgRe)) {
+    const src = decodeHtmlEntities(m[1] ?? "")
+    if (!src || src.startsWith("data:") || /\.svg(?:[?#]|$)/i.test(src) || /favicon|sprite|pixel|spacer|1x1/i.test(src)) {
+      continue
+    }
+    rawCandidates.push(src)
+    if (++scanned >= 4) break
+  }
+
+  const seen = new Set<string>()
+  const urls: string[] = []
+  for (const c of rawCandidates) {
+    const abs = resolveRelativeUrl(c, finalUrl)
+    if (abs && !seen.has(abs)) {
+      seen.add(abs)
+      urls.push(abs)
+    }
+  }
+  return { kind: "image", title, urls }
+}
+
 async function defaultProbeSize(bytes: Uint8Array): Promise<{ w: number; h: number }> {
   try {
     const meta = await sharp(bytes).metadata()
@@ -211,22 +289,29 @@ export async function resolveBoardUrl(rawUrl: string, deps: ResolveUrlDeps = {})
   const html = (await res.text()).slice(0, 1_500_000)
   const extracted = isPinterestHost(finalUrl.hostname)
     ? extractPinterestImages(html, finalUrl)
-    : (() => {
-        const og = extractMetaTag(html, "og:image") || extractMetaTag(html, "twitter:image")
-        const title = extractMetaTag(html, "og:title") || finalUrl.hostname
-        return { kind: "image" as const, title, urls: og ? [og] : [] }
-      })()
+    : extractGenericPageImages(html, finalUrl)
 
   if (extracted.urls.length === 0) {
     return { ok: false, status: 422, error: "no_images_found" }
   }
 
-  // Download up to 4 at a time to stay fast and polite.
+  // For a Pinterest board, download up to BOARD_MAX_IMAGES in batches of 4.
+  // For a single-image page (pin or generic URL), stop at the first candidate that downloads cleanly.
   const images: ResolvedBoardImage[] = []
-  for (let i = 0; i < extracted.urls.length; i += 4) {
-    const batch = extracted.urls.slice(i, i + 4)
-    const done = await Promise.all(batch.map((u) => downloadAndSaveImage(u, fetchFn, saveFn, probeFn)))
-    for (const img of done) if (img) images.push(img)
+  if (extracted.kind === "board") {
+    for (let i = 0; i < extracted.urls.length; i += 4) {
+      const batch = extracted.urls.slice(i, i + 4)
+      const done = await Promise.all(batch.map((u) => downloadAndSaveImage(u, fetchFn, saveFn, probeFn)))
+      for (const img of done) if (img) images.push(img)
+    }
+  } else {
+    for (const u of extracted.urls) {
+      const img = await downloadAndSaveImage(u, fetchFn, saveFn, probeFn)
+      if (img) {
+        images.push(img)
+        break
+      }
+    }
   }
 
   if (images.length === 0) {

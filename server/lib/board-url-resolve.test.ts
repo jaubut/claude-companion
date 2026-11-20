@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { extractPinterestImages, parsePublicHttpUrl, resolveBoardUrl, upgradePinimgUrl } from "./board-url-resolve"
+import { extractGenericPageImages, extractPinterestImages, parsePublicHttpUrl, resolveBoardUrl, upgradePinimgUrl } from "./board-url-resolve"
 
 describe("board-url-resolve", () => {
   test("blocks private/loopback/tailnet URLs and non-http schemes", () => {
@@ -69,6 +69,29 @@ describe("board-url-resolve", () => {
       title: "Nordic Lamp",
       sourceUrl: "https://www.pinterest.com/pin/123456/",
       images: [{ src: "/api/board/assets/abc123.png", w: 736, h: 920, mime: "image/png" }],
+    })
+  })
+
+  test("extractGenericPageImages resolves relative OG/Twitter/img URLs for any site", () => {
+    const html = `
+      <html><head>
+        <title>Linear — Method</title>
+        <meta property="og:image" content="/assets/og-hero.png">
+        <meta name="twitter:image" content="https://cdn.linear.app/card.webp">
+      </head><body>
+        <img src="/icons/favicon.svg">
+        <img src="/media/product.jpg">
+      </body></html>
+    `
+    const out = extractGenericPageImages(html, new URL("https://linear.app/method"))
+    expect(out).toEqual({
+      kind: "image",
+      title: "Linear — Method",
+      urls: [
+        "https://linear.app/assets/og-hero.png",
+        "https://cdn.linear.app/card.webp",
+        "https://linear.app/media/product.jpg",
+      ],
     })
   })
 })

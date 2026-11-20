@@ -855,7 +855,7 @@
         },
         {
           "path": "lib/board-url-resolve.ts",
-          "lines": 244,
+          "lines": 329,
           "kind": "lib",
           "exports": [
             "RESOLVE_TIMEOUT_MS",
@@ -870,6 +870,7 @@
             "extractMetaTag",
             "upgradePinimgUrl",
             "extractPinterestImages",
+            "extractGenericPageImages",
             "resolveBoardUrl"
           ],
           "state": [],

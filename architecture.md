@@ -64,6 +64,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/outbound.ts` | 335 | lib | 27 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/ops-triage.ts` | 331 | lib | 19 |  |
+| `lib/board-url-resolve.ts` | 329 | lib | 14 |  |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `lib/board-tools.ts` | 322 | lib | 12 |  |
 | `routes/model.ts` | 321 | route-host | 1 | state: inFlight: Set · routes: 3 |
@@ -102,7 +103,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-model-router.ts` | 249 | lib | 15 |  |
 | `wiring/triage-repos.ts` | 248 | lib | 5 | state: let live |
 | `lib/trip-service.ts` | 245 | lib | 12 |  |
-| `lib/board-url-resolve.ts` | 244 | lib | 13 |  |
 | `wiring/auto-deploy.ts` | 241 | lib | 15 | state: let live |
 | `companion-server.ts` | 233 | route-host | 1 | routes: 10 |
 | `lib/receipt-qa-store.ts` | 231 | lib | 21 | state: let db, listeners: Set |
