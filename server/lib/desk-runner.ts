@@ -383,8 +383,9 @@ export function createDeskRunner(over: Partial<DeskDeps> = {}) {
       for (const [sid, m] of Object.entries(state.models ?? {})) if (typeof m === "string") models.set(sid, m)
       for (const r of state.rows ?? []) {
         if (deps.now() - r.at > ROW_KEEP_MS) continue
+        if (/(?:^|\/)(?:pr-shepherd-[^/]+|dispatch-[^/]+|apps\/wt\/)/i.test(r.cwd)) continue
         rows.set(r.sid, r)
-        deps.record({ agent: r.agent, cwd: r.cwd, sessionId: r.sid, herdrPane: `${DESK_PANE_PREFIX}${r.sid}`, agentStatus: "idle", ...(r.title ? { title: r.title } : {}) })
+        deps.record({ agent: r.agent, cwd: r.cwd, sessionId: r.sid, herdrPane: `${DESK_PANE_PREFIX}${r.sid}`, agentStatus: "idle", firstSeenAt: r.at, lastActiveAt: r.at, ...(r.title ? { title: r.title } : {}) })
       }
       for (const t of state.turns ?? []) {
         const lease: Lease = {

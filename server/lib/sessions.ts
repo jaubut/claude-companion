@@ -141,9 +141,15 @@ export function setPidDeadAdopter(fn: PidDeadAdopter | null): void {
   pidDeadAdopter = fn
 }
 
+const EPHEMERAL_AUTOMATION_CWD_RE = /(?:^|\/)(?:pr-shepherd-[^/]+|dispatch-[^/]+|apps\/wt\/)/i
+
 function adoptDead(s: Session, now: number): boolean {
   if (!pidDeadAdopter || (s.agent !== "claude" && s.agent !== "codex") || !s.sidConfirmed || !s.sessionId) return false
   if (s.herdrPane?.startsWith("headless:")) return false
+  // Only adopt interactive terminal chats — never ttyless cron/shepherd/dispatch runs or task-bound workers.
+  if (s.taskId) return false
+  if (!s.tty && !s.tmuxPane && !s.herdrPane && !s.termProgram) return false
+  if (EPHEMERAL_AUTOMATION_CWD_RE.test(s.cwd)) return false
   const key = `${s.agent}:sid:${s.sessionId}`
   const row: Session = {
     ...s, key, tty: "", iTermSessionId: "", tmuxPane: "", tmuxSocket: "", herdrPane: `headless:desk:${s.sessionId}`, herdrAgent: "",
