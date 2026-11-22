@@ -14,7 +14,7 @@ import {
 // card Opus prepares, the digest. Scheduling is lib/resolver-engine.ts, the
 // live seams wiring/resolver.ts.
 
-export const DEFAULT_MODEL = "gemini-4-hydrogen-high"
+export const DEFAULT_MODEL = "claude-sonnet-5-5"
 export const DEFAULT_MAX_CONCURRENT = 2
 export const DEFAULT_MAX_PER_DAY = 60
 export const DEFAULT_TIMEOUT_MS = 20 * 60_000

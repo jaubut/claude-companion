@@ -57,9 +57,9 @@ function output(over: Partial<ResolverOutput> = {}): ResolverOutput {
 const normal: PolicyCtx = { autonomy: "normal", instruction: null, sensitive: false, rescuedBefore: false }
 
 describe("config + kill switch", () => {
-  test("defaults: on, gemini-4-hydrogen-high, 2 concurrent, 60 a day, 20 min; COMPANION_RESOLVER_DAILY sets the budget", () => {
+  test("defaults: on, claude-sonnet-5-5, 2 concurrent, 60 a day, 20 min; COMPANION_RESOLVER_DAILY sets the budget", () => {
     const c = resolverConfig({ HOME: "/h" }, () => false)
-    expect(c).toMatchObject({ enabled: true, model: "gemini-4-hydrogen-high", maxConcurrent: 2, maxPerDay: 60, timeoutMs: 20 * 60_000, dryRun: false })
+    expect(c).toMatchObject({ enabled: true, model: "claude-sonnet-5-5", maxConcurrent: 2, maxPerDay: 60, timeoutMs: 20 * 60_000, dryRun: false })
     expect(resolverConfig({ HOME: "/h", COMPANION_RESOLVER_DAILY: "90" }, () => false).maxPerDay).toBe(90)
     expect(resolverConfig({ HOME: "/h", COMPANION_RESOLVER_MAX_PER_DAY: "30" }, () => false).maxPerDay).toBe(30)
   })

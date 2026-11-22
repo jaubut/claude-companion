@@ -122,7 +122,7 @@ describe("argv + env", () => {
     expect(env.BROKER_TOKEN).toBeUndefined()
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("o")
     expect(env.PATH!.split(":")[0]).toBe("/Users/j/.local/bin")
-    expect(investigateModel({})).toBe("gemini-4-hydrogen-high")
+    expect(investigateModel({})).toBe("sonnet")
     expect(investigateModel({ COMPANION_INVESTIGATE_MODEL: "opus" })).toBe("opus")
   })
 })
