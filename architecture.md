@@ -18,7 +18,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/worker-supervisor.ts` | 599 | lib | 5 |  |
-| `lib/worker-invocation.ts` | 595 | lib | 43 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
+| `lib/worker-invocation.ts` | 596 | lib | 43 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -70,12 +70,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
+| `wiring/brain-headless.ts` | 306 | lib | 8 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
 | `lib/brain.ts` | 300 | lib | 52 |  |
 | `lib/triage-pr.ts` | 296 | lib | 21 |  |
 | `wiring/auto-compact.ts` | 296 | lib | 6 | state: let statsDb · emits: inject_error |
-| `wiring/brain-headless.ts` | 296 | lib | 8 |  |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/ended-sessions.ts` | 287 | lib | 17 |  |

@@ -7079,7 +7079,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 595,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -9045,7 +9045,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 296,
+          "lines": 306,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
