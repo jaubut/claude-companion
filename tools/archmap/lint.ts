@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, lstatSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { ArchMap, RepoConfig, ImportRule } from "./types"
 import { walk, rel, resolveRoot } from "./adapters/shared"
@@ -127,6 +127,20 @@ export function mirrorDrift(cfg: RepoConfig, repoRoot: string): LintIssue[] {
     }
   }
   return issues
+}
+
+// FIELD_GUIDE.md is injected into every worker's first prompt (server/lib/field-guide.ts): it stays a short
+// regular file at the repo root. A symlink or more than FIELD_GUIDE_CAP lines blocks.
+export const FIELD_GUIDE_CAP = 100
+
+export function fieldGuideLint(repoRoot: string): LintIssue[] {
+  const file = join(repoRoot, "FIELD_GUIDE.md")
+  let st: ReturnType<typeof lstatSync>
+  try { st = lstatSync(file) } catch { return [] }
+  const issue = (detail: string): LintIssue[] => [{ target: "repo", module: "FIELD_GUIDE.md", rule: "field-guide-cap", detail, blocking: true }]
+  if (!st.isFile()) return issue("FIELD_GUIDE.md must be a regular file, not a symlink or directory")
+  const lines = readFileSync(file, "utf-8").replace(/\n$/, "").split("\n").length
+  return lines > FIELD_GUIDE_CAP ? issue(`${lines} lines > cap ${FIELD_GUIDE_CAP}; keep only sharp operational traps`) : []
 }
 
 export function formatIssues(issues: LintIssue[]): string {

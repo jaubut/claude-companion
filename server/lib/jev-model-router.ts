@@ -16,16 +16,22 @@ export interface WorkerModelInput {
   turnCount?: number
   explicitModel?: string | null
   existingModel?: string | null
+  /** The reason the task's previous turn was routed with: a security or money task keeps Opus on its follow-ups. */
+  priorReason?: string | null
 }
+
+/** Turn-1 reasons whose follow-up turns never drop below Opus (a follow-up brief alone no longer shows why). */
+const OPUS_FLOOR_REASONS = new Set(["security_or_auth", "money_or_data_integrity"])
 
 export interface WorkerModelDecision {
   model: "claude-opus-5-5" | "claude-sonnet-5-5"
   reason:
     | "explicit"
-    | "session_keep"
     | "retry_escalation"
     | "security_or_auth"
     | "money_or_data_integrity"
+    | "spec_explicit"
+    | "followup_sonnet"
     | "cross_module"
     | "focused_feature"
     | "single_spot"
@@ -37,6 +43,7 @@ export interface WorkerModelDecision {
     scopeProb: number
     securityOrAuth: number | null
     moneyOrData: number | null
+    specExplicit: number | null
   }
 }
 
@@ -76,6 +83,15 @@ export const WORKER_QUESTIONS: Record<string, JevQuestion> = {
       false: "The task does not compute money or run destructive schema migrations.",
     },
   },
+  spec_explicit: {
+    type: "noul",
+    instructions:
+      "Does `brief` already collapse architectural ambiguity by naming exact target file paths, the concrete behavior or interfaces to implement, and verification steps?",
+    criteria: {
+      true: "The brief lists the exact files to change, the concrete behavior or interfaces to build, and how to verify it, so a worker only has to execute.",
+      false: "The brief asks for open-ended root-cause investigation, architecture design from scratch, or fuzzy cross-package exploration.",
+    },
+  },
 }
 
 export function workerRouterState(input: WorkerModelInput): Record<string, unknown> {
@@ -89,8 +105,10 @@ export function workerRouterState(input: WorkerModelInput): Record<string, unkno
 const isWorkerScope = (s: string): s is WorkerScope =>
   s === "single_spot" || s === "focused_feature" || s === "cross_module"
 
-/** Turn count at which repeated worker retries escalate to Opus (turns 2-4 keep the session's warm cache). */
-export const WORKER_RETRY_ESCALATION_TURN = 5
+/** Turn count at which repeated worker retries escalate to Opus (turns 1-3 stay eligible for Sonnet). */
+export const WORKER_RETRY_ESCALATION_TURN = 4
+/** `spec_explicit` bar for keeping a cross-module task on Sonnet: the planner's brief already names files and contracts. */
+export const SPEC_EXPLICIT_SONNET_MIN = 0.7
 /** Confidence bar for `cross_module` Opus routing (keeps routine multi-file PRs on Sonnet). */
 export const CROSS_MODULE_OPUS_MIN_PROB = 0.75
 
@@ -116,8 +134,10 @@ export function pickWorkerModelFromOutcome(out: JevOutcome, input: WorkerModelIn
       : 0
   const securityOrAuth = secAns?.type === "noul" ? secAns.noul : null
   const moneyOrData = moneyAns?.type === "noul" ? moneyAns.noul : null
+  const specAns = out.answers.spec_explicit
+  const specExplicit = specAns?.type === "noul" ? specAns.noul : null
 
-  const judgments = { scope, scopeProb, securityOrAuth, moneyOrData }
+  const judgments = { scope, scopeProb, securityOrAuth, moneyOrData, specExplicit }
 
   if (securityOrAuth !== null && securityOrAuth >= 0.65) {
     return { model: "claude-opus-5-5", reason: "security_or_auth", source: "jev", jevMs: out.latencyMs, judgments }
@@ -126,6 +146,9 @@ export function pickWorkerModelFromOutcome(out: JevOutcome, input: WorkerModelIn
     return { model: "claude-opus-5-5", reason: "money_or_data_integrity", source: "jev", jevMs: out.latencyMs, judgments }
   }
   if (scope === "cross_module" && scopeProb >= CROSS_MODULE_OPUS_MIN_PROB) {
+    if (specExplicit !== null && specExplicit >= SPEC_EXPLICIT_SONNET_MIN) {
+      return { model: "claude-sonnet-5-5", reason: "spec_explicit", source: "jev", jevMs: out.latencyMs, judgments }
+    }
     return { model: "claude-opus-5-5", reason: "cross_module", source: "jev", jevMs: out.latencyMs, judgments }
   }
   if (scope === "single_spot") {
@@ -154,17 +177,14 @@ export async function decideWorkerModel(
   if (turnCount >= WORKER_RETRY_ESCALATION_TURN) {
     return { model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 }
   }
-  if (turnCount >= 2 && input.existingModel && input.existingModel.toLowerCase() !== "auto") {
-    return {
-      model: input.existingModel as "claude-opus-5-5" | "claude-sonnet-5-5",
-      reason: "session_keep",
-      source: "code",
-      jevMs: 0,
-    }
+  if (turnCount >= 2 && input.priorReason && OPUS_FLOOR_REASONS.has(input.priorReason)) {
+    return { model: "claude-opus-5-5", reason: input.priorReason as "security_or_auth" | "money_or_data_integrity", source: "code", jevMs: 0 }
   }
   const enabled = opts.enabled ?? (process.env.NODE_ENV !== "test" && process.env.COMPANION_JEV_MODEL_ROUTER?.trim() !== "0")
   if (!enabled) {
-    return { model: "claude-sonnet-5-5", reason: "fallback", source: "code", jevMs: 0 }
+    return turnCount >= 2
+      ? { model: "claude-sonnet-5-5", reason: "followup_sonnet", source: "code", jevMs: 0 }
+      : { model: "claude-sonnet-5-5", reason: "fallback", source: "code", jevMs: 0 }
   }
   const out = await systemOne(workerRouterState(input), WORKER_QUESTIONS, {
     timeoutMs: JEV_ROUTER_TIMEOUT_MS,

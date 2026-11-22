@@ -28,17 +28,35 @@ function sameRealPath(a: string, b: string): boolean {
   try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
 }
 
+/** A branch a fresh task may be pointed at (a PR's head): `dispatch/*` only, so never main, master or someone's own branch. */
+export const TARGET_BRANCH_RE = /^dispatch\/[\w.-]+$/
+
+/** A dispatch's target: none, or a `dispatch/*` branch with the jaubut/<repo> PR it heads (bound as the task's PR). */
+export function parseTarget(
+  repo: string, branch?: string, prUrl?: string,
+): { targetBranch?: string; targetPrUrl: string | null } | { error: string } {
+  const targetBranch = branch?.trim() || undefined
+  if (!targetBranch) return { targetPrUrl: null }
+  if (!TARGET_BRANCH_RE.test(targetBranch)) return { error: "invalid_target_branch" }
+  const url = prUrl?.trim() ?? ""
+  const m = /^https:\/\/github\.com\/jaubut\/([A-Za-z0-9._-]+)\/pull\/\d+$/.exec(url)
+  return m?.[1] === repo ? { targetBranch, targetPrUrl: url } : { error: "invalid_target_pr" }
+}
+
 /** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's (the task's own
  *  on whatever branch it is checked out; that branch is returned), else created on `prevBranch` (the branch a closed
- *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. */
+ *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. `targetBranch` (a
+ *  neutral resolver on an existing PR's head): a new worktree on dispatch/<taskId> at that branch's origin tip, never an existing one. */
 export async function ensureWorktree(
   sh: ShFn, home: string, others: Iterable<{ taskId: string; repo: string; worktree: string }>,
-  repoDir: string, repo: string, taskId: string, ownedByTask: boolean, prevBranch?: string,
+  repoDir: string, repo: string, taskId: string, ownedByTask: boolean, prevBranch?: string, targetBranch?: string,
 ): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
   clearStaleGitConfigLock(repoDir)
   const wtRoot = join(home, "apps", "wt", repo)
   const worktree = join(wtRoot, taskId)
   let branch = `dispatch/${taskId}`
+  if (targetBranch !== undefined && !TARGET_BRANCH_RE.test(targetBranch)) return { ok: false, error: "invalid_target_branch" }
+  if (targetBranch && existsSync(worktree)) return { ok: false, error: "target worktree already exists" }
   for (const other of others) {
     if ((other.taskId !== taskId || other.repo !== repo) && other.worktree.toLowerCase() === worktree.toLowerCase()) {
       return { ok: false, error: `worktree collision with ${other.repo}/${other.taskId}` }
@@ -68,6 +86,12 @@ export async function ensureWorktree(
   const remote = async (b: string) => (await sh("git", ["-C", repoDir, "fetch", "-q", "origin", `+refs/heads/${b}:refs/remotes/origin/${b}`], { cwd: repoDir, timeoutMs: 30_000 })).ok
   // The worker had switched or stacked before the worktree closed: resume on that branch, not a stale dispatch/<taskId>.
   // Never the base branch (checked out in repoDir; the worker's commits there are on origin already).
+  if (targetBranch) {
+    if (!(await remote(targetBranch))) return { ok: false, error: `target branch not on origin: ${targetBranch}` }
+    // Its own dispatch/<taskId> at origin's tip: the PR's branch itself may be checked out in its builder's open worktree.
+    const add = await sh("git", ["-C", repoDir, "worktree", "add", "-q", "-B", branch, worktree, `origin/${targetBranch}`], { cwd: repoDir, timeoutMs: 30_000 })
+    return add.ok ? { ok: true, worktree, branch } : { ok: false, error: `worktree add failed: ${(add.err || add.out).trim().slice(0, 200)}` }
+  }
   const candidates = prevBranch && prevBranch !== branch && prevBranch !== baseBranch ? [prevBranch, branch] : [branch]
   let hasBranch = false; let pushed = false
   for (const b of candidates) {

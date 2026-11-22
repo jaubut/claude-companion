@@ -51,6 +51,10 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   receiptDue?: boolean
   /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
   ownerPid?: number | null
+  /** The router's reason for the last routed turn (lib/jev-model-router.ts): a security or money task keeps Opus on follow-ups. */
+  routeReason?: string | null
+  /** Set on a task started on an existing PR's head (the conflict resolver): its follow-ups keep that PR's footer. */
+  targetBranch?: string | null
 }
 
 /** Best effort: a failed write keeps the previous file. */

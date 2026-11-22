@@ -12,6 +12,7 @@ function workerJev(
   scopeProb: number,
   secNoul: number,
   moneyNoul: number,
+  specNoul?: number,
 ): JevOutcome {
   return {
     ok: true,
@@ -26,6 +27,7 @@ function workerJev(
       },
       security_or_auth: { type: "noul", noul: secNoul },
       money_or_data_integrity: { type: "noul", noul: moneyNoul },
+      ...(specNoul === undefined ? {} : { spec_explicit: { type: "noul" as const, noul: specNoul } }),
     },
   }
 }
@@ -113,37 +115,85 @@ describe("Jev worker model router", () => {
     })
   })
 
-  test("preserves existing model on turns 2-4 (warm cache) and escalates at turn 5+", async () => {
+  test("routes cross_module by spec_explicit: explicit spec -> Sonnet, vague or security/auth -> Opus", () => {
+    const input = { repo: "claude-companion", title: "Wire resolver", prompt: "Edit a.ts, b.ts, c.ts; verify with bun test." }
+    const explicit = pickWorkerModelFromOutcome(workerJev("cross_module", 0.9, 0.1, 0.1, 0.85), input)
+    expect(explicit).toMatchObject({ model: "claude-sonnet-5-5", reason: "spec_explicit", source: "jev" })
+    expect(explicit.judgments?.specExplicit).toBe(0.85)
+
+    const vague = pickWorkerModelFromOutcome(workerJev("cross_module", 0.9, 0.1, 0.1, 0.3), input)
+    expect(vague).toMatchObject({ model: "claude-opus-5-5", reason: "cross_module" })
+
+    const missing = pickWorkerModelFromOutcome(workerJev("cross_module", 0.9, 0.1, 0.1), input)
+    expect(missing).toMatchObject({ model: "claude-opus-5-5", reason: "cross_module" })
+    expect(missing.judgments?.specExplicit).toBeNull()
+
+    const sec = pickWorkerModelFromOutcome(workerJev("cross_module", 0.9, 0.9, 0.1, 0.95), input)
+    expect(sec).toMatchObject({ model: "claude-opus-5-5", reason: "security_or_auth" })
+  })
+
+  test("follow-up turns 2-3 re-route via Jev (Sonnet for localized fixes even after an Opus turn 1); pinned stays; turn 4+ escalates", async () => {
     let called = 0
-    const mockFetch = (async () => {
+    const failing = (async () => {
       called++
       return new Response("{}", { status: 500 })
     }) as unknown as typeof fetch
+    const base = { repo: "r", title: "t", prompt: "Fix the review comment in a.ts" }
 
-    const explicit = await decideWorkerModel(
-      { repo: "r", title: "t", prompt: "p", explicitModel: "claude-opus-5-5" },
-      { enabled: true, jev: { key: "k", fetch: mockFetch } },
+    const pinned = await decideWorkerModel(
+      { ...base, turnCount: 2, explicitModel: "claude-opus-5-5", existingModel: "claude-opus-5-5" },
+      { enabled: true, jev: { key: "k", fetch: failing } },
     )
-    expect(explicit).toEqual({ model: "claude-opus-5-5", reason: "explicit", source: "code", jevMs: 0 })
-
-    const keepTurn2 = await decideWorkerModel(
-      { repo: "r", title: "t", prompt: "p", turnCount: 2, existingModel: "claude-sonnet-5-5" },
-      { enabled: true, jev: { key: "k", fetch: mockFetch } },
-    )
-    expect(keepTurn2).toEqual({ model: "claude-sonnet-5-5", reason: "session_keep", source: "code", jevMs: 0 })
-
-    const keepTurn3 = await decideWorkerModel(
-      { repo: "r", title: "t", prompt: "p", turnCount: 3, existingModel: "claude-sonnet-5-5" },
-      { enabled: true, jev: { key: "k", fetch: mockFetch } },
-    )
-    expect(keepTurn3).toEqual({ model: "claude-sonnet-5-5", reason: "session_keep", source: "code", jevMs: 0 })
-
-    const retryTurn5 = await decideWorkerModel(
-      { repo: "r", title: "t", prompt: "p", turnCount: 5, existingModel: "claude-sonnet-5-5" },
-      { enabled: true, jev: { key: "k", fetch: mockFetch } },
-    )
-    expect(retryTurn5).toEqual({ model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 })
+    expect(pinned).toEqual({ model: "claude-opus-5-5", reason: "explicit", source: "code", jevMs: 0 })
     expect(called).toBe(0)
+
+    // Jev unreachable (500): turn 2 and 3 fall back to Sonnet, never lock to the Opus of turn 1.
+    for (const turnCount of [2, 3]) {
+      const d = await decideWorkerModel(
+        { ...base, turnCount, existingModel: "claude-opus-5-5" },
+        { enabled: true, jev: { key: "k", fetch: failing } },
+      )
+      expect(d.model).toBe("claude-sonnet-5-5")
+      expect(d.reason).not.toBe("session_keep")
+    }
+    expect(called).toBe(2)
+
+    const off = await decideWorkerModel({ ...base, turnCount: 2, existingModel: "claude-opus-5-5" }, { enabled: false })
+    expect(off).toEqual({ model: "claude-sonnet-5-5", reason: "followup_sonnet", source: "code", jevMs: 0 })
+
+    const retry4 = await decideWorkerModel(
+      { ...base, turnCount: 4, existingModel: "claude-sonnet-5-5" },
+      { enabled: true, jev: { key: "k", fetch: failing } },
+    )
+    expect(retry4).toEqual({ model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 })
+    expect(called).toBe(2)
+  })
+
+  test("a security or money task keeps Opus on turns 2-3, router on or off; other prior reasons re-route", async () => {
+    const base = { repo: "r", title: "t", prompt: "Fix the review comment in a.ts", existingModel: "claude-opus-5-5" }
+    for (const priorReason of ["security_or_auth", "money_or_data_integrity"] as const) {
+      for (const turnCount of [2, 3]) {
+        for (const enabled of [true, false]) {
+          const d = await decideWorkerModel({ ...base, turnCount, priorReason }, { enabled, jev: { key: "k", fetch: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch } })
+          expect(d).toEqual({ model: "claude-opus-5-5", reason: priorReason, source: "code", jevMs: 0 })
+        }
+      }
+    }
+    expect((await decideWorkerModel({ ...base, turnCount: 2, priorReason: "cross_module" }, { enabled: false })).model).toBe("claude-sonnet-5-5")
+    expect((await decideWorkerModel({ ...base, turnCount: 1, priorReason: "security_or_auth" }, { enabled: false })).model).toBe("claude-sonnet-5-5")
+  })
+
+  test("turn 2-3 localized fix routes to Sonnet via the truth table, security_or_auth still Opus", () => {
+    const input = { repo: "r", title: "t", prompt: "Fix review comment", turnCount: 2, existingModel: "claude-opus-5-5" }
+    expect(pickWorkerModelFromOutcome(workerJev("single_spot", 0.9, 0.05, 0.02), input)).toMatchObject({
+      model: "claude-sonnet-5-5", reason: "single_spot",
+    })
+    expect(pickWorkerModelFromOutcome(workerJev("single_spot", 0.9, 0.9, 0.02), input)).toMatchObject({
+      model: "claude-opus-5-5", reason: "security_or_auth",
+    })
+    expect(pickWorkerModelFromOutcome(workerJev("single_spot", 0.9, 0.05, 0.02), { ...input, turnCount: 4 })).toMatchObject({
+      model: "claude-opus-5-5", reason: "retry_escalation",
+    })
   })
 
   test("falls back cleanly to claude-sonnet-5-5 when Jev is unreachable", () => {

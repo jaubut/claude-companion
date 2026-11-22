@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-20",
+  "generatedAt": "2026-11-22",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -2013,6 +2013,26 @@
           "externals": []
         },
         {
+          "path": "lib/conflict-resolver.ts",
+          "lines": 42,
+          "kind": "lib",
+          "exports": [
+            "CONFLICT_RESOLVER_MODEL",
+            "ConflictResolverPr",
+            "conflictTaskId",
+            "buildConflictResolverPrompt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/copy-jobs.ts",
           "lines": 306,
           "kind": "lib",
@@ -2584,6 +2604,28 @@
           "externals": []
         },
         {
+          "path": "lib/field-guide.ts",
+          "lines": 39,
+          "kind": "lib",
+          "exports": [
+            "FIELD_GUIDE_MAX_LINES",
+            "FIELD_GUIDE_MAX_CHARS",
+            "readFieldGuide",
+            "composeWorkerPrompt"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/figcraft.ts",
           "lines": 227,
           "kind": "lib",
@@ -3056,7 +3098,7 @@
         },
         {
           "path": "lib/jev-model-router.ts",
-          "lines": 249,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "JEV_ROUTER_TIMEOUT_MS",
@@ -3067,6 +3109,7 @@
             "WORKER_QUESTIONS",
             "workerRouterState",
             "WORKER_RETRY_ESCALATION_TURN",
+            "SPEC_EXPLICIT_SONNET_MIN",
             "CROSS_MODULE_OPUS_MIN_PROB",
             "pickWorkerModelFromOutcome",
             "decideWorkerModel",
@@ -3075,7 +3118,9 @@
             "pickBrainTurnModelFromOutcome",
             "decideBrainTurnModel"
           ],
-          "state": [],
+          "state": [
+            "OPUS_FLOOR_REASONS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -7034,7 +7079,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 540,
+          "lines": 548,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7047,6 +7092,7 @@
             "WORKER_SHIP_RULE",
             "WORKER_PLAN_RULE",
             "WORKER_FOOTER",
+            "workerFooter",
             "DEFAULT_REAP_GRACE_MS",
             "WorkerTaskStatus",
             "workerAgentStatus",
@@ -7248,12 +7294,11 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 604,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
             "ClaimStatus",
-            "SupervisedTaskSnapshot",
             "WorkerSupervisorDeps",
             "createWorkerSupervisor",
             "WorkerSupervisor"
@@ -7265,6 +7310,7 @@
           "apiCalls": [],
           "imports": [
             "lib/builder-jobs.ts",
+            "lib/field-guide.ts",
             "lib/git-config-lock.ts",
             "lib/jev-model-router.ts",
             "lib/live-repo.ts",
@@ -7274,6 +7320,7 @@
             "lib/worker-receipt-outbox.ts",
             "lib/worker-task-store.ts",
             "lib/worker-turns.ts",
+            "lib/worker-task.ts",
             "lib/worker-turn-watch.ts",
             "lib/worker-worktree.ts"
           ],
@@ -7283,7 +7330,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 120,
+          "lines": 124,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -7311,6 +7358,28 @@
           "imports": [
             "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/worker-task.ts",
+          "lines": 28,
+          "kind": "lib",
+          "exports": [
+            "SupervisedTaskSnapshot",
+            "InternalTask",
+            "toSnapshot"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-invocation.ts",
+            "lib/worker-task-store.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7364,11 +7433,13 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 129,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",
             "cloneRepo",
+            "TARGET_BRANCH_RE",
+            "parseTarget",
             "ensureWorktree",
             "worktreeDirtyPaths",
             "closeTaskWorktree",
@@ -7742,7 +7813,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 405,
+          "lines": 414,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7769,6 +7840,7 @@
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain-lead.ts",
@@ -9122,6 +9194,38 @@
           "apiCalls": [],
           "imports": [
             "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "wiring/brain-pr-resolve-conflicts.ts",
+          "lines": 130,
+          "kind": "lib",
+          "exports": [
+            "PR_RESOLVE_ACTION",
+            "resolveAgentPrConflicts"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/conflict-resolver.ts",
+            "lib/log.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
+            "lib/turso.ts",
+            "lib/worker-supervisor.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-park.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -11552,6 +11656,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-stuck-events.ts",
@@ -11607,6 +11712,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts"
@@ -12284,6 +12390,7 @@
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-park.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -12476,6 +12583,7 @@
             "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -12496,7 +12604,8 @@
           "callers": [
             "lib/brain-trace.ts",
             "lib/builder-jobs.ts",
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
           ]
         },
         "DispatchTask": {
@@ -12533,6 +12642,7 @@
             "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-restore.ts",
             "wiring/brain-task-cancel.ts",
@@ -13060,6 +13170,7 @@
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-supervisor.ts",
+            "lib/worker-task.ts",
             "lib/worker-turn-watch.ts",
             "wiring/brain-headless.ts"
           ]
@@ -13502,6 +13613,12 @@
             "lib/shell-sessions.ts"
           ]
         },
+        "workerFooter": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/field-guide.ts"
+          ]
+        },
         "Catalog": {
           "module": "lib/project-catalog.ts",
           "callers": [
@@ -13608,7 +13725,8 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/github-webhook.ts",
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
           ]
         },
         "TASK_ID_RE": {
@@ -14003,6 +14121,7 @@
             "lib/worker-pr-link.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
@@ -16453,17 +16572,6 @@
             "lib/worker-pr-link.ts"
           ]
         },
-        "SupervisedTaskSnapshot": {
-          "module": "lib/worker-supervisor.ts",
-          "callers": [
-            "lib/worker-progress-trace.ts",
-            "lib/worker-receipt-outbox.ts",
-            "lib/worker-session.ts",
-            "lib/worker-task-store.ts",
-            "wiring/github-webhook.ts",
-            "wiring/worker-mcp.ts"
-          ]
-        },
         "TraceRow": {
           "module": "lib/brain-trace.ts",
           "callers": [
@@ -16522,6 +16630,7 @@
           "callers": [
             "lib/worker-receipt-outbox.ts",
             "lib/worker-supervisor.ts",
+            "lib/worker-task.ts",
             "lib/worker-turn-watch.ts",
             "lib/worker-turns.ts"
           ]
@@ -16601,13 +16710,15 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "lib/worker-task-store.ts",
+            "lib/worker-task.ts",
             "lib/worker-turns.ts"
           ]
         },
         "PlanProgress": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
           ]
         },
         "StreamJsonEvent": {
@@ -16619,7 +16730,8 @@
         "progressOf": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
           ]
         },
         "applyProgressEvent": {
@@ -16676,6 +16788,12 @@
             "wiring/resolver.ts"
           ]
         },
+        "SupervisedTaskSnapshot": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "workerStateFile": {
           "module": "lib/worker-task-store.ts",
           "callers": [
@@ -16683,11 +16801,10 @@
             "wiring/worker-mcp.ts"
           ]
         },
-        "PersistedTaskRecord": {
-          "module": "lib/worker-task-store.ts",
+        "InternalTask": {
+          "module": "lib/worker-task.ts",
           "callers": [
-            "lib/worker-supervisor.ts",
-            "lib/worker-turns.ts"
+            "lib/worker-supervisor.ts"
           ]
         },
         "defaultResolveRepoDir": {
@@ -16695,6 +16812,14 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "wiring/brain-lead.ts"
+          ]
+        },
+        "PersistedTaskRecord": {
+          "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts",
+            "lib/worker-turns.ts"
           ]
         },
         "createReceiptOutbox": {
@@ -16705,6 +16830,12 @@
         },
         "workerReceiptFile": {
           "module": "lib/worker-task-store.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "toSnapshot": {
+          "module": "lib/worker-task.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -16733,6 +16864,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "TARGET_BRANCH_RE": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "refreshResult": {
           "module": "lib/worker-turns.ts",
           "callers": [
@@ -16744,6 +16881,12 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "lib/worker-worktree.ts"
+          ]
+        },
+        "parseTarget": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
           ]
         },
         "cloneRepo": {
@@ -16772,6 +16915,12 @@
         },
         "closeTurn": {
           "module": "lib/worker-turns.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "composeWorkerPrompt": {
+          "module": "lib/field-guide.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -17413,6 +17562,12 @@
             "routes/brain.ts"
           ]
         },
+        "resolveAgentPrConflicts": {
+          "module": "wiring/brain-pr-resolve-conflicts.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "cancelAgentTask": {
           "module": "wiring/brain-task-cancel.ts",
           "callers": [
@@ -17477,6 +17632,7 @@
           "module": "wiring/brain-pr-close.ts",
           "callers": [
             "routes/brain.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts"
           ]
@@ -18131,6 +18287,7 @@
             "wiring/brain-handoff.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -18302,6 +18459,7 @@
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -18333,6 +18491,7 @@
             "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
@@ -19035,6 +19194,7 @@
             "wiring/auto-compact.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/github-webhook.ts",
@@ -19423,6 +19583,7 @@
           "module": "wiring/brain-pr-park.ts",
           "callers": [
             "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts"
           ]
         },
@@ -19440,9 +19601,35 @@
             "wiring/triage.ts"
           ]
         },
+        "DispatchTaskInput": {
+          "module": "lib/worker-supervisor.ts",
+          "callers": [
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/github-webhook.ts"
+          ]
+        },
+        "conflictTaskId": {
+          "module": "lib/conflict-resolver.ts",
+          "callers": [
+            "wiring/brain-pr-resolve-conflicts.ts"
+          ]
+        },
+        "CONFLICT_RESOLVER_MODEL": {
+          "module": "lib/conflict-resolver.ts",
+          "callers": [
+            "wiring/brain-pr-resolve-conflicts.ts"
+          ]
+        },
+        "buildConflictResolverPrompt": {
+          "module": "lib/conflict-resolver.ts",
+          "callers": [
+            "wiring/brain-pr-resolve-conflicts.ts"
+          ]
+        },
         "hasRecentUserMergeApproval": {
           "module": "wiring/brain-pr-merge.ts",
           "callers": [
+            "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts"
           ]
         },
@@ -20347,12 +20534,6 @@
         },
         "parseGithubWebhookEvent": {
           "module": "lib/github-webhook.ts",
-          "callers": [
-            "wiring/github-webhook.ts"
-          ]
-        },
-        "DispatchTaskInput": {
-          "module": "lib/worker-supervisor.ts",
           "callers": [
             "wiring/github-webhook.ts"
           ]

@@ -8,7 +8,7 @@
 // see adapters/featuremap.ts; feature → routes → API → files index, see features.ts).
 // --check: exit 1 if the committed map is stale (JSON differs, timestamp aside) or FEATUREMAP.md /
 //          featuremap.json is (or is a generated one whose target was removed — a regenerate deletes it).
-// --lint:  exit 1 on import-rule violations or a vendored copy that differs from its `mirrors[]` dir;
+// --lint:  exit 1 on import-rule violations, a vendored copy that differs from its `mirrors[]` dir, or a FIELD_GUIDE.md over 100 lines / a symlink;
 //          file cap findings (line counts, growth vs the baseline map) only warn (see lint.ts).
 //          Both may be combined; neither writes files.
 // --fleet: aggregate every roster repo's COMMITTED map by external package into
@@ -26,7 +26,7 @@ import { scanNuxt } from "./adapters/nuxt"
 import { scanAstro } from "./adapters/astro"
 import { resolveRoot } from "./adapters/shared"
 import { refRegressions, renderMarkdown, type RefTarget } from "./render"
-import { lint, formatIssues, mirrorDrift } from "./lint"
+import { lint, formatIssues, mirrorDrift, fieldGuideLint } from "./lint"
 import { scanShellHooks } from "./adapters/shell-hooks"
 import { scanFeatureMap, renderFeatureMap, stripGenerated, isGeneratedFeatureMap } from "./adapters/featuremap"
 import { buildFeatureIndex, renderFeatureIndex, stripFeatureIndex, isGeneratedFeatureIndex } from "./features"
@@ -161,7 +161,7 @@ if (doLint) {
     const n = [...fm.shell, ...fm.pages].filter((f) => !f.selector).length
     return n ? [{ target: fm.target, module: "FEATUREMAP.md", rule: "featuremap selector", detail: `${n} features without a data-testid/aria-label selector`, blocking: false }] : []
   })
-  const issues = [...lint(map, cfg, baseline), ...mirrorDrift(cfg, repo), ...noSelector]
+  const issues = [...lint(map, cfg, baseline), ...mirrorDrift(cfg, repo), ...fieldGuideLint(repo), ...noSelector]
   const blocking = issues.filter((i) => i.blocking)
   if (issues.length) console[blocking.length ? "error" : "log"](`archmap: ${blocking.length} blocking, ${issues.length - blocking.length} warnings\n${formatIssues(issues)}`)
   else if (!quiet) console.log("archmap: lint clean")
