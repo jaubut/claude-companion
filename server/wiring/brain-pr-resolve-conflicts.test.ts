@@ -14,7 +14,7 @@ import type { DispatchTaskInput } from "../lib/worker-supervisor"
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-prresolve-")), "test.db")
 const { resolveAgentPrConflicts, PR_RESOLVE_ACTION } = await import("./brain-pr-resolve-conflicts")
 
-const URL = "https://github.com/o/r/pull/7"
+const URL = "https://github.com/jaubut/r/pull/7"
 const HEAD = "abcdef1234567890".repeat(2).slice(0, 40)
 const TASK_ID = `conflict-r-pr7-${HEAD.slice(0, 8)}`
 
@@ -44,8 +44,8 @@ function world(pr: Record<string, unknown>, dispatch?: (i: DispatchTaskInput) =>
   }
 }
 
-const input = { repo: "o/r", pr: 7, reason: "main moved, CI cannot merge" }
-const open = (over: Record<string, unknown> = {}) => ({ state: "OPEN", headRefName: "dispatch/abcd1234", baseRefName: "main", headRefOid: HEAD, mergeable: "CONFLICTING", labels: [], ...over })
+const input = { repo: "jaubut/r", pr: 7, reason: "main moved, CI cannot merge" }
+const open = (over: Record<string, unknown> = {}) => ({ state: "OPEN", headRefName: "dispatch/abcd1234", baseRefName: "main", headRefOid: HEAD, mergeable: "CONFLICTING", labels: [], isCrossRepository: false, ...over })
 const activity = (db: Database) => db.query("SELECT agent_slug, action, target_id, meta FROM agent_activity WHERE action = ?").all(PR_RESOLVE_ACTION) as Row[]
 const untouched = (w: ReturnType<typeof world>) => {
   expect(w.dispatched).toHaveLength(0)
@@ -60,7 +60,7 @@ describe("bin/pr-resolve-conflicts gate", () => {
     expect(out).toEqual({ status: 200, body: { ok: true, dispatched: true, taskId: TASK_ID, url: URL, branch: "dispatch/abcd1234", head: HEAD } })
     expect(w.dispatched).toHaveLength(1)
     const d = w.dispatched[0]!
-    expect(d).toMatchObject({ taskId: TASK_ID, repo: "r", family: "claude", model: "claude-sonnet-5-5", targetBranch: "dispatch/abcd1234" })
+    expect(d).toMatchObject({ taskId: TASK_ID, repo: "r", family: "claude", model: "claude-sonnet-5-5", targetBranch: "dispatch/abcd1234", targetPrUrl: URL })
     expect(d.claim).toBeUndefined()
     expect(d.prompt).toContain("git merge --no-ff --no-commit origin/main")
     expect(d.prompt).toContain("git push origin HEAD:refs/heads/dispatch/abcd1234")
@@ -69,10 +69,40 @@ describe("bin/pr-resolve-conflicts gate", () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.agent_slug).toBe("brain")
     expect(rows[0]!.target_id).toBe(URL)
-    expect(JSON.parse(String(rows[0]!.meta))).toMatchObject({ repo: "o/r", pr: 7, branch: "dispatch/abcd1234", head: HEAD, taskId: TASK_ID })
+    expect(JSON.parse(String(rows[0]!.meta))).toMatchObject({ repo: "jaubut/r", pr: 7, branch: "dispatch/abcd1234", head: HEAD, taskId: TASK_ID })
     expect(w.events).toHaveLength(1)
-    expect(w.events[0]).toContain("o/r#7")
+    expect(w.events[0]).toContain("jaubut/r#7")
     expect(w.events[0]).toContain(TASK_ID)
+  })
+
+  test("403 not_own_repo before any gh call, 403 cross_repository for a fork, 403 unsafe_base for a shell-ish base", async () => {
+    const other = world(open())
+    expect(await resolveAgentPrConflicts({ ...input, repo: "other/r" }, other.deps)).toEqual({ status: 403, body: { ok: false, error: "not_own_repo" } })
+    expect(other.calls).toHaveLength(0)
+    untouched(other)
+    for (const fork of [true, undefined]) {
+      const w = world(open({ isCrossRepository: fork }))
+      expect(await resolveAgentPrConflicts(input, w.deps)).toEqual({ status: 403, body: { ok: false, error: "cross_repository" } })
+      untouched(w)
+    }
+    for (const base of ["main$(id)", "a|b", "main..x", "x y", ""]) {
+      const w = world(open({ baseRefName: base }))
+      expect(await resolveAgentPrConflicts(input, w.deps)).toMatchObject({ status: 403, body: { ok: false, error: "unsafe_base" } })
+      untouched(w)
+    }
+  })
+
+  test("409 head_moved when the head sha changes during the UNKNOWN retry", async () => {
+    const w = world(open({ mergeable: "UNKNOWN" }))
+    const out = await resolveAgentPrConflicts(input, { ...w.deps, sleep: async () => { w.state.headRefOid = "f".repeat(40); w.state.mergeable = "CONFLICTING" } })
+    expect(out).toEqual({ status: 409, body: { ok: false, error: "head_moved", branch: "dispatch/abcd1234" } })
+    untouched(w)
+  })
+
+  test("409 already_attempted when a resolver for this head already ran", async () => {
+    const w = world(open(), async () => ({ ok: false, status: 409, error: "target_task_exists" }))
+    expect(await resolveAgentPrConflicts(input, w.deps)).toEqual({ status: 409, body: { ok: false, error: "already_attempted", taskId: TASK_ID } })
+    expect(w.events).toHaveLength(0)
   })
 
   test("task id is conflict-<repo>-pr<n>-<head8>, valid for the supervisor", () => {

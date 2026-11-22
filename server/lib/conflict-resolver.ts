@@ -21,7 +21,7 @@ export function buildConflictResolverPrompt(p: ConflictResolverPr): string {
     `You are a neutral third-party merge-conflict resolver for ${p.repo}#${p.pr} ("${p.title.slice(0, 120)}", ${p.url}).`,
     `You did not write this PR and have no transcript of its author: judge both sides only by what the code and the commit logs say.`,
     `Why you were called: ${p.reason}`,
-    `Your worktree is already on \`${p.headRefName}\` at ${p.headRefOid.slice(0, 12)}. The PR already exists: never open a second one.`,
+    `Your worktree is on a fresh local branch at the tip of \`origin/${p.headRefName}\` (${p.headRefOid.slice(0, 12)}), the PR's head. The PR already exists: never open a second one.`,
     "",
     "Steps:",
     `1. \`git fetch origin ${p.baseRefName} ${p.headRefName}\`. Inspect both sides: \`git log --oneline ${base}..HEAD\` (what the PR adds) and \`git log --oneline HEAD..${base}\` (what the base gained).`,
@@ -36,6 +36,6 @@ export function buildConflictResolverPrompt(p: ConflictResolverPr): string {
     `6. Push exactly \`git push origin HEAD:refs/heads/${p.headRefName}\`. Never force-push, never push another branch, never merge the PR.`,
     "",
     "If a conflict cannot be resolved without a product decision, or checks fail for a reason outside the merge, do not push: abort (`git merge --abort`) and report precisely what blocks.",
-    "Final report: the files you resolved by class, the checks you ran with their result, and the new head sha.",
+    `Final report: the PR link (${p.url}), the files you resolved by class, the checks you ran with their result, and the new head sha.`,
   ].join("\n")
 }

@@ -30,6 +30,14 @@ export const WORKER_PLAN_RULE = "Plan rule: before your first change, write your
   "write_todos or your plan tool), and update it as you go: one step in progress at a time, each marked completed as soon as it is done. " +
   "Jeremie's phone shows that list as this task's progress bar."
 export const WORKER_FOOTER = `${WORKER_PLAN_RULE}\n\n${WORKER_SHIP_RULE}\n\n${WORKER_TURN_RULE}`
+/** The footer for a task on an existing PR's head (the conflict resolver): it updates that PR, never opens one. */
+export function workerFooter(targetBranch?: string | null): string {
+  if (!targetBranch) return WORKER_FOOTER
+  const ship = "Ship rule: this task updates an existing pull request. Commit on your current branch and push it only with " +
+    `\`git push origin HEAD:refs/heads/${targetBranch}\` (never force, never another branch). Never open a pull request, never merge one. ` +
+    "Never end with staged or uncommitted changes: commit and push, or abort and report what blocks."
+  return `${WORKER_PLAN_RULE}\n\n${ship}\n\n${WORKER_TURN_RULE}`
+}
 /** After a turn's `result` event, a worker still alive this long is idle on background work: it gets SIGTERM, the turn stays completed. */
 export const DEFAULT_REAP_GRACE_MS = 10_000
 

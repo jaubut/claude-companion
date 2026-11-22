@@ -17,15 +17,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/worker-supervisor.ts` | 590 | lib | 5 |  |
+| `lib/worker-supervisor.ts` | 599 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
+| `lib/worker-invocation.ts` | 548 | lib | 40 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
-| `lib/worker-invocation.ts` | 540 | lib | 39 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
@@ -89,12 +89,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-chat.ts` | 272 | lib | 14 |  |
 | `lib/resolver-engine.ts` | 270 | lib | 9 |  |
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
+| `lib/jev-model-router.ts` | 269 | lib | 16 | state: OPUS_FLOOR_REASONS: Set |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `wiring/brain-pr-merge.ts` | 268 | lib | 4 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 262 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
-| `lib/jev-model-router.ts` | 261 | lib | 16 |  |
 | `lib/orphan-question.ts` | 259 | lib | 13 | state: raised: Map |
 | `lib/command-offpane-launch.ts` | 255 | lib | 19 | state: versionMemo: Map |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
@@ -165,6 +165,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/merge-gate.ts` | 153 | lib | 7 |  |
+| `lib/worker-worktree.ts` | 153 | lib | 8 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/records.ts` | 150 | lib | 5 |  |
@@ -176,7 +177,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/hook-common.ts` | 145 | lib | 10 |  |
 | `lib/session-titles.ts` | 145 | lib | 10 | state: db: Database |
 | `lib/jev.ts` | 143 | lib | 16 |  |
-| `lib/worker-worktree.ts` | 142 | lib | 7 |  |
 | `lib/board-room.ts` | 141 | lib | 10 | state: let room, let db, let importChain, DOCUMENT_TYPES: Set |
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
@@ -189,12 +189,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/board.ts` | 132 | route-host | 5 | state: ALLOWED_ORIGINS: Set · routes: 2 |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/transcript-backfill.ts` | 131 | lib | 6 |  |
+| `wiring/brain-pr-resolve-conflicts.ts` | 130 | lib | 2 |  |
 | `lib/records-expiry.ts` | 128 | lib | 8 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
+| `lib/worker-task-store.ts` | 124 | lib | 16 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
 | `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `lib/note-media.ts` | 120 | lib | 4 |  |
-| `lib/worker-task-store.ts` | 120 | lib | 16 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `routes/dialogs.ts` | 119 | route-host | 1 | routes: 2 |
 | `lib/repo-view.ts` | 118 | lib | 12 | state: BLOCKED: Set |
@@ -202,7 +203,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-pr-update-branch.ts` | 118 | lib | 2 |  |
 | `lib/model-control.ts` | 116 | lib | 9 |  |
 | `lib/worker-progress-trace.ts` | 116 | lib | 5 |  |
-| `wiring/brain-pr-resolve-conflicts.ts` | 115 | lib | 2 |  |
 | `lib/readonly-claude.ts` | 114 | lib | 8 |  |
 | `lib/tasks-agent-row.ts` | 114 | lib | 15 |  |
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
@@ -285,13 +285,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/tasks-agent.ts` | 41 | lib | 2 |  |
 | `lib/cli-json.ts` | 40 | lib | 1 |  |
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
+| `lib/field-guide.ts` | 39 | lib | 4 |  |
 | `wiring/board.ts` | 39 | lib | 3 |  |
 | `lib/agent-pid.ts` | 38 | lib | 2 |  |
 | `lib/claude-mcp-trust.ts` | 37 | lib | 2 |  |
 | `routes/gauge.ts` | 37 | route-host | 1 | routes: 3 |
 | `wiring/brain-pr-park.ts` | 37 | lib | 3 |  |
 | `wiring/media.ts` | 37 | lib | 2 | state: let timer |
-| `lib/field-guide.ts` | 36 | lib | 4 |  |
 | `routes/files.ts` | 36 | lib | 1 |  |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |
 | `lib/auto-compact-settings.ts` | 35 | lib | 5 |  |
@@ -797,7 +797,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `TaskStatus()` | `lib/orchestrator-chat.ts` | `lib/dispatch-tasks.ts`, `lib/orchestrator-channels.ts` |
 | `SHELL_PANE_MARK()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
 | `herdrPaneShellPid()` | `lib/herdr.ts` | `lib/ended-sessions.ts`, `lib/shell-sessions.ts` |
-| `WORKER_FOOTER()` | `lib/worker-invocation.ts` | `lib/field-guide.ts`, `lib/worker-supervisor.ts` |
 | `BrainDecision()` | `lib/orchestrator-brain.ts` | `lib/front-door.ts`, `wiring/orchestrator.ts` |
 | `SAFE_IDENTIFIER_RE()` | `lib/worker-invocation.ts` | `lib/github-webhook.ts`, `lib/worker-supervisor.ts` |
 | `PickerIO()` | `lib/question-driver.ts` | `lib/herdr-inject.ts`, `lib/keyboard-inject.ts` |

@@ -147,7 +147,7 @@ test("a closed worktree on a stacked branch resumes on it; the stale dispatch/<i
   }
 })
 
-test("targetBranch: a fresh task checks out an existing origin/dispatch/* head in its own worktree; anything else is refused", async () => {
+test("targetBranch: a fresh task gets its own dispatch/<taskId> at an origin/dispatch/* head, even while the builder's worktree holds it; anything else is refused", async () => {
   const home = mkdtempSync(join(tmpdir(), "worker-wt-target-"))
   const git = async (cwd: string, ...args: string[]) => {
     const r = await realSh("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd, timeoutMs: 20_000 })
@@ -165,13 +165,18 @@ test("targetBranch: a fresh task checks out an existing origin/dispatch/* head i
     await git(repoDir, "push", "-q", "origin", "HEAD:main")
     await git(repoDir, "push", "-q", "origin", "HEAD:refs/heads/dispatch/builder1")
     const tip = await git(repoDir, "rev-parse", "HEAD")
+    // The builder's worktree is still open on the PR's branch (kept while its PR is OPEN).
+    await git(repoDir, "worktree", "add", "-q", "-b", "dispatch/builder1", join(home, "apps", "wt", "repo", "builder1"), "origin/dispatch/builder1")
 
     const wt = await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-repo-pr7-abcd1234", false, undefined, "dispatch/builder1")
     if (!wt.ok) throw new Error(wt.error)
-    expect(wt.branch).toBe("dispatch/builder1")
+    expect(wt.branch).toBe("dispatch/conflict-repo-pr7-abcd1234")
     expect(wt.worktree).toBe(join(home, "apps", "wt", "repo", "conflict-repo-pr7-abcd1234"))
     expect(await git(wt.worktree, "rev-parse", "HEAD")).toBe(tip)
-    expect(await git(wt.worktree, "symbolic-ref", "--short", "HEAD")).toBe("dispatch/builder1")
+    expect(await git(wt.worktree, "symbolic-ref", "--short", "HEAD")).toBe("dispatch/conflict-repo-pr7-abcd1234")
+    // Never reused: a leftover (half-merged) resolver worktree is refused.
+    expect(await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-repo-pr7-abcd1234", true, undefined, "dispatch/builder1"))
+      .toEqual({ ok: false, error: "target worktree already exists" })
 
     for (const bad of ["main", "master", "feature/x", "dispatch/../main"]) {
       const r = await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-bad", false, undefined, bad)

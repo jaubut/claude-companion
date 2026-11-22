@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import { join, sep } from "node:path"
-import { WORKER_FOOTER } from "./worker-invocation"
+import { workerFooter } from "./worker-invocation"
 
 // FIELD_GUIDE.md: a short, line-capped list of operational traps injected into a worker's first prompt
 // (AGENTS.md style), kept apart from long historical logs like STATE.md. Never reloaded on --resume.
@@ -24,12 +24,15 @@ export function readFieldGuide(worktreeDir: string): string | null {
   }
 }
 
-/** The headless worker's prompt: slash commands pass through; else branch note + brief + (turn 1 only) field guide + design context + footer. */
+/** The headless worker's prompt: slash commands pass through; else branch note + brief + (turn 1 only) field guide + design context + footer.
+ *  A task on an existing PR's head (`targetBranch`) gets that PR's footer and no field guide: its worktree is the PR author's
+ *  tree, so the PR's own FIELD_GUIDE.md is never injected into a worker that can push. */
 export function composeWorkerPrompt(o: {
-  prompt: string; resume: boolean; worktree: string; branchNote: string; designContext: string; maxChars: number
+  prompt: string; resume: boolean; worktree: string; branchNote: string; designContext: string; maxChars: number; targetBranch?: string | null
 }): string {
   if (o.prompt.startsWith("/")) return o.prompt
-  const guide = o.resume ? null : readFieldGuide(o.worktree)
+  const guide = o.resume || o.targetBranch ? null : readFieldGuide(o.worktree)
+  const footer = workerFooter(o.targetBranch)
   const body = [o.prompt, guide, o.designContext].filter(Boolean).join("\n\n")
-  return `${o.branchNote}${body.slice(0, o.maxChars - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
+  return `${o.branchNote}${body.slice(0, o.maxChars - footer.length - 2)}\n\n${footer}`
 }

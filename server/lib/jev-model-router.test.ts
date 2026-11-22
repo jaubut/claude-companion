@@ -169,6 +169,20 @@ describe("Jev worker model router", () => {
     expect(called).toBe(2)
   })
 
+  test("a security or money task keeps Opus on turns 2-3, router on or off; other prior reasons re-route", async () => {
+    const base = { repo: "r", title: "t", prompt: "Fix the review comment in a.ts", existingModel: "claude-opus-5-5" }
+    for (const priorReason of ["security_or_auth", "money_or_data_integrity"] as const) {
+      for (const turnCount of [2, 3]) {
+        for (const enabled of [true, false]) {
+          const d = await decideWorkerModel({ ...base, turnCount, priorReason }, { enabled, jev: { key: "k", fetch: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch } })
+          expect(d).toEqual({ model: "claude-opus-5-5", reason: priorReason, source: "code", jevMs: 0 })
+        }
+      }
+    }
+    expect((await decideWorkerModel({ ...base, turnCount: 2, priorReason: "cross_module" }, { enabled: false })).model).toBe("claude-sonnet-5-5")
+    expect((await decideWorkerModel({ ...base, turnCount: 1, priorReason: "security_or_auth" }, { enabled: false })).model).toBe("claude-sonnet-5-5")
+  })
+
   test("turn 2-3 localized fix routes to Sonnet via the truth table, security_or_auth still Opus", () => {
     const input = { repo: "r", title: "t", prompt: "Fix review comment", turnCount: 2, existingModel: "claude-opus-5-5" }
     expect(pickWorkerModelFromOutcome(workerJev("single_spot", 0.9, 0.05, 0.02), input)).toMatchObject({

@@ -2605,7 +2605,7 @@
         },
         {
           "path": "lib/field-guide.ts",
-          "lines": 36,
+          "lines": 39,
           "kind": "lib",
           "exports": [
             "FIELD_GUIDE_MAX_LINES",
@@ -3098,7 +3098,7 @@
         },
         {
           "path": "lib/jev-model-router.ts",
-          "lines": 261,
+          "lines": 269,
           "kind": "lib",
           "exports": [
             "JEV_ROUTER_TIMEOUT_MS",
@@ -3118,7 +3118,9 @@
             "pickBrainTurnModelFromOutcome",
             "decideBrainTurnModel"
           ],
-          "state": [],
+          "state": [
+            "OPUS_FLOOR_REASONS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -7077,7 +7079,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 540,
+          "lines": 548,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7090,6 +7092,7 @@
             "WORKER_SHIP_RULE",
             "WORKER_PLAN_RULE",
             "WORKER_FOOTER",
+            "workerFooter",
             "DEFAULT_REAP_GRACE_MS",
             "WorkerTaskStatus",
             "workerAgentStatus",
@@ -7291,7 +7294,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 590,
+          "lines": 599,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -7327,7 +7330,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 120,
+          "lines": 124,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -7430,12 +7433,13 @@
         },
         {
           "path": "lib/worker-worktree.ts",
-          "lines": 142,
+          "lines": 153,
           "kind": "lib",
           "exports": [
             "defaultResolveRepoDir",
             "cloneRepo",
             "TARGET_BRANCH_RE",
+            "parseTarget",
             "ensureWorktree",
             "worktreeDirtyPaths",
             "closeTaskWorktree",
@@ -9197,7 +9201,7 @@
         },
         {
           "path": "wiring/brain-pr-resolve-conflicts.ts",
-          "lines": 115,
+          "lines": 130,
           "kind": "lib",
           "exports": [
             "PR_RESOLVE_ACTION",
@@ -13609,11 +13613,10 @@
             "lib/shell-sessions.ts"
           ]
         },
-        "WORKER_FOOTER": {
+        "workerFooter": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/field-guide.ts",
-            "lib/worker-supervisor.ts"
+            "lib/field-guide.ts"
           ]
         },
         "Catalog": {
@@ -16690,6 +16693,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "WORKER_FOOTER": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "DEFAULT_REAP_GRACE_MS": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -16855,6 +16864,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "TARGET_BRANCH_RE": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "refreshResult": {
           "module": "lib/worker-turns.ts",
           "callers": [
@@ -16868,7 +16883,7 @@
             "lib/worker-worktree.ts"
           ]
         },
-        "TARGET_BRANCH_RE": {
+        "parseTarget": {
           "module": "lib/worker-worktree.ts",
           "callers": [
             "lib/worker-supervisor.ts"

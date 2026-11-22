@@ -13,9 +13,10 @@ import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
 // bin/pr-resolve-conflicts (POST /hooks/brain/pr-resolve-conflicts): a conflicting agent PR gets a fresh, neutral
-// claude-sonnet-5-5 worker on its own head branch, never a resumed builder session. Every check is made here from
+// claude-sonnet-5-5 worker on a fresh branch at its head (it pushes to the head), never a resumed builder session. Every check is made here from
 // GitHub and the notes DB, never from the caller's word:
-//   open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
+//   repo jaubut/* (403 not_own_repo) · open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
+//   not a fork (403 cross_repository) · base plain ref characters (403 unsafe_base) ·
 //   no client origin (403 client_origin), no live park or hold (403 parked) ·
 //   notes DB must answer (503 turso_unreachable) ·
 //   mergeable CONFLICTING (409 not_conflicting when MERGEABLE; 409 mergeable_unknown when UNKNOWN after one retry).
@@ -31,14 +32,19 @@ interface ResolveDeps {
   dispatch(input: DispatchTaskInput): Promise<{ ok: true } | { ok: false; status: number; error: string }>
 }
 interface Out { status: number; body: Record<string, unknown> }
-interface PrView { state: string; headRefName: string; baseRefName: string; headRefOid: string; mergeable: string; url: string; title: string; labels: Array<{ name?: string }> }
+interface PrView {
+  state: string; headRefName: string; baseRefName: string; headRefOid: string; mergeable: string; url: string; title: string
+  labels: Array<{ name?: string }>; isCrossRepository: boolean
+}
+/** The base lands in the resolver's git commands: plain ref characters only, no `..`. */
+const SAFE_BASE_RE = /^(?!.*\.\.)[\w./-]{1,200}$/
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
 
 async function view(gh: GhFn, p: ResolveInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
   try {
-    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,baseRefName,headRefOid,mergeable,url,title,labels"])
+    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,baseRefName,headRefOid,mergeable,url,title,labels,isCrossRepository"])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
@@ -48,6 +54,7 @@ async function view(gh: GhFn, p: ResolveInput): Promise<PrView | Out> {
     return {
       state: String(v.state ?? ""), headRefName: String(v.headRefName ?? ""), baseRefName: String(v.baseRefName ?? ""), headRefOid: String(v.headRefOid ?? ""),
       mergeable: String(v.mergeable ?? ""), url: String(v.url ?? ""), title: String(v.title ?? ""), labels: Array.isArray(v.labels) ? v.labels : [],
+      isCrossRepository: v.isCrossRepository !== false, // absent reads as a fork: refused
     }
   } catch {
     return fail(502, "gh_bad_json")
@@ -55,6 +62,8 @@ async function view(gh: GhFn, p: ResolveInput): Promise<PrView | Out> {
 }
 
 export async function resolveAgentPrConflicts(p: ResolveInput, deps: ResolveDeps = realDeps): Promise<Out> {
+  // The worker pushes to jaubut/<repo>: only a PR of that repo, from that repo, is resolved.
+  if (p.repo.split("/")[0] !== "jaubut") return fail(403, "not_own_repo")
   let v = await view(deps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
@@ -75,9 +84,11 @@ export async function resolveAgentPrConflicts(p: ResolveInput, deps: ResolveDeps
     const again = await view(deps.gh, p)
     if ("status" in again) return again
     if (again.state !== "OPEN") return fail(409, "not_open", { state: again.state })
-    if (again.headRefName !== v.headRefName) return fail(409, "head_moved", { branch: again.headRefName })
+    if (again.headRefName !== v.headRefName || again.headRefOid !== v.headRefOid) return fail(409, "head_moved", { branch: again.headRefName })
     v = again
   }
+  if (v.isCrossRepository) return fail(403, "cross_repository")
+  if (!SAFE_BASE_RE.test(v.baseRefName)) return fail(403, "unsafe_base", { base: v.baseRefName.slice(0, 100) })
   if (v.mergeable === "UNKNOWN") return fail(409, "mergeable_unknown")
   if (v.mergeable !== "CONFLICTING") return fail(409, "not_conflicting", { mergeable: v.mergeable })
 
@@ -85,10 +96,14 @@ export async function resolveAgentPrConflicts(p: ResolveInput, deps: ResolveDeps
   const taskId = conflictTaskId(p.repo, p.pr, v.headRefOid)
   const run = await deps.dispatch({
     taskId, repo: p.repo.split("/")[1]!, family: "claude", model: CONFLICT_RESOLVER_MODEL, mode: "auto",
-    title: `Resolve conflicts: ${v.title}`.slice(0, 200), targetBranch: v.headRefName,
+    title: `Resolve conflicts: ${v.title}`.slice(0, 200), targetBranch: v.headRefName, targetPrUrl: v.url,
     prompt: buildConflictResolverPrompt({ ...p, reason, url: v.url, title: v.title, headRefName: v.headRefName, baseRefName: v.baseRefName, headRefOid: v.headRefOid }),
   }).catch((err: unknown) => ({ ok: false as const, status: 500, error: String((err as Error)?.message ?? err).slice(0, 200) }))
-  if (!run.ok) return run.error === "task_already_running" ? fail(409, "already_resolving", { taskId }) : fail(502, "dispatch_failed", { detail: run.error.slice(0, 200) })
+  if (!run.ok) {
+    if (run.error === "task_already_running") return fail(409, "already_resolving", { taskId })
+    if (run.error === "target_task_exists") return fail(409, "already_attempted", { taskId })
+    return fail(502, "dispatch_failed", { detail: run.error.slice(0, 200) })
+  }
   try {
     await deps.exec(
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",

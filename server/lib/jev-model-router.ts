@@ -16,7 +16,12 @@ export interface WorkerModelInput {
   turnCount?: number
   explicitModel?: string | null
   existingModel?: string | null
+  /** The reason the task's previous turn was routed with: a security or money task keeps Opus on its follow-ups. */
+  priorReason?: string | null
 }
+
+/** Turn-1 reasons whose follow-up turns never drop below Opus (a follow-up brief alone no longer shows why). */
+const OPUS_FLOOR_REASONS = new Set(["security_or_auth", "money_or_data_integrity"])
 
 export interface WorkerModelDecision {
   model: "claude-opus-5-5" | "claude-sonnet-5-5"
@@ -171,6 +176,9 @@ export async function decideWorkerModel(
   const turnCount = input.turnCount ?? 1
   if (turnCount >= WORKER_RETRY_ESCALATION_TURN) {
     return { model: "claude-opus-5-5", reason: "retry_escalation", source: "code", jevMs: 0 }
+  }
+  if (turnCount >= 2 && input.priorReason && OPUS_FLOOR_REASONS.has(input.priorReason)) {
+    return { model: "claude-opus-5-5", reason: input.priorReason as "security_or_auth" | "money_or_data_integrity", source: "code", jevMs: 0 }
   }
   const enabled = opts.enabled ?? (process.env.NODE_ENV !== "test" && process.env.COMPANION_JEV_MODEL_ROUTER?.trim() !== "0")
   if (!enabled) {

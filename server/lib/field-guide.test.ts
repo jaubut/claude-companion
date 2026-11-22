@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FIELD_GUIDE_MAX_CHARS, FIELD_GUIDE_MAX_LINES, composeWorkerPrompt, readFieldGuide } from "./field-guide"
-import { WORKER_FOOTER } from "./worker-invocation"
+import { WORKER_FOOTER, WORKER_SHIP_RULE, workerFooter } from "./worker-invocation"
 
 const HEADER = "## Repo Field Guide (FIELD_GUIDE.md - operational traps)"
 let dir = ""
@@ -58,6 +58,16 @@ describe("composeWorkerPrompt", () => {
     expect(composeWorkerPrompt({ ...o, resume: false })).toBe(`Do it\n\n${HEADER}\n- trap\n\nDESIGN\n\n${WORKER_FOOTER}`)
     expect(composeWorkerPrompt({ ...o, resume: true })).toBe(`Do it\n\nDESIGN\n\n${WORKER_FOOTER}`)
     expect(composeWorkerPrompt({ ...o, resume: false, prompt: "/review" })).toBe("/review")
+  })
+
+  test("targetBranch: that PR's footer (push its head, never open a PR) and no field guide from the PR's tree", () => {
+    writeFileSync(join(dir, "FIELD_GUIDE.md"), "- trap")
+    const out = composeWorkerPrompt({ ...base, worktree: dir, resume: false, targetBranch: "dispatch/abc" })
+    expect(out).toBe(`Do it\n\n${workerFooter("dispatch/abc")}`)
+    expect(out).not.toContain("Repo Field Guide")
+    expect(out).not.toContain(WORKER_SHIP_RULE)
+    expect(out).toContain("git push origin HEAD:refs/heads/dispatch/abc")
+    expect(out).toContain("Never open a pull request")
   })
 
   test("never exceeds maxChars", () => {

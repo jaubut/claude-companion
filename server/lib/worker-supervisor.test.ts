@@ -649,6 +649,40 @@ sleep 30 & wait $!
     }
   })
 
+  test("targetBranch: PR bound from the start, that PR's footer, no field guide, and never re-dispatched", async () => {
+    const home = join(tmpdir(), `worker-sup-tb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
+    const spawned: SpawnWorkerOpts[] = []
+    const sup = createWorkerSupervisor({
+      host: "zettlab", home, now: () => 1700000000000, uuid: () => "eeee1111-2222-4333-8444-555555555557",
+      trust: () => {}, reportJob: () => {}, loadAgentSecrets: async () => ({}),
+      sh: async (_cmd, args) => {
+        if (args.includes("worktree") && args.includes("add")) {
+          const wt = args[args.indexOf("add") + 4]!
+          mkdirSync(wt, { recursive: true })
+          writeFileSync(join(wt, "FIELD_GUIDE.md"), "- planted by the PR\n")
+        }
+        return { ok: true, out: "origin/main\n", err: "", code: 0 }
+      },
+      spawnWorker: (opts) => { spawned.push(opts); return { pid: 7779, kill() {} } },
+    })
+    const pr = "https://github.com/jaubut/claude-companion/pull/9"
+    const input = { taskId: "conflict-claude-companion-pr9-abcd1234", repo: "claude-companion", prompt: "Resolve", targetBranch: "dispatch/b1", targetPrUrl: pr }
+    try {
+      expect(await sup.dispatchTask({ ...input, targetPrUrl: "https://github.com/evil/claude-companion/pull/9" })).toEqual({ ok: false, status: 400, error: "invalid_target_pr" })
+      const r = await sup.dispatchTask(input)
+      expect(r.ok && [r.task.prUrl, r.task.branch]).toEqual([pr, "dispatch/conflict-claude-companion-pr9-abcd1234"])
+      const prompt = spawned.at(-1)!.args.join("\n")
+      expect(prompt).not.toContain("planted by the PR")
+      expect(prompt).not.toContain(WORKER_SHIP_RULE)
+      expect(prompt).toContain("git push origin HEAD:refs/heads/dispatch/b1")
+      spawned[0]!.onExit(0, null)
+      expect(await sup.dispatchTask(input)).toEqual({ ok: false, status: 409, error: "target_task_exists" })
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("codex: no default model flag, never a claude-* id, and a resume keeps the task's family + model", async () => {
     const home = join(tmpdir(), `worker-sup-codex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     mkdirSync(join(home, "claude-companion", ".git"), { recursive: true })
