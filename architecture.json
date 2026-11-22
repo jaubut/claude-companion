@@ -4397,19 +4397,16 @@
         },
         {
           "path": "lib/readonly-claude.ts",
-          "lines": 171,
+          "lines": 114,
           "kind": "lib",
           "exports": [
             "ReadonlySpec",
             "SECRET_PATHS",
             "BASE_DISALLOWED",
             "readonlyArgs",
-            "isReadonlyGeminiModel",
-            "readonlyAgyArgs",
             "readonlyEnv",
             "readonlyCwd",
             "ReadonlyRun",
-            "ReadonlyRunOpts",
             "runReadonlyClaude"
           ],
           "state": [],
@@ -4419,8 +4416,7 @@
           "apiCalls": [],
           "imports": [
             "lib/cli-json.ts",
-            "lib/receipt-sonnet.ts",
-            "lib/worker-invocation.ts"
+            "lib/receipt-sonnet.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7083,7 +7079,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 550,
+          "lines": 595,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7120,6 +7116,9 @@
             "buildHeadlessCodexArgs",
             "normalizeAgyCliModelFlag",
             "agyBin",
+            "DEFAULT_GEMINI_WORKER_MODEL",
+            "GEMINI_INLINE_PROMPT_MAX",
+            "agyWorkerSettings",
             "buildHeadlessGeminiArgs",
             "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation",
@@ -10459,7 +10458,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 211,
+          "lines": 212,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
@@ -10494,6 +10493,7 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "lib/worker-mcp.ts",
+            "lib/worker-invocation.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
             "lib/worker-session.ts",
@@ -11363,8 +11363,7 @@
         "normalizeAgyCliModelFlag": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/agy-feed.ts",
-            "lib/readonly-claude.ts"
+            "lib/agy-feed.ts"
           ]
         },
         "readTailLines": {
@@ -14303,7 +14302,6 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/ops-triage.ts",
-            "lib/readonly-claude.ts",
             "wiring/brain-headless.ts"
           ]
         },
@@ -16710,6 +16708,13 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts"
+          ]
+        },
+        "DEFAULT_GEMINI_WORKER_MODEL": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts",
+            "wiring/worker-mcp.ts"
           ]
         },
         "WorkerTaskStatus": {
