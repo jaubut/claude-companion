@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process"
-import { existsSync } from "node:fs"
-import { homedir } from "node:os"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { redactSecrets } from "./secret-redact"
 import { defaultKillPid } from "./worker-pid"
@@ -420,12 +420,15 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   const rawFamily = opts.family?.trim().toLowerCase()
   if (rawFamily) return ALLOWED_FAMILIES.has(rawFamily as WorkerFamily) ? (rawFamily as WorkerFamily) : null
   const rawAgent = opts.agent?.trim().toLowerCase()
+  if (rawAgent === "claude") return "claude"
   if (rawAgent === "codex") return "codex"
   if (rawAgent === "gemini") return "gemini"
   const rawModel = opts.model?.trim().toLowerCase() ?? ""
+  if (/^(claude-|opus|sonnet|haiku|fable)/.test(rawModel)) return "claude"
   if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
   if (/^(gemini[- ]|orchestrator)/.test(rawModel)) return "gemini"
-  return "claude"
+  if (rawAgent) return "claude"
+  return "gemini"
 }
 
 /** False when `model` names another family's model (a `claude-*` id handed to codex/agy or a codex id handed to agy). */
@@ -497,9 +500,46 @@ export function agyBin(home = homedir()): string {
   return existsSync(bin) ? bin : "agy"
 }
 
+export const DEFAULT_GEMINI_WORKER_MODEL = "gemini-4-argon-high"
+/** Below Linux MAX_ARG_STRLEN (131,072 bytes): prompts larger than this go via a 0600 temp file + --add-dir. */
+export const GEMINI_INLINE_PROMPT_MAX = 90_000
+
+/** Hardened `--settings` JSON for headless `agy` workers: deny unscrubbed user MCPs and host secret roots. */
+export function agyWorkerSettings(home = homedir()): string {
+  const secretRoots = [
+    join(home, ".claude-companion"),
+    join(home, ".config", "tls-agent"),
+    join(home, ".config", "gh"),
+    join(home, ".ssh"),
+    join(home, ".aws"),
+    join(home, ".gnupg"),
+    join(home, ".claude", ".credentials.json"),
+    join(home, ".codex"),
+    "/proc",
+  ].map((p) => `read_file(${p})`)
+  return JSON.stringify({ permissions: { deny: ["mcp(*)", ...secretRoots] } })
+}
+
 /** Build the headless `agy -p --output-format stream-json` argv; agy mints the conversation id, so resume only. */
-export function buildHeadlessGeminiArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string }): string[] {
-  const args = [`--print=${opts.prompt}`, "--output-format", "stream-json"]
+export function buildHeadlessGeminiArgs(opts: {
+  prompt: string; sessionId: string; resume: boolean; mode: string; model?: string
+  promptDir?: string; onTempDir?: (dir: string) => void
+}): string[] {
+  let printPrompt = opts.prompt
+  let addDir: string | null = null
+  if (Buffer.byteLength(opts.prompt, "utf8") > GEMINI_INLINE_PROMPT_MAX) {
+    const dir = opts.promptDir ?? mkdtempSync(join(tmpdir(), "cc-agy-prompt-"))
+    if (opts.promptDir) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    else opts.onTempDir?.(dir)
+    chmodSync(dir, 0o700)
+    const promptFile = join(dir, "prompt.txt")
+    writeFileSync(promptFile, opts.prompt, { mode: 0o600 })
+    chmodSync(promptFile, 0o600)
+    addDir = dir
+    printPrompt = `Read the full task brief from ${promptFile} using read_file and follow it strictly.`
+  }
+  const args = [`--print=${printPrompt}`, "--output-format", "stream-json"]
+  if (addDir) args.push("--add-dir", addDir)
   if (opts.resume) args.push("--conversation", opts.sessionId)
   if (opts.model?.trim()) args.push("--model", normalizeAgyCliModelFlag(opts.model))
   if (opts.mode === "plan") args.push("--mode", "plan")
@@ -512,9 +552,17 @@ export function buildHeadlessGeminiArgs(opts: { prompt: string; sessionId: strin
 export const WORKER_SANDBOX_HOSTS: readonly string[] = ["*.googleapis.com", "*.pkg.dev", "*.run.app", "*.workers.dev", "api.resend.com", "api.brevo.com"]
 
 /** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini` → agy). */
-export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: string; args: string[] } {
+export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string; home?: string }): { cmd: string; args: string[]; cleanup?: () => void } {
   if (opts.family === "codex") return { cmd: "codex", args: buildHeadlessCodexArgs(opts) }
-  if (opts.family === "gemini") return { cmd: agyBin(), args: buildHeadlessGeminiArgs(opts) }
+  if (opts.family === "gemini") {
+    let tempDir: string | null = null
+    const args = [...buildHeadlessGeminiArgs({ ...opts, onTempDir: (d) => { tempDir = d } }), "--settings", agyWorkerSettings(opts.home)]
+    return {
+      cmd: agyBin(),
+      args,
+      ...(tempDir ? { cleanup: () => { try { rmSync(tempDir!, { recursive: true, force: true }) } catch { /* best-effort */ } } } : {}),
+    }
+  }
   // Worker-only sandbox network additions (lists merge with the user settings): the production jobs Codex already does.
   return { cmd: "claude", args: ["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } }), ...buildHeadlessClaudeArgs(opts)] }
 }

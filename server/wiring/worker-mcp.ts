@@ -14,6 +14,7 @@ import { ensureFolderTrusted } from "../lib/spawn-session"
 import { realGh } from "../lib/triage-pr"
 import { tursoExec } from "../lib/turso"
 import { createWorkerMcpHandler, defaultResolvePeer, isLocalTarget, relayWorkerReceipts } from "../lib/worker-mcp"
+import { DEFAULT_GEMINI_WORKER_MODEL } from "../lib/worker-invocation"
 import { backfillWorkerPrLinks, bindWorkerTask, linkWorkerPr } from "../lib/worker-pr-link"
 import { createWorkerProgressTrace, throttleJobReports } from "../lib/worker-progress-trace"
 import { recordWorkerSession } from "../lib/worker-session"
@@ -29,7 +30,7 @@ import { orchEmit } from "./orchestrator"
 const DEFAULT_FAMILY_MODELS = {
   claude: "claude-sonnet-5-5",
   codex: "gpt-5.4",
-  gemini: "gemini-3.1-pro-preview",
+  gemini: DEFAULT_GEMINI_WORKER_MODEL,
 } as const
 /** How long a "PR ready" turn waits for its PR link before it reads completed. */
 const LINK_DEADLINE_MS = 20_000

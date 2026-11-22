@@ -20,7 +20,7 @@ export const WORKER_MCP_TOOLS = [
         repo: { type: "string", description: "Bare repository name on the target host (e.g. `claude-companion`, `claude-config`)." },
         prompt: { type: "string", description: "Task brief for turn 1, or follow-up instructions when resuming an existing task." },
         title: { type: "string", description: "Optional human-readable title shown in Companion's live builder card." },
-        family: { type: "string", description: "Optional agent family (`claude`, `codex`, `gemini`). Defaults to `claude` (or inferred from `agent` / `model`)." },
+        family: { type: "string", description: "Optional agent family (`claude`, `codex`, `gemini`). Defaults to `gemini` (or inferred from `agent` / `model`)." },
         agent: { type: "string", description: "Optional agent profile slug (e.g. `builder`, or `codex`/`gemini`)." },
         model: { type: "string", description: "Optional model override." },
         mode: { type: "string", description: "Permission mode (`auto`, `acceptEdits`, `default`, `dontAsk`, `plan`). Defaults to `auto`." },

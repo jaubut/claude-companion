@@ -7,7 +7,7 @@ import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
 import { redactSecrets } from "./secret-redact"
 import {
-  ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
+  ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_GEMINI_WORKER_MODEL, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
   type PlanProgress, type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerProgress, type WorkerTaskStatus,
   applyProgressEvent, buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
   buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
@@ -128,7 +128,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         dirty = true
       } else if (rawPid !== null) dirty = true
       if (wasRunning) dirty = true
-      const loadedFamily = resolveWorkerFamily({ family: r.family, model: r.model ?? undefined }) ?? "claude"
+      const loadedFamily = !r.family?.trim() && !r.model?.trim() ? "claude" : (resolveWorkerFamily({ family: r.family, model: r.model ?? undefined }) ?? "claude")
       // The restart killed the process, but a turn that already ended completed (its `result` event came) delivered its report.
       const { turns, reported } = restoreTurns(r, wasRunning, now)
       const taskRecord: InternalTask = {
@@ -303,7 +303,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           : null
         // Codex / gemini run outside the Claude sandbox and load their own; only a Claude worker needs them passed in.
         const secrets = family === "claude" ? await loadAgentSecrets() : {}
-        const effectiveModel = explicitModel ?? routed?.model ?? storedModel ?? null
+        const effectiveModel = explicitModel ?? routed?.model ?? storedModel ?? (family === "gemini" ? DEFAULT_GEMINI_WORKER_MODEL : null)
         const repoSlug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-")
         const builder = `builder-${deps.host.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}-${repoSlug}-${taskId}`
         // Use `:` separator on turn 2+ (`:` is forbidden in TASK_ID_RE so it can never collide with another taskId).
@@ -397,7 +397,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
             onExit(code, sig) {
               clearStaleGitConfigLock(task.repoDir)
               if (settled) return
-              settled = true; resolveExit()
+              settled = true; resolveExit(); invocation.cleanup?.()
               if (task.activeTurn !== myTurn) return
               clearTimers(task); task.handle = null; task.exitPromise = null
               if (task.pid !== null && !isPidAlive(task.pid)) { task.pid = null; task.pidIdentity = null; task.reloadedFromDisk = false }
@@ -464,7 +464,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
             },
           })
         } catch (err) {
-          settled = true; resolveExit(); clearTimers(task)
+          settled = true; resolveExit(); clearTimers(task); invocation.cleanup?.()
           task.handle = null; task.exitPromise = null; task.pid = null; task.pidIdentity = null; task.status = "failed"
           task.error = `spawn failed: ${((err as Error)?.message ?? String(err)).slice(0, 300)}`
           task.step = `Failed: ${task.error.slice(0, 100)}`

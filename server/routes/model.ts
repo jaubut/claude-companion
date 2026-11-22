@@ -61,12 +61,13 @@ function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
 
 function buildHeadlessChoices(session: Session): ModelChoice[] {
   const catalog = headlessCatalogFor(session)
+  const fallbackModel = session.agent === "claude" ? "claude-opus-5-5" : session.agent === "codex" ? "gpt-5.4" : "gemini-4-argon-high"
   const rawCurrent = (
     session.taskId === "brain"
       ? (session.model || getBrainModel())
       : session.taskId === AGY_BRAIN_TASK_ID
         ? (session.model || getAgyBrainModel())
-        : (deskRunner.modelFor(session.sessionId) || session.model || "claude-opus-5-5")
+        : (deskRunner.modelFor(session.sessionId) || session.model || fallbackModel)
   ).trim().toLowerCase().replace(/\[1m\]$/, "")
   let matchedIndex = catalog.findIndex((m) => m.id.toLowerCase() === rawCurrent || m.aliases.includes(rawCurrent))
   if (matchedIndex < 0) matchedIndex = 0

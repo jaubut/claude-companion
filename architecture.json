@@ -7079,7 +7079,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 548,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7116,6 +7116,9 @@
             "buildHeadlessCodexArgs",
             "normalizeAgyCliModelFlag",
             "agyBin",
+            "DEFAULT_GEMINI_WORKER_MODEL",
+            "GEMINI_INLINE_PROMPT_MAX",
+            "agyWorkerSettings",
             "buildHeadlessGeminiArgs",
             "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation",
@@ -8320,7 +8323,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 321,
+          "lines": 322,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -9042,7 +9045,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 296,
+          "lines": 306,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -9149,7 +9152,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 268,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9585,7 +9588,7 @@
         },
         {
           "path": "wiring/desk-deliver.ts",
-          "lines": 193,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "deskRunner",
@@ -9612,6 +9615,7 @@
             "lib/questions.ts",
             "lib/command-catalog.ts",
             "lib/desk-runner.ts",
+            "lib/worker-invocation.ts",
             "lib/orphan-question.ts",
             "state.ts",
             "wiring/dialogs.ts",
@@ -10454,7 +10458,7 @@
         },
         {
           "path": "wiring/worker-mcp.ts",
-          "lines": 211,
+          "lines": 212,
           "kind": "lib",
           "exports": [
             "syncWorkerTaskToTurso",
@@ -10489,6 +10493,7 @@
             "lib/triage-pr.ts",
             "lib/turso.ts",
             "lib/worker-mcp.ts",
+            "lib/worker-invocation.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-progress-trace.ts",
             "lib/worker-session.ts",
@@ -16705,6 +16710,13 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "DEFAULT_GEMINI_WORKER_MODEL": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/worker-supervisor.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
         "WorkerTaskStatus": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -16763,7 +16775,8 @@
         "resolveWorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "modelFitsFamily": {

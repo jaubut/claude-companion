@@ -18,13 +18,13 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/worker-supervisor.ts` | 599 | lib | 5 |  |
+| `lib/worker-invocation.ts` | 596 | lib | 43 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
-| `lib/worker-invocation.ts` | 548 | lib | 40 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
@@ -67,21 +67,22 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/ops-triage.ts` | 331 | lib | 19 |  |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
-| `routes/model.ts` | 321 | route-host | 1 | state: inFlight: Set · routes: 3 |
+| `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
+| `wiring/brain-headless.ts` | 306 | lib | 8 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
 | `lib/brain.ts` | 300 | lib | 52 |  |
 | `lib/triage-pr.ts` | 296 | lib | 21 |  |
 | `wiring/auto-compact.ts` | 296 | lib | 6 | state: let statsDb · emits: inject_error |
-| `wiring/brain-headless.ts` | 296 | lib | 8 |  |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
 | `lib/trip-model.ts` | 290 | lib | 24 |  |
 | `lib/ended-sessions.ts` | 287 | lib | 17 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `routes/notes.ts` | 283 | lib | 1 | state: NOTE_IMAGE_MIMES: Set |
 | `lib/orchestrator-brain.ts` | 278 | lib | 8 |  |
+| `wiring/brain-pr-merge.ts` | 277 | lib | 4 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
@@ -91,7 +92,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-lead.ts` | 270 | lib | 12 | state: runtimeLeadStarting: Set |
 | `lib/jev-model-router.ts` | 269 | lib | 16 | state: OPUS_FLOOR_REASONS: Set |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
-| `wiring/brain-pr-merge.ts` | 268 | lib | 4 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 262 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
@@ -123,10 +123,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/subscriptions.ts` | 214 | lib | 8 | state: let cache |
 | `routes/goals.ts` | 214 | route-host | 12 | route: GET /api/goals |
 | `wiring/dialogs.ts` | 213 | lib | 8 | emits: dialog, dialog_closed · listens: dialogWatcher.start |
+| `wiring/worker-mcp.ts` | 212 | lib | 8 | state: lastTursoSync: Map, let relayStarted, let relaying, let relayAgain |
 | `lib/board-page-capture.ts` | 211 | lib | 7 |  |
 | `lib/key-gate.ts` | 211 | lib | 9 |  |
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
-| `wiring/worker-mcp.ts` | 211 | lib | 8 | state: lastTursoSync: Map, let relayStarted, let relaying, let relayAgain |
 | `lib/feed.ts` | 210 | lib | 12 | state: let retention, feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `routes/canvas.ts` | 210 | lib | 2 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
@@ -139,10 +139,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/dashboard-client.ts` | 202 | lib | 34 |  |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
+| `wiring/desk-deliver.ts` | 199 | lib | 3 | emits: inject_error |
 | `ws.ts` | 198 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
-| `wiring/desk-deliver.ts` | 193 | lib | 3 | emits: inject_error |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
 | `wiring/brain-stuck-events.ts` | 189 | lib | 4 |  |
@@ -878,10 +878,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `workerReceipt()` | `lib/worker-pr-link.ts` | `lib/worker-mcp.ts`, `lib/worker-progress-trace.ts` |
 | `BuilderReport()` | `lib/builder-jobs.ts` | `lib/worker-progress-trace.ts`, `lib/worker-supervisor.ts` |
 | `reportTurn()` | `lib/worker-task-store.ts` | `lib/worker-receipt-outbox.ts`, `lib/worker-turns.ts` |
+| `DEFAULT_GEMINI_WORKER_MODEL()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/worker-mcp.ts` |
 | `PlanProgress()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `lib/worker-task.ts` |
 | `progressOf()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `lib/worker-task.ts` |
 | `buildHeadlessGeminiArgs()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
 | `parseStreamJsonLine()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/brain-headless.ts` |
+| `resolveWorkerFamily()` | `lib/worker-invocation.ts` | `lib/worker-supervisor.ts`, `wiring/desk-deliver.ts` |
 | `workerStateFile()` | `lib/worker-task-store.ts` | `lib/worker-supervisor.ts`, `wiring/worker-mcp.ts` |
 | `defaultResolveRepoDir()` | `lib/worker-worktree.ts` | `lib/worker-supervisor.ts`, `wiring/brain-lead.ts` |
 | `clearStaleGitConfigLock()` | `lib/git-config-lock.ts` | `lib/worker-supervisor.ts`, `lib/worker-worktree.ts` |

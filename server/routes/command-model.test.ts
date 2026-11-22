@@ -77,6 +77,13 @@ test("model open/set: one claude-only list (no auto), index round-trips, current
   const again = await post("/api/model/open", { key: row.key })
   expect((again.body.choices as typeof choices).find((c) => c.current)?.index).toBe(sonnet.index)
   expect((await post("/api/model/set", { key: row.key, index: 99 })).status).toBe(400)
-  const { getSessionByKey } = await import("../lib/sessions")
+  const { getSessionByKey, removeSessionByKey } = await import("../lib/sessions")
   expect(getSessionByKey(row.key)?.agent).toBe("claude")
+
+  const gemRow = recordSession({ cwd: dir, agent: "gemini", sessionId: "gm-sid", taskId: "gm-task", herdrPane: "headless:worker:gm-task", model: "" }, { sessionIdConfirmed: true })!
+  const gemOpen = await post("/api/model/open", { key: gemRow.key })
+  expect(gemOpen.status).toBe(200)
+  const gemChoices = gemOpen.body.choices as Array<{ index: number; text: string; current: boolean }>
+  expect(gemChoices.find((c) => c.current)?.text).toStartWith("Gemini 4 Argon (High)")
+  removeSessionByKey(gemRow.key)
 })

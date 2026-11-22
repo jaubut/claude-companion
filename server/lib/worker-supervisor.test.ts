@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test"
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
@@ -17,7 +17,7 @@ import {
   parseStreamJsonLine,
   resolveWorkerFamily,
 } from "./worker-supervisor"
-import { WORKER_FOOTER, WORKER_SANDBOX_HOSTS, parseAgentEnv } from "./worker-invocation"
+import { DEFAULT_GEMINI_WORKER_MODEL, GEMINI_INLINE_PROMPT_MAX, WORKER_FOOTER, WORKER_SANDBOX_HOSTS, agyWorkerSettings, parseAgentEnv } from "./worker-invocation"
 import { defaultResolveRepoDir } from "./worker-worktree"
 import { workerReceipt } from "./worker-pr-link"
 import { CHECKIN_MS, IDLE_KILL_MS } from "./worker-turn-watch"
@@ -209,12 +209,13 @@ describe("createWorkerSupervisor", () => {
         agent: "--bad-flag",
       })).toEqual({ ok: false, status: 400, error: "invalid_agent" })
 
-      // Turn 1 dispatch
+      // Turn 1 dispatch (explicit Claude)
       const d1 = await sup.dispatchTask({
         taskId: "task-1",
         repo: "claude-companion",
         prompt: "Implement feature",
         title: "Implement feature",
+        family: "claude",
       })
       expect(d1.ok).toBe(true)
       if (!d1.ok) return
@@ -349,8 +350,8 @@ describe("createWorkerSupervisor", () => {
     try {
       // 1. Two simultaneous dispatches of the same taskId -> exactly one succeeds, one gets 409
       const [r1, r2] = await Promise.all([
-        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "First" }),
-        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Second" }),
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "First", family: "claude" }),
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Second", family: "claude" }),
       ])
       const oks = [r1, r2].filter((r) => r.ok)
       const errs = [r1, r2].filter((r) => !r.ok)
@@ -372,12 +373,12 @@ describe("createWorkerSupervisor", () => {
       // 3. Synchronous spawn failure marks task failed instead of leaving it permanently running,
       // and retry uses --session-id (not --resume) because no session was created on the failed attempt.
       throwOnSpawn = true
-      const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run" })
+      const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run", family: "claude" })
       expect(failDisp.ok).toBe(false)
       expect(sup.getTask("spawn-err")?.status).toBe("failed")
 
       throwOnSpawn = false
-      const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry" })
+      const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry", family: "claude" })
       expect(retryDisp.ok).toBe(true)
       expect(spawned.at(-1)?.args).toContain("--session-id")
       expect(spawned.at(-1)?.args).not.toContain("--resume")
@@ -435,7 +436,7 @@ describe("createWorkerSupervisor", () => {
 
     try {
       const sup1 = makeSup()
-      const d1 = await sup1.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Turn 1" })
+      const d1 = await sup1.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Turn 1", family: "claude" })
       expect(d1.ok).toBe(true)
 
       // Emit session_id on stdout (persists sessionStarted = true immediately before turn exit)
@@ -530,11 +531,24 @@ describe("createWorkerSupervisor", () => {
     }
   })
 
-  test("supports headless Codex and Gemini agent families and parses their stream-json events", async () => {
+  test("supports headless Codex and Gemini agent families (Gemini default) and parses their stream-json events", async () => {
+    expect(resolveWorkerFamily({})).toBe("gemini")
+    expect(resolveWorkerFamily({ agent: "builder" })).toBe("claude")
+    expect(resolveWorkerFamily({ agent: "reviewer" })).toBe("claude")
+    expect(resolveWorkerFamily({ agent: "builder", model: "gpt-5.4" })).toBe("codex")
+    expect(resolveWorkerFamily({ agent: "builder", model: "gemini-4-argon-high" })).toBe("gemini")
+    expect(resolveWorkerFamily({ family: "claude" })).toBe("claude")
+    expect(resolveWorkerFamily({ agent: "claude" })).toBe("claude")
+    for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "opus", "sonnet", "haiku", "fable"]) {
+      expect(resolveWorkerFamily({ model: m })).toBe("claude")
+    }
     expect(resolveWorkerFamily({ family: "codex" })).toBe("codex")
+    expect(resolveWorkerFamily({ agent: "codex" })).toBe("codex")
     expect(resolveWorkerFamily({ family: "gemini" })).toBe("gemini")
+    expect(resolveWorkerFamily({ agent: "gemini" })).toBe("gemini")
     expect(resolveWorkerFamily({ model: "gpt-5.4" })).toBe("codex")
     expect(resolveWorkerFamily({ model: "gemini-3.1-pro-preview" })).toBe("gemini")
+    expect(resolveWorkerFamily({ model: "gemini-4-argon-high" })).toBe("gemini")
     expect(resolveWorkerFamily({ family: "unknown" })).toBeNull()
 
     const codexFresh = buildHeadlessCodexArgs({ prompt: "fix bug", sessionId: "sid-cx", resume: false, mode: "auto", model: "gpt-5.4" })
@@ -542,12 +556,57 @@ describe("createWorkerSupervisor", () => {
     const codexResume = buildHeadlessCodexArgs({ prompt: "add test", sessionId: "sid-cx", resume: true, mode: "auto", model: "gpt-5.4" })
     expect(codexResume).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.4", "--", "sid-cx", "add test"])
 
+    // buildHeadlessGeminiArgs itself never injects worker --settings (so Headless Brain keeps its MCP tools).
     const geminiFresh = buildHeadlessGeminiArgs({ prompt: "-build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "Gemini 4 Argon (High)" })
-    expect(geminiFresh).toEqual(["--print=-build ui", "--output-format", "stream-json", "--model", "gemini-4-argon-high", "--dangerously-skip-permissions"])
-    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "agy-cid", resume: true, mode: "acceptEdits" })
+    expect(geminiFresh).toEqual([
+      "--print=-build ui", "--output-format", "stream-json",
+      "--model", "gemini-4-argon-high", "--dangerously-skip-permissions",
+    ])
+    expect(geminiFresh).not.toContain("--settings")
+
+    let brainTempDir = ""
+    const brainBigArgs = buildHeadlessGeminiArgs({
+      prompt: "z".repeat(GEMINI_INLINE_PROMPT_MAX + 100),
+      sessionId: "sid-brain",
+      resume: false,
+      mode: "auto",
+      onTempDir: (d) => { brainTempDir = d },
+    })
+    expect(brainBigArgs).not.toContain("--settings")
+    expect(brainTempDir).not.toBe("")
+    expect(existsSync(join(brainTempDir, "prompt.txt"))).toBe(true)
+    rmSync(brainTempDir, { recursive: true, force: true })
+
+    // buildHeadlessWorkerInvocation attaches worker --settings denying mcp(*) and host secret roots.
+    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "agy-cid", resume: true, mode: "acceptEdits", home: "/h/test" })
     expect(geminiinv.cmd).toMatch(/(^|\/)agy$/)
-    expect(geminiinv.args).toEqual(["--print=build ui", "--output-format", "stream-json", "--conversation", "agy-cid", "--mode", "accept-edits"])
+    expect(geminiinv.args).toEqual(["--print=build ui", "--output-format", "stream-json", "--conversation", "agy-cid", "--mode", "accept-edits", "--settings", agyWorkerSettings("/h/test")])
+    const parsedSettings = JSON.parse(geminiinv.args[geminiinv.args.indexOf("--settings") + 1]!) as { permissions: { deny: string[] } }
+    expect(parsedSettings.permissions.deny).toContain("mcp(*)")
+    for (const secretRoot of [
+      "/h/test/.claude-companion", "/h/test/.config/tls-agent", "/h/test/.config/gh",
+      "/h/test/.ssh", "/h/test/.aws", "/h/test/.gnupg",
+      "/h/test/.claude/.credentials.json", "/h/test/.codex", "/proc",
+    ]) {
+      expect(parsedSettings.permissions.deny).toContain(`read_file(${secretRoot})`)
+    }
+    expect(geminiinv.cleanup).toBeUndefined()
     expect(resolveWorkerFamily({ model: "Gemini 4 Argon (Medium)" })).toBe("gemini")
+
+    // Oversized (>90 KB) prompt uses 0600 file inside 0700 temp dir + --add-dir to avoid Linux E2BIG, cleaned up via cleanup().
+    const bigPrompt = "x".repeat(GEMINI_INLINE_PROMPT_MAX + 500)
+    const bigInv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: bigPrompt, sessionId: "agy-big", resume: false, mode: "auto" })
+    expect(bigInv.args[0]!.length).toBeLessThan(1024)
+    const addDirIdx = bigInv.args.indexOf("--add-dir")
+    expect(addDirIdx).toBeGreaterThan(-1)
+    const promptDir = bigInv.args[addDirIdx + 1]!
+    const promptFile = join(promptDir, "prompt.txt")
+    expect(statSync(promptDir).mode & 0o777).toBe(0o700)
+    expect(statSync(promptFile).mode & 0o777).toBe(0o600)
+    expect(readFileSync(promptFile, "utf8")).toBe(bigPrompt)
+    expect(bigInv.args[0]).toContain(promptFile)
+    bigInv.cleanup?.()
+    expect(existsSync(promptDir)).toBe(false)
 
     // Codex stream events
     expect(parseStreamJsonLine(JSON.stringify({ type: "thread.started", thread_id: "cx-thread-1" }))).toEqual({ sessionId: "cx-thread-1" })
@@ -732,11 +791,11 @@ sleep 30 & wait $!
       expect(spawned[4]!.args.join(" ")).not.toContain("claude")
       finish(4)
 
-      // Switching family on resume (codex → gemini/agy) drops the stored codex model so agy never receives it.
+      // Switching family on resume (codex → gemini/agy) drops the stored codex model and defaults to DEFAULT_GEMINI_WORKER_MODEL.
       const t4 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Switch to agy", family: "gemini" })
-      expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", null])
+      expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", DEFAULT_GEMINI_WORKER_MODEL])
       expect(spawned[5]!.cmd).toMatch(/(^|\/)agy$/)
-      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_FOOTER}`, "--output-format", "stream-json", "--dangerously-skip-permissions"])
+      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_FOOTER}`, "--output-format", "stream-json", "--model", DEFAULT_GEMINI_WORKER_MODEL, "--dangerously-skip-permissions", "--settings", agyWorkerSettings()])
       spawned[5]!.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-conv-1", init: { cwd: "/w" } }))
       spawned[5]!.onExit(0, null)
 
@@ -745,9 +804,9 @@ sleep 30 & wait $!
       expect(spawned[6]!.args).toContain("spark-1")
       finish(6)
       const tCustomAgy = await sup.dispatchTask({ taskId: "cx-custom", repo: "claude-companion", prompt: "Now agy", family: "gemini", model: "gpt-5.4" })
-      expect(tCustomAgy.ok && [tCustomAgy.task.family, tCustomAgy.task.model]).toEqual(["gemini", null])
+      expect(tCustomAgy.ok && [tCustomAgy.task.family, tCustomAgy.task.model]).toEqual(["gemini", DEFAULT_GEMINI_WORKER_MODEL])
       expect(spawned[7]!.cmd).toMatch(/(^|\/)agy$/)
-      expect(spawned[7]!.args).not.toContain("--model")
+      expect(spawned[7]!.args[spawned[7]!.args.indexOf("--model") + 1]).toBe(DEFAULT_GEMINI_WORKER_MODEL)
       expect(spawned[7]!.args.join(" ")).not.toContain("spark-1")
       expect(spawned[7]!.args.join(" ")).not.toContain("gpt-5.4")
       spawned[7]!.onExit(0, null)
@@ -782,7 +841,7 @@ sleep 30 & wait $!
     const HAIKU = "claude-haiku-4-5-20251001"
     try {
       let sup = make()
-      await sup.dispatchTask({ taskId: "pin-1", repo: "claude-companion", prompt: "Build" }); finish()
+      await sup.dispatchTask({ taskId: "pin-1", repo: "claude-companion", prompt: "Build", family: "claude" }); finish()
       sup.setTaskModel("pin-1", HAIKU)
       for (const turn of [2, 3]) {
         const t = await inject(sup, "pin-1", `Turn ${turn}`)
@@ -797,7 +856,7 @@ sleep 30 & wait $!
       finish()
 
       // Never picked: the router re-routes turns 2-3 (Sonnet when localized) and escalates to Opus from turn 4.
-      await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build" }); finish()
+      await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build", family: "claude" }); finish()
       for (const turn of [2, 3]) {
         const r = await inject(sup, "routed-1", `Turn ${turn}`); finish()
         expect(r.ok && r.task.model).toBe("claude-sonnet-5-5")
@@ -866,7 +925,7 @@ sleep 30 & wait $!
       },
     })
     try {
-      await sup.dispatchTask({ taskId: "sec-claude", repo: "claude-companion", prompt: "Deploy" })
+      await sup.dispatchTask({ taskId: "sec-claude", repo: "claude-companion", prompt: "Deploy", family: "claude" })
       const env = spawned[0]!.env
       expect(env.RESEND_API_KEY).toBe("re_secret")
       expect(env.CLOUDFLARE_API_TOKEN).toBe("cf_secret")
@@ -880,10 +939,10 @@ sleep 30 & wait $!
       await sup.dispatchTask({ taskId: "sec-codex", repo: "claude-companion", prompt: "Deploy", family: "codex" })
       await sup.dispatchTask({ taskId: "sec-gemini", repo: "claude-companion", prompt: "Deploy", family: "gemini" })
       expect(loads).toBe(1)
-      for (const s of spawned.slice(1)) {
-        expect(s.env.RESEND_API_KEY).toBeUndefined()
-        expect(s.args).not.toContain("--settings")
-      }
+      for (const s of spawned.slice(1)) expect(s.env.RESEND_API_KEY).toBeUndefined()
+      expect(spawned[1]!.args).not.toContain("--settings")
+      expect(spawned[2]!.args).toContain("--settings")
+      expect(spawned[2]!.args[spawned[2]!.args.indexOf("--settings") + 1]).toContain("mcp(*)")
       expect(spawned[1]!.args).toEqual(buildHeadlessCodexArgs({ prompt: `Deploy\n\n${WORKER_FOOTER}`, sessionId: "ffff1111-2222-4333-8444-555555555551", resume: false, mode: "auto" }))
     } finally {
       rmSync(home, { recursive: true, force: true })
@@ -1380,7 +1439,7 @@ sleep 30 & wait $!
       spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill() {} } },
     })
     try {
-      await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Start" })
+      await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Start", family: "claude" })
       spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }))
       spawned[0]!.onExit(0, null)
       onBranch = "dispatch/task-b-c"
@@ -1414,7 +1473,7 @@ sleep 30 & wait $!
     const report = `v8 ready: https://frame.io/v8-granby\nMusic: "Northern Lights" (Artlist), cut to the drop at 0:42.\nQA: ${"checked ".repeat(800)}all green.`
     const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
     try {
-      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8 edit" })
+      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8 edit", family: "claude" })
       expect(spawned[0]!.args.at(-1)).toContain(WORKER_TURN_RULE)
       // Turn 1: the real report. Turn 2, same process: the harness wakes it for a background job.
       spawned[0]!.onStdoutLine(result(report))
@@ -1583,10 +1642,59 @@ sleep 30 & wait $!
       } finally { releaseGh(); releaseFetch(); rmSync(h.home, { recursive: true, force: true }) }
     })
 
+    test("unspecified headless worker dispatches default to gemini (agy + gemini-4-argon-high); explicit claude, >90KB prompt cleanup, and legacy reload stay claude", async () => {
+      const h = harness()
+      try {
+        const dGem = await h.sup.dispatchTask({ taskId: "def-gm", repo: "claude-companion", prompt: "Build default" })
+        expect(dGem.ok && [dGem.task.family, dGem.task.model]).toEqual(["gemini", DEFAULT_GEMINI_WORKER_MODEL])
+        expect(h.spawned[0]!.cmd).toMatch(/(^|\/)agy$/)
+        expect(h.spawned[0]!.args[0]).toContain("Build default")
+        expect(h.spawned[0]!.args).toContain("--output-format")
+        expect(h.spawned[0]!.args).toContain("stream-json")
+        expect(h.spawned[0]!.args[h.spawned[0]!.args.indexOf("--model") + 1]).toBe(DEFAULT_GEMINI_WORKER_MODEL)
+        h.spawned[0]!.onExit(0, null)
+
+        const dCl = await h.sup.dispatchTask({ taskId: "exp-cl", repo: "claude-companion", prompt: "Build claude", family: "claude" })
+        expect(dCl.ok && dCl.task.family).toBe("claude")
+        expect(h.spawned[1]!.cmd).toBe("claude")
+        h.spawned[1]!.onExit(0, null)
+
+        // >90 KB prompt writes a temp file + --add-dir and cleans up when the worker exits.
+        const bigRes = await h.sup.dispatchTask({ taskId: "big-gm", repo: "claude-companion", prompt: "y".repeat(GEMINI_INLINE_PROMPT_MAX + 500) })
+        expect(bigRes.ok).toBe(true)
+        const bigArgs = h.spawned[2]!.args
+        const dir = bigArgs[bigArgs.indexOf("--add-dir") + 1]!
+        expect(existsSync(join(dir, "prompt.txt"))).toBe(true)
+        h.spawned[2]!.onExit(0, null)
+        expect(existsSync(dir)).toBe(false)
+
+        // Legacy persisted record with neither family nor model reloads as claude (never sent to agy --conversation).
+        const statePath = join(h.home, ".claude", "state", "companion-worker-tasks.json")
+        const recs = JSON.parse(readFileSync(statePath, "utf8")) as Array<Record<string, unknown>>
+        const legacyId = "legacy-claude-1"
+        const legacyWt = join(h.home, "apps", "wt", "claude-companion", legacyId)
+        mkdirSync(legacyWt, { recursive: true })
+        recs.push({
+          taskId: legacyId, repo: "claude-companion", repoDir: join(h.home, "claude-companion"),
+          title: "Legacy", builder: "b", model: null, branch: `dispatch/${legacyId}`,
+          worktree: legacyWt, sessionId: "legacy-claude-sid", status: "completed", turnCount: 1,
+          step: "Turn completed", pct: 100, result: "ok", prUrl: null, error: null,
+          startedAt: 1, updatedAt: 1, completedAt: 1, sessionStarted: true,
+        })
+        writeFileSync(statePath, JSON.stringify(recs))
+        const reloaded = createWorkerSupervisor({
+          host: "mac", home: h.home, now: () => Date.now(), uuid: () => "u", trust: () => {}, reportJob: () => {},
+          sh: async () => ({ ok: true, out: "origin/main\n", err: "", code: 0 }),
+          spawnWorker: (o) => { h.spawned.push(o); return { pid: 0, kill() {} } },
+        })
+        expect(reloaded.getTask(legacyId)?.family).toBe("claude")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
     test("every brief tells the worker to commit, push and open its own PR, and not to end on background work (a88c7bd9)", async () => {
       const h = harness()
       try {
-        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD" })
+        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD", family: "claude" })
         const prompt = h.spawned[0]!.args.at(-1)!
         expect(prompt).toContain(WORKER_SHIP_RULE)
         expect(prompt).toContain(WORKER_TURN_RULE)

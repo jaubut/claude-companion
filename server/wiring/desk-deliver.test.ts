@@ -186,3 +186,40 @@ test("auto-compact on a desk row: /compact runs as a desk turn; busy while it ru
   holds = true
   expect(await realAutoCompactDeps.inject(s.key, "/compact")).toEqual({ ok: false, error: "terminal_owned" })
 })
+
+test("headless:worker deliverInject: existing Claude sessions keep claude family; unspecified/gemini sessions default to gemini", async () => {
+  const { spyOn } = await import("bun:test")
+  const { workerSupervisor } = await import("./worker-mcp")
+  const getSpy = spyOn(workerSupervisor, "getTask").mockReturnValue(null)
+  const dispatchCalls: Array<Record<string, unknown>> = []
+  const dispSpy = spyOn(workerSupervisor, "dispatchTask").mockImplementation(async (input) => {
+    dispatchCalls.push(input as unknown as Record<string, unknown>)
+    return {
+      ok: true,
+      claim: "absent",
+      task: {
+        taskId: input.taskId, repo: input.repo, title: input.title ?? input.taskId, builder: "b",
+        family: (input.family as "claude" | "codex" | "gemini") ?? "gemini", model: input.model ?? null,
+        branch: `dispatch/${input.taskId}`, worktree: "/tmp/wt", sessionId: "sid", status: "running",
+        turnCount: 1, step: null, pct: 5, result: "", prUrl: null, error: null, startedAt: 1, updatedAt: 1, completedAt: null,
+      },
+    }
+  })
+  const claudeWorker = recordSession({ cwd: "/tmp/wt-cl", agent: "claude", sessionId: "w-cl-sid", taskId: "w-cl", herdrPane: "headless:worker:w-cl", model: "claude-sonnet-5-5" }, { sessionIdConfirmed: true })!
+  const geminiWorker = recordSession({ cwd: "/tmp/wt-gm", agent: "gemini", sessionId: "w-gm-sid", taskId: "w-gm", herdrPane: "headless:worker:w-gm" }, { sessionIdConfirmed: true })!
+  const unspecifiedWorker = recordSession({ cwd: "/tmp/wt-un", agent: "kimi", sessionId: "w-un-sid", taskId: "w-un", herdrPane: "headless:worker:w-un" }, { sessionIdConfirmed: true })!
+  try {
+    expect((await deliverInject("continue", claudeWorker.key)).status).toBe(200)
+    expect((await deliverInject("continue", geminiWorker.key)).status).toBe(200)
+    expect((await deliverInject("continue", unspecifiedWorker.key)).status).toBe(200)
+    expect(dispatchCalls[0]).toMatchObject({ taskId: "w-cl", family: "claude", model: "claude-sonnet-5-5" })
+    expect(dispatchCalls[1]).toMatchObject({ taskId: "w-gm", family: "gemini" })
+    expect(dispatchCalls[2]).toMatchObject({ taskId: "w-un", family: "gemini" })
+  } finally {
+    getSpy.mockRestore()
+    dispSpy.mockRestore()
+    removeSessionByKey(claudeWorker.key)
+    removeSessionByKey(geminiWorker.key)
+    removeSessionByKey(unspecifiedWorker.key)
+  }
+})
