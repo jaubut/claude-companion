@@ -420,13 +420,14 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   const rawFamily = opts.family?.trim().toLowerCase()
   if (rawFamily) return ALLOWED_FAMILIES.has(rawFamily as WorkerFamily) ? (rawFamily as WorkerFamily) : null
   const rawAgent = opts.agent?.trim().toLowerCase()
+  if (rawAgent === "claude") return "claude"
   if (rawAgent === "codex") return "codex"
   if (rawAgent === "gemini") return "gemini"
-  if (rawAgent) return "claude"
   const rawModel = opts.model?.trim().toLowerCase() ?? ""
   if (/^(claude-|opus|sonnet|haiku|fable)/.test(rawModel)) return "claude"
   if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
   if (/^(gemini[- ]|orchestrator)/.test(rawModel)) return "gemini"
+  if (rawAgent) return "claude"
   return "gemini"
 }
 
@@ -522,7 +523,7 @@ export function agyWorkerSettings(home = homedir()): string {
 /** Build the headless `agy -p --output-format stream-json` argv; agy mints the conversation id, so resume only. */
 export function buildHeadlessGeminiArgs(opts: {
   prompt: string; sessionId: string; resume: boolean; mode: string; model?: string
-  home?: string; promptDir?: string; onTempDir?: (dir: string) => void
+  promptDir?: string; onTempDir?: (dir: string) => void
 }): string[] {
   let printPrompt = opts.prompt
   let addDir: string | null = null
@@ -537,7 +538,7 @@ export function buildHeadlessGeminiArgs(opts: {
     addDir = dir
     printPrompt = `Read the full task brief from ${promptFile} using read_file and follow it strictly.`
   }
-  const args = [`--print=${printPrompt}`, "--output-format", "stream-json", "--settings", agyWorkerSettings(opts.home)]
+  const args = [`--print=${printPrompt}`, "--output-format", "stream-json"]
   if (addDir) args.push("--add-dir", addDir)
   if (opts.resume) args.push("--conversation", opts.sessionId)
   if (opts.model?.trim()) args.push("--model", normalizeAgyCliModelFlag(opts.model))
@@ -551,11 +552,11 @@ export function buildHeadlessGeminiArgs(opts: {
 export const WORKER_SANDBOX_HOSTS: readonly string[] = ["*.googleapis.com", "*.pkg.dev", "*.run.app", "*.workers.dev", "api.resend.com", "api.brevo.com"]
 
 /** Build the command + argv for any supported headless agent family (`claude`, `codex`, `gemini` → agy). */
-export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string }): { cmd: string; args: string[]; cleanup?: () => void } {
+export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prompt: string; sessionId: string; resume: boolean; mode: string; agent?: string; model?: string; home?: string }): { cmd: string; args: string[]; cleanup?: () => void } {
   if (opts.family === "codex") return { cmd: "codex", args: buildHeadlessCodexArgs(opts) }
   if (opts.family === "gemini") {
     let tempDir: string | null = null
-    const args = buildHeadlessGeminiArgs({ ...opts, onTempDir: (d) => { tempDir = d } })
+    const args = [...buildHeadlessGeminiArgs({ ...opts, onTempDir: (d) => { tempDir = d } }), "--settings", agyWorkerSettings(opts.home)]
     return {
       cmd: agyBin(),
       args,

@@ -535,6 +535,8 @@ describe("createWorkerSupervisor", () => {
     expect(resolveWorkerFamily({})).toBe("gemini")
     expect(resolveWorkerFamily({ agent: "builder" })).toBe("claude")
     expect(resolveWorkerFamily({ agent: "reviewer" })).toBe("claude")
+    expect(resolveWorkerFamily({ agent: "builder", model: "gpt-5.4" })).toBe("codex")
+    expect(resolveWorkerFamily({ agent: "builder", model: "gemini-4-argon-high" })).toBe("gemini")
     expect(resolveWorkerFamily({ family: "claude" })).toBe("claude")
     expect(resolveWorkerFamily({ agent: "claude" })).toBe("claude")
     for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "opus", "sonnet", "haiku", "fable"]) {
@@ -554,12 +556,32 @@ describe("createWorkerSupervisor", () => {
     const codexResume = buildHeadlessCodexArgs({ prompt: "add test", sessionId: "sid-cx", resume: true, mode: "auto", model: "gpt-5.4" })
     expect(codexResume).toEqual(["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.4", "--", "sid-cx", "add test"])
 
-    const geminiFresh = buildHeadlessGeminiArgs({ prompt: "-build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "Gemini 4 Argon (High)", home: "/h/test" })
+    // buildHeadlessGeminiArgs itself never injects worker --settings (so Headless Brain keeps its MCP tools).
+    const geminiFresh = buildHeadlessGeminiArgs({ prompt: "-build ui", sessionId: "sid-gm", resume: false, mode: "auto", model: "Gemini 4 Argon (High)" })
     expect(geminiFresh).toEqual([
-      "--print=-build ui", "--output-format", "stream-json", "--settings", agyWorkerSettings("/h/test"),
+      "--print=-build ui", "--output-format", "stream-json",
       "--model", "gemini-4-argon-high", "--dangerously-skip-permissions",
     ])
-    const parsedSettings = JSON.parse(geminiFresh[geminiFresh.indexOf("--settings") + 1]!) as { permissions: { deny: string[] } }
+    expect(geminiFresh).not.toContain("--settings")
+
+    let brainTempDir = ""
+    const brainBigArgs = buildHeadlessGeminiArgs({
+      prompt: "z".repeat(GEMINI_INLINE_PROMPT_MAX + 100),
+      sessionId: "sid-brain",
+      resume: false,
+      mode: "auto",
+      onTempDir: (d) => { brainTempDir = d },
+    })
+    expect(brainBigArgs).not.toContain("--settings")
+    expect(brainTempDir).not.toBe("")
+    expect(existsSync(join(brainTempDir, "prompt.txt"))).toBe(true)
+    rmSync(brainTempDir, { recursive: true, force: true })
+
+    // buildHeadlessWorkerInvocation attaches worker --settings denying mcp(*) and host secret roots.
+    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "agy-cid", resume: true, mode: "acceptEdits", home: "/h/test" })
+    expect(geminiinv.cmd).toMatch(/(^|\/)agy$/)
+    expect(geminiinv.args).toEqual(["--print=build ui", "--output-format", "stream-json", "--conversation", "agy-cid", "--mode", "accept-edits", "--settings", agyWorkerSettings("/h/test")])
+    const parsedSettings = JSON.parse(geminiinv.args[geminiinv.args.indexOf("--settings") + 1]!) as { permissions: { deny: string[] } }
     expect(parsedSettings.permissions.deny).toContain("mcp(*)")
     for (const secretRoot of [
       "/h/test/.claude-companion", "/h/test/.config/tls-agent", "/h/test/.config/gh",
@@ -568,10 +590,6 @@ describe("createWorkerSupervisor", () => {
     ]) {
       expect(parsedSettings.permissions.deny).toContain(`read_file(${secretRoot})`)
     }
-
-    const geminiinv = buildHeadlessWorkerInvocation({ family: "gemini", prompt: "build ui", sessionId: "agy-cid", resume: true, mode: "acceptEdits" })
-    expect(geminiinv.cmd).toMatch(/(^|\/)agy$/)
-    expect(geminiinv.args).toEqual(["--print=build ui", "--output-format", "stream-json", "--settings", agyWorkerSettings(), "--conversation", "agy-cid", "--mode", "accept-edits"])
     expect(geminiinv.cleanup).toBeUndefined()
     expect(resolveWorkerFamily({ model: "Gemini 4 Argon (Medium)" })).toBe("gemini")
 
@@ -777,7 +795,7 @@ sleep 30 & wait $!
       const t4 = await sup.dispatchTask({ taskId: "cx-astra", repo: "claude-companion", prompt: "Switch to agy", family: "gemini" })
       expect(t4.ok && [t4.task.family, t4.task.model]).toEqual(["gemini", DEFAULT_GEMINI_WORKER_MODEL])
       expect(spawned[5]!.cmd).toMatch(/(^|\/)agy$/)
-      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_FOOTER}`, "--output-format", "stream-json", "--settings", agyWorkerSettings(), "--model", DEFAULT_GEMINI_WORKER_MODEL, "--dangerously-skip-permissions"])
+      expect(spawned[5]!.args).toEqual([`--print=Switch to agy\n\n${WORKER_FOOTER}`, "--output-format", "stream-json", "--model", DEFAULT_GEMINI_WORKER_MODEL, "--dangerously-skip-permissions", "--settings", agyWorkerSettings()])
       spawned[5]!.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-conv-1", init: { cwd: "/w" } }))
       spawned[5]!.onExit(0, null)
 

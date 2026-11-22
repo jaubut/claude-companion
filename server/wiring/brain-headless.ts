@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
@@ -199,6 +199,13 @@ export function createHeadlessBrainRunner(hooks: {
         delivering = false
         return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
       }
+      let tempPromptDir: string | null = null
+      const cleanupPromptDir = (): void => {
+        if (!tempPromptDir) return
+        const dir = tempPromptDir
+        tempPromptDir = null
+        try { rmSync(dir, { recursive: true, force: true }) } catch { /* best-effort */ }
+      }
       const cmd = family === "gemini" ? agyBin() : "claude"
       const args = family === "gemini"
         ? buildHeadlessGeminiArgs({
@@ -207,6 +214,7 @@ export function createHeadlessBrainRunner(hooks: {
             resume: !!agyConversationId,
             mode: "auto",
             model: turnModel,
+            onTempDir: (d) => { tempPromptDir = d },
           })
         : buildHeadlessClaudeArgs({
             prompt: text,
@@ -262,6 +270,7 @@ export function createHeadlessBrainRunner(hooks: {
             if (!settled) hooks.noteActivity(currentSessionId)
           },
           onExit(code, sig) {
+            cleanupPromptDir()
             if (settled) return
             settled = true
             delivering = false
@@ -283,6 +292,7 @@ export function createHeadlessBrainRunner(hooks: {
         }
         return Response.json({ ok: true })
       } catch (err) {
+        cleanupPromptDir()
         settled = true
         delivering = false
         activeHandle = null
