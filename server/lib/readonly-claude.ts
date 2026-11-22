@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { parseCliResult } from "./cli-json"
 import { resolveClaudeBin } from "./receipt-sonnet"
+import { agyBin, normalizeAgyCliModelFlag } from "./worker-invocation"
 
 // One hardened, read-only headless `claude -p` (shared by the Body investigator
 // and the front door's quick_look). Read-only by construction, verified on
@@ -60,13 +61,46 @@ export function readonlyArgs(bin: string, spec: ReadonlySpec): string[] {
   ]
 }
 
+export function isReadonlyGeminiModel(model: string): boolean {
+  return /^(gemini|orchestrator)/i.test(model.trim())
+}
+
+export function readonlyAgyArgs(
+  prompt: string,
+  spec: ReadonlySpec,
+  opts: { timeoutMs?: number; addDirs?: string[] } = {},
+): string[] {
+  const fullPrompt = spec.system.trim() ? `${spec.system.trim()}\n\n${prompt}` : prompt
+  const dirs = opts.addDirs ?? spec.addDirs
+  const args = [
+    `--print=${fullPrompt}`,
+    "--mode", "plan",
+    "--model", normalizeAgyCliModelFlag(spec.model),
+    "--output-format", "text",
+    "--disable-slash-commands",
+  ]
+  if (opts.timeoutMs && opts.timeoutMs > 0) {
+    args.push("--print-timeout", `${Math.max(5, Math.ceil(opts.timeoutMs / 1000))}s`)
+  }
+  for (const d of dirs) {
+    if (d.trim()) args.push("--add-dir", d)
+  }
+  return args
+}
+
 const ENV_KEEP = ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "DOCKER_HOST"]
 
 /** Allowlisted child env: no notes DB / Companion / broker tokens ever reach the child. */
-export function readonlyEnv(env: Record<string, string | undefined> = process.env, home: string = process.env.HOME || homedir()): Record<string, string> {
+export function readonlyEnv(
+  env: Record<string, string | undefined> = process.env,
+  home: string = process.env.HOME || homedir(),
+  opts: { includeClaudeAuth?: boolean } = {},
+): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of ENV_KEEP) if (env[k]) out[k] = env[k]!
-  for (const [k, v] of Object.entries(env)) if (v && /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDE_CONFIG_DIR)$/.test(k)) out[k] = v
+  if (opts.includeClaudeAuth !== false) {
+    for (const [k, v] of Object.entries(env)) if (v && /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDE_CONFIG_DIR)$/.test(k)) out[k] = v
+  }
   out.HOME ??= home
   out.PATH = [join(home, ".local/bin"), join(home, ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":")
   out.TERM = "dumb"
@@ -84,15 +118,37 @@ function timeoutText(ms: number): string {
   return ms >= 60_000 && ms % 60_000 === 0 ? `timed out after ${ms / 60_000} min` : `timed out after ${Math.round(ms / 1000)} s`
 }
 
-/** Spawn the real `claude -p` read-only. Returns the model's text (wrapper `.result`). Never throws. */
-export async function runReadonlyClaude(prompt: string, spec: ReadonlySpec, opts: { timeoutMs: number; cwd?: string }): Promise<ReadonlyRun> {
-  const bin = resolveClaudeBin()
-  if (!bin) return { ok: false, error: "claude binary not found" }
+export interface ReadonlyRunOpts {
+  timeoutMs: number
+  cwd?: string
+  home?: string
+  spawn?: typeof Bun.spawn
+  agy?: string
+  claude?: string | null
+}
+
+/** Spawn read-only headless `agy --mode plan` (Gemini) or `claude -p` (Claude). Never throws. */
+export async function runReadonlyClaude(prompt: string, spec: ReadonlySpec, opts: ReadonlyRunOpts): Promise<ReadonlyRun> {
+  const gemini = isReadonlyGeminiModel(spec.model)
+  const spawnFn = opts.spawn ?? Bun.spawn
+  const bin = gemini ? (opts.agy ?? agyBin(opts.home)) : (opts.claude !== undefined ? opts.claude : resolveClaudeBin())
+  if (!bin) return { ok: false, error: gemini ? "agy binary not found" : "claude binary not found" }
+  const home = opts.home ?? (process.env.HOME || homedir())
+  const emptyCwd = readonlyCwd(home)
+  const cwd = gemini ? emptyCwd : (opts.cwd ?? emptyCwd)
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    const cwd = opts.cwd ?? readonlyCwd()
     mkdirSync(cwd, { recursive: true })
-    proc = Bun.spawn(readonlyArgs(bin, spec), { cwd, env: { ...readonlyEnv(), DISPATCH_HEADLESS: "1" }, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" })
+    if (gemini) {
+      const extraDir = opts.cwd && opts.cwd !== emptyCwd ? [opts.cwd] : []
+      const addDirs = [...new Set([...spec.addDirs, ...extraDir])]
+      const argv = [bin, ...readonlyAgyArgs(prompt, spec, { timeoutMs: opts.timeoutMs, addDirs })]
+      const env = { ...readonlyEnv(process.env, home, { includeClaudeAuth: false }), DISPATCH_HEADLESS: "1", CLAUDE_NO_AGENT_ENV: "1" }
+      proc = spawnFn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    } else {
+      const env = { ...readonlyEnv(process.env, home), DISPATCH_HEADLESS: "1" }
+      proc = spawnFn(readonlyArgs(bin, spec), { cwd, env, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" })
+    }
   } catch {
     return { ok: false, error: "spawn failed" }
   }
@@ -102,11 +158,12 @@ export async function runReadonlyClaude(prompt: string, spec: ReadonlySpec, opts
     const [out] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text()])
     const code = await proc.exited
     if (timedOut) return { ok: false, error: timeoutText(opts.timeoutMs) }
-    if (code !== 0) return { ok: false, error: `claude exited ${code}` }
-    const text = parseCliResult(out)
-    return text === null ? { ok: false, error: "no result in claude output" } : { ok: true, text }
+    const cliName = gemini ? "agy" : "claude"
+    if (code !== 0) return { ok: false, error: `${cliName} exited ${code}` }
+    const text = gemini ? (out.trim() || null) : parseCliResult(out)
+    return text === null ? { ok: false, error: `no result in ${cliName} output` } : { ok: true, text }
   } catch {
-    return { ok: false, error: "claude run crashed" }
+    return { ok: false, error: gemini ? "agy run crashed" : "claude run crashed" }
   } finally {
     clearTimeout(timer)
   }

@@ -29,7 +29,7 @@ import { orchEmit } from "./orchestrator"
 const DEFAULT_FAMILY_MODELS = {
   claude: "claude-sonnet-5-5",
   codex: "gpt-5.4",
-  gemini: "gemini-3.1-pro-preview",
+  gemini: "gemini-4-argon-high",
 } as const
 /** How long a "PR ready" turn waits for its PR link before it reads completed. */
 const LINK_DEADLINE_MS = 20_000

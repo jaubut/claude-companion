@@ -68,7 +68,14 @@ function world(pr: Record<string, unknown>, seed = TASK, opts: { mergeSticks?: b
   }
   // The gate has its own matrix (merge-gate-callers.test.ts): here it passes at the head GitHub reports.
   const gate: MergeGateFn = async () => ({ ok: true, head: String(state.headRefOid), base: String(state.baseRefName) })
-  return { db, calls, events, deps: { gh, exec, event: (t: string) => events.push(t), gate, pausedFlag: join(flagDir, "claude-review-paused") } }
+  return {
+    db, calls, events,
+    deps: {
+      gh, exec, event: (t: string) => events.push(t), gate,
+      pausedFlag: join(flagDir, "claude-review-paused"),
+      claudeNormalFlag: join(flagDir, "claude-review-normal"),
+    },
+  }
 }
 
 const park = (action: string, reason: string) =>
@@ -117,90 +124,101 @@ describe("bin/pr-merge gate: refusals", () => {
     })
   }
 
-  test("normal tier: one Claude APPROVE on the head merges", async () => {
-    expect((await mergeAgentPr(input, world(green({ comments: [tier("normal"), review("claude", "APPROVE")] })).deps)).status).toBe(200)
+  test("normal tier: Gemini (or historical Codex) APPROVE on the head merges by default; Claude APPROVE alone refuses", async () => {
+    expect((await mergeAgentPr(input, world(green({ comments: [tier("normal"), review("gemini", "APPROVE")] })).deps)).status).toBe(200)
+    expect((await mergeAgentPr(input, world(green({ comments: [tier("normal"), review("codex", "APPROVE")] })).deps)).status).toBe(200)
+    const claudeOnly = await refused(green({ comments: [tier("normal"), review("claude", "APPROVE")] }))
+    expect([claudeOnly.status, claudeOnly.body.error]).toEqual([409, "not_approved"])
   })
 
-  test("normal tier: an APPROVE of an older head does not count", async () => {
-    const out = await refused(green({ comments: [tier("normal"), review("codex", "APPROVE")] }))
-    expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+  test("normal tier: an APPROVE of an older head or any CHANGES blocks merge", async () => {
+    for (const comments of [
+      [tier("normal"), review("gemini", "APPROVE", OLD)],
+      [tier("normal"), review("codex", "APPROVE", OLD)],
+      [tier("normal"), review("gemini", "APPROVE"), review("claude", "CHANGES")],
+      [tier("normal"), review("gemini", "CHANGES")],
+    ]) {
+      const out = await refused(green({ comments }))
+      expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+    }
+    const ghChanges = await refused(green({ comments: [tier("normal"), review("gemini", "APPROVE")], reviewDecision: "CHANGES_REQUESTED" }))
+    expect([ghChanges.status, ghChanges.body.error]).toEqual([409, "not_approved"])
   })
 
   for (const [what, marker] of [["high", [tier("high")]], ["no", []], ["a stale normal then high", [tier("normal"), tier("high")]], ["a stranger's normal", [{ ...tier("normal"), author: { login: "x" } }]]] as const) {
-    test(`${what} marker needs Gemini too`, async () => {
-      const out = await refused(green({ comments: [...marker, review("claude", "APPROVE")] }))
-      expect([out.status, out.body.error]).toEqual([409, "not_approved"])
+    test(`${what} marker needs both Claude and Gemini`, async () => {
+      const claudeOnly = await refused(green({ comments: [...marker, review("claude", "APPROVE")] }))
+      expect([claudeOnly.status, claudeOnly.body.error]).toEqual([409, "not_approved"])
+      const geminiOnly = await refused(green({ comments: [...marker, review("gemini", "APPROVE")] }))
+      expect([geminiOnly.status, geminiOnly.body.error]).toEqual([409, "not_approved"])
     })
   }
 
-  // Claude reviews paused: the flag file's existence (read on each call) lets a normal-tier, non-client PR merge on Codex alone.
-  describe("claude-review-paused flag", () => {
+  // Opt-back flag (claude-review-normal) & override flag (claude-review-paused): read on each call.
+  describe("claude-review-normal opt-back and claude-review-paused flags", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-prmerge-flag-"))
-    const flag = join(dir, "claude-review-paused")
+    const normalFlag = join(dir, "claude-review-normal")
+    const pausedFlag = join(dir, "claude-review-paused")
     const absent = join(dir, "never-created")
-    writeFileSync(flag, "")
+    writeFileSync(normalFlag, "")
+    writeFileSync(pausedFlag, "")
     const CLIENT_TASK = `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', 'client', '${URL}');`
-    const run = async (pr: Record<string, unknown>, path: string, seed = TASK) => {
+    const run = async (pr: Record<string, unknown>, opts: { paused?: string; normal?: string } = {}, seed = TASK) => {
       const w = world(pr, seed)
-      const out = await mergeAgentPr(input, { ...w.deps, pausedFlag: path })
+      const out = await mergeAgentPr(input, { ...w.deps, pausedFlag: opts.paused ?? absent, claudeNormalFlag: opts.normal ?? absent })
       return { out, merged: merges(w.calls).length }
     }
+    const geminiOnly = (...extra: unknown[]) => green({ comments: [tier("normal"), review("gemini", "APPROVE"), ...extra] })
     const codexOnly = (...extra: unknown[]) => green({ comments: [tier("normal"), review("codex", "APPROVE"), ...extra] })
+    const claudeOnly = green({ comments: [tier("normal"), review("claude", "APPROVE")] })
     const notApproved = (r: Awaited<ReturnType<typeof run>>) => {
       expect([r.out.status, r.out.body.error, r.merged]).toEqual([409, "not_approved", 0])
     }
 
-    test("flag absent: normal tier + Codex only still 409 not_approved", async () => notApproved(await run(codexOnly(), absent)))
-
-    test("flag present, normal tier, Codex APPROVE: merges", async () => {
-      const r = await run(codexOnly(), flag)
-      expect([r.out.status, r.merged]).toEqual([200, 1])
+    test("default (no flags): normal tier + Gemini/Codex APPROVE merges; client-origin still needs both", async () => {
+      expect((await run(geminiOnly())).out.status).toBe(200)
+      expect((await run(codexOnly())).out.status).toBe(200)
+      notApproved(await run(geminiOnly(), {}, CLIENT_TASK))
+      notApproved(await run({ ...geminiOnly(), labels: [{ name: "client-origin" }] }))
+      notApproved(await run(claudeOnly, {}, CLIENT_TASK))
+      expect((await run(green({ comments: [tier("normal"), review("claude", "APPROVE"), review("gemini", "APPROVE")] }), {}, CLIENT_TASK)).out.status).toBe(200)
     })
 
-    test("flag present: a Codex comment tagged (codex only, Claude review paused) merges", async () => {
+    test("claude-review-normal present (unpaused): normal tier opts back to Claude; Gemini-only refuses", async () => {
+      expect((await run(claudeOnly, { normal: normalFlag })).out.status).toBe(200)
+      notApproved(await run(geminiOnly(), { normal: normalFlag }))
+      notApproved(await run(codexOnly(), { normal: normalFlag }))
+      notApproved(await run(claudeOnly, { normal: normalFlag }, CLIENT_TASK))
+      notApproved(await run({ ...claudeOnly, labels: [{ name: "client-origin" }] }, { normal: normalFlag }))
+    })
+
+    test("claude-review-paused overrides claude-review-normal: normal tier uses Gemini/Codex", async () => {
+      expect((await run(geminiOnly(), { paused: pausedFlag, normal: normalFlag })).out.status).toBe(200)
+      expect((await run(codexOnly(), { paused: pausedFlag, normal: normalFlag })).out.status).toBe(200)
+      notApproved(await run(claudeOnly, { paused: pausedFlag, normal: normalFlag }))
       const tagged = { author: { login: BOT }, body: `🧠 **Codex review** (codex only, Claude review paused)\n\nVERDICT: APPROVE <!-- reviewed-sha: ${SHA} -->` }
-      const r = await run(green({ comments: [tier("normal"), tagged] }), flag)
-      expect([r.out.status, r.merged]).toEqual([200, 1])
+      expect((await run(green({ comments: [tier("normal"), tagged] }), { paused: pausedFlag })).out.status).toBe(200)
     })
 
-    test("flag is read on every call, never cached", async () => {
-      const f = join(dir, "toggled")
+    test("flags are read on every call, never cached", async () => {
+      const f = join(dir, "toggled-normal")
       writeFileSync(f, "")
-      expect((await run(codexOnly(), f)).out.status).toBe(200)
+      expect((await run(claudeOnly, { normal: f })).out.status).toBe(200)
       rmSync(f)
-      notApproved(await run(codexOnly(), f))
+      notApproved(await run(claudeOnly, { normal: f }))
+      expect((await run(geminiOnly(), { normal: f })).out.status).toBe(200)
     })
-
-    test("flag present: Codex CHANGES refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("codex", "CHANGES")] }), flag)))
-    test("flag present: Claude CHANGES refuses even with a Codex APPROVE", async () => notApproved(await run(codexOnly(review("claude", "CHANGES")), flag)))
-    test("flag present: Codex APPROVE of an older head refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("codex", "APPROVE", OLD)] }), flag)))
-    test("flag present: no Codex review refuses", async () => notApproved(await run(green({ comments: [tier("normal")] }), flag)))
-    test("flag present: GitHub CHANGES_REQUESTED refuses", async () => notApproved(await run({ ...codexOnly(), reviewDecision: "CHANGES_REQUESTED" }, flag)))
 
     for (const [what, marker] of [["high tier", [tier("high")]], ["no tier marker", []]] as const) {
-      test(`flag present: ${what} still needs both`, async () => notApproved(await run(green({ comments: [...marker, review("codex", "APPROVE")] }), flag)))
+      test(`opt-back flag present: ${what} still needs both`, async () => {
+        notApproved(await run(green({ comments: [...marker, review("claude", "APPROVE")] }), { normal: normalFlag }))
+        notApproved(await run(green({ comments: [...marker, review("gemini", "APPROVE")] }), { normal: normalFlag }))
+      })
     }
 
-    test("flag present: a low marker on code still needs both", async () => notApproved(await run(green({ files: [{ path: "server/lib/a.ts" }], comments: [tier("low"), review("codex", "APPROVE")] }), flag)))
-
-    test("flag present: a client-origin task is unchanged (needs both)", async () => notApproved(await run(codexOnly(), flag, CLIENT_TASK)))
-    test("flag present: a client-origin PR label is unchanged (needs both)", async () => notApproved(await run({ ...codexOnly(), labels: [{ name: "client-origin" }] }, flag)))
-    const claudeOnly = green({ comments: [tier("normal"), review("claude", "APPROVE")] })
-    test("flag present: normal tier + Claude APPROVE only refuses (Codex replaces Claude)", async () => notApproved(await run(claudeOnly, flag)))
-    test("flag present: a client-origin task with Claude APPROVE only refuses", async () => notApproved(await run(claudeOnly, flag, CLIENT_TASK)))
-    test("flag present: a client-origin label with Claude APPROVE only refuses", async () => notApproved(await run({ ...claudeOnly, labels: [{ name: "client-origin" }] }, flag)))
-    test("flag absent: a client-origin task with Claude APPROVE only merges, as before", async () => {
-      expect((await run(claudeOnly, absent, CLIENT_TASK)).out.status).toBe(200)
-    })
-    test("flag present, normal tier, Gemini APPROVE: merges", async () => {
-      const r = await run(green({ comments: [tier("normal"), review("gemini", "APPROVE")] }), flag)
-      expect([r.out.status, r.merged]).toEqual([200, 1])
-    })
-    test("flag present: Gemini APPROVE of an older head refuses", async () => notApproved(await run(green({ comments: [tier("normal"), review("gemini", "APPROVE", OLD)] }), flag)))
-
-    test("flag present: client-origin with both reviews still merges, as today", async () => {
-      const r = await run(green({ comments: [tier("normal"), review("claude", "APPROVE"), review("codex", "APPROVE")] }), flag, CLIENT_TASK)
-      expect([r.out.status, r.merged]).toEqual([200, 1])
+    test("low marker on code still needs both regardless of flags", async () => {
+      notApproved(await run(green({ files: [{ path: "server/lib/a.ts" }], comments: [tier("low"), review("gemini", "APPROVE")] })))
+      notApproved(await run(green({ files: [{ path: "server/lib/a.ts" }], comments: [tier("low"), review("claude", "APPROVE")] }), { normal: normalFlag }))
     })
   })
 

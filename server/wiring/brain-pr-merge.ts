@@ -27,13 +27,16 @@ export { retiredPark } from "./brain-pr-park"
 //     twice-approved agent PR). A tainted park or one that says `human merge`
 //     is never retired, including with a client-origin prefix.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
-//   not_approved (409): Claude AND Gemini auto-review comments with VERDICT:
-//     APPROVE stamped with the current head sha, from the PR's author (the
-//     dispatch account); none with CHANGES on that head; no CHANGES_REQUESTED
+//   not_approved (409):
+//     - low tier (allowlisted low files): 0 reviews required (any CHANGES still blocks)
+//     - normal tier (non-client): Gemini (or historical Codex) VERDICT: APPROVE
+//       stamped with the current head sha (or Claude instead when
+//       ~/.claude/state/claude-review-normal exists and reviews aren't paused)
+//     - high tier, unmarked PRs, and client-origin PRs: BOTH Claude AND Gemini
+//       (or Codex) VERDICT: APPROVE stamped with the current head sha
+//     - any VERDICT: CHANGES from Claude/Gemini/Codex on the head or GitHub
+//       CHANGES_REQUESTED always blocks merge
 //   base read again (409 base_moved / gate_unavailable): the gate's reads are behind all of the above
-//     TEMPORARY: while the flag file ~/.claude/state/claude-review-paused exists (read on every call), a
-//     `normal` tier PR needs the Gemini APPROVE instead of Claude's (no CHANGES from either reviewer);
-//     a client-origin one needs both.
 //   caller still there (409 client_gone): nobody would hear the answer, so nothing merges
 // Then `gh pr merge --squash --match-head-commit <checked sha>`: a head pushed
 // after the checks makes GitHub refuse. Each merge is a `brain:pr-merge`
@@ -60,9 +63,11 @@ interface PrMergeDeps {
   event(text: string): void
   gate: MergeGateFn
   pausedFlag?: string
+  claudeNormalFlag?: string
   humanApproved?(pr: number, repo: string): boolean
 }
 const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
+const CLAUDE_NORMAL_FLAG = join(homedir(), ".claude", "state", "claude-review-normal")
 const HUMAN_APPROVAL_WINDOW_MS = 30 * 60_000
 const NEGATION_RE = /\b(don't|dont|do not|never|no|wait|hold|stop|refuse|pas)\b/i
 const MERGE_VERB_RE = /\b(merge|ship|land|refresh|update|unblock|fusionne|fusionner)\b/i
@@ -185,7 +190,7 @@ function notGreen(v: PrView): string[] {
 }
 
 /** Why the review cascade has not approved this head (empty = approved). */
-function notApproved(v: PrView, claudePaused = false, clientOrigin = false): string[] {
+function notApproved(v: PrView, claudeNormal = false, clientOrigin = false): string[] {
   const out: string[] = []
   const login = v.author?.login
   if (!login || !v.headRefOid) return ["no PR author or head sha"]
@@ -197,10 +202,12 @@ function notApproved(v: PrView, claudePaused = false, clientOrigin = false): str
   // The shepherd's newest tier marker (claude-config PR 230); no marker counts as high.
   const tier = v.comments.filter((c) => c.author?.login === login).map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
   if (tier === "low" && v.files.length > 0 && v.files.length < LOW_FILE_LIMIT && v.files.every((f) => LOW_FILE.test(String(f.path)))) return out
-  // Paused: a normal tier needs the second reviewer (Gemini); a client-origin one keeps Claude too (both).
-  const secondOnly = claudePaused && tier === "normal" && !clientOrigin
-  if (!secondOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
-  if ((tier !== "normal" || claudePaused) && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Gemini (or Codex) APPROVE on this head")
+  // Normal non-client PRs require Gemini (or historical Codex) APPROVE by default; ~/.claude/state/claude-review-normal
+  // opts back into Claude-only normal-tier review (unless paused). High, unmarked, and client-origin PRs require both.
+  const normalClaudeOnly = claudeNormal && tier === "normal" && !clientOrigin
+  const normalGeminiOnly = !claudeNormal && tier === "normal" && !clientOrigin
+  if (!normalGeminiOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Claude APPROVE on this head")
+  if (!normalClaudeOnly && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) out.push("no Gemini (or Codex) APPROVE on this head")
   return out
 }
 
@@ -226,7 +233,9 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
   if (!humanApproved) {
-    const unapproved = notApproved(v, existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG), park.clientOrigin)
+    const claudePaused = existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG)
+    const claudeNormal = !claudePaused && existsSync(deps.claudeNormalFlag ?? CLAUDE_NORMAL_FLAG)
+    const unapproved = notApproved(v, claudeNormal, park.clientOrigin)
     if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   }
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.

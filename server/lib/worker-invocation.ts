@@ -420,12 +420,14 @@ export function resolveWorkerFamily(opts: { family?: string; agent?: string; mod
   const rawFamily = opts.family?.trim().toLowerCase()
   if (rawFamily) return ALLOWED_FAMILIES.has(rawFamily as WorkerFamily) ? (rawFamily as WorkerFamily) : null
   const rawAgent = opts.agent?.trim().toLowerCase()
+  if (rawAgent === "claude") return "claude"
   if (rawAgent === "codex") return "codex"
   if (rawAgent === "gemini") return "gemini"
   const rawModel = opts.model?.trim().toLowerCase() ?? ""
+  if (/^(claude-|opus|sonnet|haiku|fable)/.test(rawModel)) return "claude"
   if (/^(gpt-|o1\b|o3\b|o4\b|codex)/.test(rawModel)) return "codex"
   if (/^(gemini[- ]|orchestrator)/.test(rawModel)) return "gemini"
-  return "claude"
+  return "gemini"
 }
 
 /** False when `model` names another family's model (a `claude-*` id handed to codex/agy or a codex id handed to agy). */

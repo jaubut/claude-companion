@@ -54,13 +54,13 @@ const untouched = (w: ReturnType<typeof world>) => {
 }
 
 describe("bin/pr-resolve-conflicts gate", () => {
-  test("dispatches a fresh sonnet worker on the PR head branch, records it and tells the brain thread", async () => {
+  test("dispatches a fresh gemini-4-argon-high worker on the PR head branch, records it and tells the brain thread", async () => {
     const w = world(open())
     const out = await resolveAgentPrConflicts(input, w.deps)
     expect(out).toEqual({ status: 200, body: { ok: true, dispatched: true, taskId: TASK_ID, url: URL, branch: "dispatch/abcd1234", head: HEAD } })
     expect(w.dispatched).toHaveLength(1)
     const d = w.dispatched[0]!
-    expect(d).toMatchObject({ taskId: TASK_ID, repo: "r", family: "claude", model: "claude-sonnet-5-5", targetBranch: "dispatch/abcd1234", targetPrUrl: URL })
+    expect(d).toMatchObject({ taskId: TASK_ID, repo: "r", family: "gemini", model: "gemini-4-argon-high", targetBranch: "dispatch/abcd1234", targetPrUrl: URL })
     expect(d.claim).toBeUndefined()
     expect(d.prompt).toContain("git merge --no-ff --no-commit origin/main")
     expect(d.prompt).toContain("git push origin HEAD:refs/heads/dispatch/abcd1234")

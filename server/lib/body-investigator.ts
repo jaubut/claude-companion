@@ -20,7 +20,7 @@ import { redactSecrets } from "./secret-redact"
 // The prompt goes on stdin; the env is allowlisted (no notes DB / Companion tokens).
 
 export const INVESTIGATE_TIMEOUT_MS = 10 * 60_000
-export const DEFAULT_MODEL = "sonnet"
+export const DEFAULT_MODEL = "gemini-4-hydrogen-high"
 const EVENTS_IN_PROMPT = 20
 const TEXT_MAX = 600
 const EVIDENCE_MAX = 10

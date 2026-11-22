@@ -2,7 +2,7 @@
 // PR's head. It never resumes the feature author's session, so it reads both sides of the merge without that
 // transcript's bias. Dispatch workers cannot create merge commits through GitHub; this one does it locally.
 
-export const CONFLICT_RESOLVER_MODEL = "claude-sonnet-5-5"
+export const CONFLICT_RESOLVER_MODEL = "gemini-4-argon-high"
 
 export interface ConflictResolverPr {
   repo: string; pr: number; url: string; title: string

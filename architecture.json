@@ -4397,16 +4397,19 @@
         },
         {
           "path": "lib/readonly-claude.ts",
-          "lines": 114,
+          "lines": 171,
           "kind": "lib",
           "exports": [
             "ReadonlySpec",
             "SECRET_PATHS",
             "BASE_DISALLOWED",
             "readonlyArgs",
+            "isReadonlyGeminiModel",
+            "readonlyAgyArgs",
             "readonlyEnv",
             "readonlyCwd",
             "ReadonlyRun",
+            "ReadonlyRunOpts",
             "runReadonlyClaude"
           ],
           "state": [],
@@ -4416,7 +4419,8 @@
           "apiCalls": [],
           "imports": [
             "lib/cli-json.ts",
-            "lib/receipt-sonnet.ts"
+            "lib/receipt-sonnet.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7079,7 +7083,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 548,
+          "lines": 550,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -8320,7 +8324,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 321,
+          "lines": 322,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -9149,7 +9153,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 268,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9585,7 +9589,7 @@
         },
         {
           "path": "wiring/desk-deliver.ts",
-          "lines": 193,
+          "lines": 199,
           "kind": "lib",
           "exports": [
             "deskRunner",
@@ -9612,6 +9616,7 @@
             "lib/questions.ts",
             "lib/command-catalog.ts",
             "lib/desk-runner.ts",
+            "lib/worker-invocation.ts",
             "lib/orphan-question.ts",
             "state.ts",
             "wiring/dialogs.ts",
@@ -11358,7 +11363,8 @@
         "normalizeAgyCliModelFlag": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/agy-feed.ts"
+            "lib/agy-feed.ts",
+            "lib/readonly-claude.ts"
           ]
         },
         "readTailLines": {
@@ -14297,6 +14303,7 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/ops-triage.ts",
+            "lib/readonly-claude.ts",
             "wiring/brain-headless.ts"
           ]
         },
@@ -16763,7 +16770,8 @@
         "resolveWorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/desk-deliver.ts"
           ]
         },
         "modelFitsFamily": {

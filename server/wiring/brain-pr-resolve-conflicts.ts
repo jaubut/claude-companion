@@ -13,7 +13,7 @@ import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
 
 // bin/pr-resolve-conflicts (POST /hooks/brain/pr-resolve-conflicts): a conflicting agent PR gets a fresh, neutral
-// claude-sonnet-5-5 worker on a fresh branch at its head (it pushes to the head), never a resumed builder session. Every check is made here from
+// Gemini (gemini-4-argon-high) worker on a fresh branch at its head (it pushes to the head), never a resumed builder session. Every check is made here from
 // GitHub and the notes DB, never from the caller's word:
 //   repo jaubut/* (403 not_own_repo) · open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
 //   not a fork (403 cross_repository) · base plain ref characters (403 unsafe_base) ·
@@ -95,7 +95,7 @@ export async function resolveAgentPrConflicts(p: ResolveInput, deps: ResolveDeps
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   const taskId = conflictTaskId(p.repo, p.pr, v.headRefOid)
   const run = await deps.dispatch({
-    taskId, repo: p.repo.split("/")[1]!, family: "claude", model: CONFLICT_RESOLVER_MODEL, mode: "auto",
+    taskId, repo: p.repo.split("/")[1]!, family: "gemini", model: CONFLICT_RESOLVER_MODEL, mode: "auto",
     title: `Resolve conflicts: ${v.title}`.slice(0, 200), targetBranch: v.headRefName, targetPrUrl: v.url,
     prompt: buildConflictResolverPrompt({ ...p, reason, url: v.url, title: v.title, headRefName: v.headRefName, baseRefName: v.baseRefName, headRefOid: v.headRefOid }),
   }).catch((err: unknown) => ({ ok: false as const, status: 500, error: String((err as Error)?.message ?? err).slice(0, 200) }))

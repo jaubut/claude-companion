@@ -209,12 +209,13 @@ describe("createWorkerSupervisor", () => {
         agent: "--bad-flag",
       })).toEqual({ ok: false, status: 400, error: "invalid_agent" })
 
-      // Turn 1 dispatch
+      // Turn 1 dispatch (explicit Claude)
       const d1 = await sup.dispatchTask({
         taskId: "task-1",
         repo: "claude-companion",
         prompt: "Implement feature",
         title: "Implement feature",
+        family: "claude",
       })
       expect(d1.ok).toBe(true)
       if (!d1.ok) return
@@ -349,8 +350,8 @@ describe("createWorkerSupervisor", () => {
     try {
       // 1. Two simultaneous dispatches of the same taskId -> exactly one succeeds, one gets 409
       const [r1, r2] = await Promise.all([
-        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "First" }),
-        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Second" }),
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "First", family: "claude" }),
+        sup.dispatchTask({ taskId: "race-1", repo: "claude-companion", prompt: "Second", family: "claude" }),
       ])
       const oks = [r1, r2].filter((r) => r.ok)
       const errs = [r1, r2].filter((r) => !r.ok)
@@ -372,12 +373,12 @@ describe("createWorkerSupervisor", () => {
       // 3. Synchronous spawn failure marks task failed instead of leaving it permanently running,
       // and retry uses --session-id (not --resume) because no session was created on the failed attempt.
       throwOnSpawn = true
-      const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run" })
+      const failDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Run", family: "claude" })
       expect(failDisp.ok).toBe(false)
       expect(sup.getTask("spawn-err")?.status).toBe("failed")
 
       throwOnSpawn = false
-      const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry" })
+      const retryDisp = await sup.dispatchTask({ taskId: "spawn-err", repo: "claude-companion", prompt: "Retry", family: "claude" })
       expect(retryDisp.ok).toBe(true)
       expect(spawned.at(-1)?.args).toContain("--session-id")
       expect(spawned.at(-1)?.args).not.toContain("--resume")
@@ -435,7 +436,7 @@ describe("createWorkerSupervisor", () => {
 
     try {
       const sup1 = makeSup()
-      const d1 = await sup1.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Turn 1" })
+      const d1 = await sup1.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Turn 1", family: "claude" })
       expect(d1.ok).toBe(true)
 
       // Emit session_id on stdout (persists sessionStarted = true immediately before turn exit)
@@ -530,11 +531,21 @@ describe("createWorkerSupervisor", () => {
     }
   })
 
-  test("supports headless Codex and Gemini agent families and parses their stream-json events", async () => {
+  test("supports headless Codex and Gemini agent families (Gemini default) and parses their stream-json events", async () => {
+    expect(resolveWorkerFamily({})).toBe("gemini")
+    expect(resolveWorkerFamily({ agent: "builder" })).toBe("gemini")
+    expect(resolveWorkerFamily({ family: "claude" })).toBe("claude")
+    expect(resolveWorkerFamily({ agent: "claude" })).toBe("claude")
+    for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "opus", "sonnet", "haiku", "fable"]) {
+      expect(resolveWorkerFamily({ model: m })).toBe("claude")
+    }
     expect(resolveWorkerFamily({ family: "codex" })).toBe("codex")
+    expect(resolveWorkerFamily({ agent: "codex" })).toBe("codex")
     expect(resolveWorkerFamily({ family: "gemini" })).toBe("gemini")
+    expect(resolveWorkerFamily({ agent: "gemini" })).toBe("gemini")
     expect(resolveWorkerFamily({ model: "gpt-5.4" })).toBe("codex")
     expect(resolveWorkerFamily({ model: "gemini-3.1-pro-preview" })).toBe("gemini")
+    expect(resolveWorkerFamily({ model: "gemini-4-argon-high" })).toBe("gemini")
     expect(resolveWorkerFamily({ family: "unknown" })).toBeNull()
 
     const codexFresh = buildHeadlessCodexArgs({ prompt: "fix bug", sessionId: "sid-cx", resume: false, mode: "auto", model: "gpt-5.4" })
@@ -782,7 +793,7 @@ sleep 30 & wait $!
     const HAIKU = "claude-haiku-4-5-20251001"
     try {
       let sup = make()
-      await sup.dispatchTask({ taskId: "pin-1", repo: "claude-companion", prompt: "Build" }); finish()
+      await sup.dispatchTask({ taskId: "pin-1", repo: "claude-companion", prompt: "Build", family: "claude" }); finish()
       sup.setTaskModel("pin-1", HAIKU)
       for (const turn of [2, 3]) {
         const t = await inject(sup, "pin-1", `Turn ${turn}`)
@@ -797,7 +808,7 @@ sleep 30 & wait $!
       finish()
 
       // Never picked: the router re-routes turns 2-3 (Sonnet when localized) and escalates to Opus from turn 4.
-      await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build" }); finish()
+      await sup.dispatchTask({ taskId: "routed-1", repo: "claude-companion", prompt: "Build", family: "claude" }); finish()
       for (const turn of [2, 3]) {
         const r = await inject(sup, "routed-1", `Turn ${turn}`); finish()
         expect(r.ok && r.task.model).toBe("claude-sonnet-5-5")
@@ -866,7 +877,7 @@ sleep 30 & wait $!
       },
     })
     try {
-      await sup.dispatchTask({ taskId: "sec-claude", repo: "claude-companion", prompt: "Deploy" })
+      await sup.dispatchTask({ taskId: "sec-claude", repo: "claude-companion", prompt: "Deploy", family: "claude" })
       const env = spawned[0]!.env
       expect(env.RESEND_API_KEY).toBe("re_secret")
       expect(env.CLOUDFLARE_API_TOKEN).toBe("cf_secret")
@@ -1380,7 +1391,7 @@ sleep 30 & wait $!
       spawnWorker: (opts) => { spawned.push(opts); return { pid: 0, kill() {} } },
     })
     try {
-      await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Start" })
+      await sup.dispatchTask({ taskId: "task-b", repo: "claude-companion", prompt: "Start", family: "claude" })
       spawned[0]!.onStdoutLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }))
       spawned[0]!.onExit(0, null)
       onBranch = "dispatch/task-b-c"
@@ -1414,7 +1425,7 @@ sleep 30 & wait $!
     const report = `v8 ready: https://frame.io/v8-granby\nMusic: "Northern Lights" (Artlist), cut to the drop at 0:42.\nQA: ${"checked ".repeat(800)}all green.`
     const result = (text: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text })
     try {
-      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8 edit" })
+      await sup.dispatchTask({ taskId: "fd0fea0d", repo: "claude-companion", prompt: "Granby v8 edit", family: "claude" })
       expect(spawned[0]!.args.at(-1)).toContain(WORKER_TURN_RULE)
       // Turn 1: the real report. Turn 2, same process: the harness wakes it for a background job.
       spawned[0]!.onStdoutLine(result(report))
@@ -1583,10 +1594,26 @@ sleep 30 & wait $!
       } finally { releaseGh(); releaseFetch(); rmSync(h.home, { recursive: true, force: true }) }
     })
 
+    test("unspecified headless worker dispatches default to gemini (agy); explicit claude override uses claude", async () => {
+      const h = harness()
+      try {
+        const dGem = await h.sup.dispatchTask({ taskId: "def-gm", repo: "claude-companion", prompt: "Build default" })
+        expect(dGem.ok && dGem.task.family).toBe("gemini")
+        expect(h.spawned[0]!.cmd).toMatch(/(^|\/)agy$/)
+        expect(h.spawned[0]!.args[0]).toContain("Build default")
+        expect(h.spawned[0]!.args).toContain("--output-format")
+        expect(h.spawned[0]!.args).toContain("stream-json")
+
+        const dCl = await h.sup.dispatchTask({ taskId: "exp-cl", repo: "claude-companion", prompt: "Build claude", family: "claude" })
+        expect(dCl.ok && dCl.task.family).toBe("claude")
+        expect(h.spawned[1]!.cmd).toBe("claude")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
     test("every brief tells the worker to commit, push and open its own PR, and not to end on background work (a88c7bd9)", async () => {
       const h = harness()
       try {
-        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD" })
+        await h.sup.dispatchTask({ taskId: "a88c7bd9", repo: "claude-companion", prompt: "NDI TX enclosure CAD", family: "claude" })
         const prompt = h.spawned[0]!.args.at(-1)!
         expect(prompt).toContain(WORKER_SHIP_RULE)
         expect(prompt).toContain(WORKER_TURN_RULE)
