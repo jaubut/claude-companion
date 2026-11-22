@@ -86,6 +86,7 @@ turn.card? = {kind:"dispatch"|"voice"|"worker_blocked", source:"app", taskId?, a
 | POST | `/hooks/brain/pr-close` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-close). |
 | POST | `/hooks/brain/pr-merge` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-merge). |
 | POST | `/hooks/brain/pr-update-branch` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as propose (brain/bin/pr-update-branch). |
+| POST | `/hooks/brain/pr-resolve-conflicts` | `{repo, pr, reason}` (repo `owner/name`, reason ≤ 300) | see below. Same auth as pr-update-branch: the brain session, or `lead-<repo>` for its own `jaubut/<repo>` (the `brain/bin/pr-resolve-conflicts` CLI wrapper lands with its `brain/.claude/settings.json` allow-list entries, a human-merge path). |
 | POST | `/hooks/brain/task-cancel` | `{task, reason}` (task = id or 8-char prefix, `^[\w-]{8,64}$`; reason ≤ 300) | see below. Same auth as propose (brain/bin/task-cancel). |
 | POST | `/hooks/brain/lead` | `{repo}` | `{ok, name, state}`: `running`, `starting`, `started`; 404 `no_lead_for_repo`; 502 down. Same auth as propose (brain/bin/lead). |
 | POST | `/hooks/brain/deploy` | `{repo, reason}` (repo `claude-companion` \| `claude-config`, reason ≤ 300) | deploy now, see below. Same auth as propose (brain/bin/deploy). |
@@ -203,6 +204,30 @@ The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `n
 | 502 `update_unverified` (+`head`, the old one) · 503 `gh_unreachable` | nothing recorded |
 | 502 `gh_bad_json` | the initial GitHub response is not valid JSON; no update attempted |
 | 503 `turso_unreachable` | origin or park/hold lookup failed; no update attempted |
+
+### Conflicting agent PRs (`/hooks/brain/pr-resolve-conflicts`)
+
+`pr-update-branch` refuses a CONFLICTING PR, and a dispatch worker cannot merge through GitHub. `wiring/brain-pr-resolve-conflicts.ts` hands the conflict to a **neutral resolver**: a fresh `claude-sonnet-5-5` headless worker with no builder transcript (an impartial reader of both sides beats resuming the feature author's session). It reads the PR from GitHub (`gh pr view`) and the notes DB, never from the caller's word, and refuses unless the PR is open, its head is `dispatch/*`, it is not client origin, parked or held (same `wiring/brain-pr-park.ts` check as pr-update-branch), and `mergeable` is `CONFLICTING`. An `UNKNOWN` mergeability is re-read once (3 s later).
+
+The worker is dispatched as task `conflict-<repo>-pr<n>-<head8>` with `targetBranch: <headRefName>` (`DispatchTaskInput`, only `dispatch/*`, never main or master): `ensureWorktree` checks out the PR's `origin/dispatch/...` tip in its own clean worktree `~/apps/wt/<repo>/<taskId>`, and no prior session resumes. Its prompt (`lib/conflict-resolver.ts`): fetch base and head, read both logs, `git merge --no-ff --no-commit origin/<base>`, resolve by file class (regenerate lockfiles and `architecture.{json,md}` / `FEATUREMAP.md`; keep both sides of `STATE.md` in order; merge source and tests hunk by hunk without dropping PR file diffs or weakening assertions), check `git diff --check`, no conflict markers, typecheck and tests, commit the merge, push `HEAD:refs/heads/<headRefName>`. Never a force-push, never a second PR. Then an `agent_activity` row `brain:pr-resolve-conflicts` (meta: repo, pr, url, branch, base, head, taskId, reason) is written and an event turn goes to the brain thread.
+
+The pushed merge commit voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `not_approved` until the review cascade has reviewed it.
+
+| answer | when |
+|---|---|
+| 200 `{ok, dispatched, taskId, url, branch, head}` | resolver dispatched; `head` is the PR head it started from |
+| 400 | bad repo / pr / reason |
+| 403 `not_agent_branch` (+`branch`) | head is not `dispatch/*` |
+| 403 `client_origin` | a linked task has origin `client`, or the PR carries the `client-origin` label |
+| 403 `parked` (+`reasons`) | live shepherd park (including tainted or human-merge parks) or hold |
+| 404 `pr_not_found` | gh cannot read it |
+| 409 `not_open` (+`state`) | already closed or merged |
+| 409 `not_conflicting` (+`mergeable`) | `MERGEABLE`: nothing to resolve (use pr-update-branch if only stale) |
+| 409 `mergeable_unknown` | still `UNKNOWN` after the one retry |
+| 409 `head_moved` | the head branch changed between the two reads |
+| 409 `already_resolving` (+`taskId`) | the resolver for this head is already running |
+| 502 `dispatch_failed` (+`detail`) · 502 `gh_bad_json` · 503 `gh_unreachable` | nothing recorded |
+| 503 `turso_unreachable` | origin or park/hold lookup failed; nothing dispatched |
 
 ### Obsolete tasks (`/hooks/brain/task-cancel`)
 

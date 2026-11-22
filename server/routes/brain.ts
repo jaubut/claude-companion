@@ -12,6 +12,7 @@ import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
+import { resolveAgentPrConflicts } from "../wiring/brain-pr-resolve-conflicts"
 import { updateAgentPr } from "../wiring/brain-pr-update-branch"
 import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
 import { type BrainLead, brainLead, leadCheckout, relayToBrainThread } from "../wiring/brain-lead"
@@ -30,6 +31,7 @@ import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
 //   POST /hooks/brain/pr-close            → bin/pr-close: {repo, pr, reason} → {ok, closed, url, evidence} (dead dispatch/* PRs only)
 //   POST /hooks/brain/pr-merge            → bin/pr-merge: {repo, pr, reason} → {ok, merged, url, head} (routine dispatch/* PRs only)
 //   POST /hooks/brain/pr-update-branch    → bin/pr-update-branch: {repo, pr, reason} → {ok, updated, url, head} (stale dispatch/* PRs only)
+//   POST /hooks/brain/pr-resolve-conflicts → {repo, pr, reason} → {ok, dispatched, taskId, url, branch, head} (conflicting dispatch/* PRs only)
 //   POST /hooks/brain/task-cancel         → bin/task-cancel: {task, reason} → {ok, cancelled, from, pr?, prState?, note?} (queued, blocked, failed tasks the brain proposed)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   POST /hooks/brain/media               → bin/media: {url} → {ok, kind, meta, palette, transcript, frames, contactSheet} | {ok:false, error, reason}
@@ -64,6 +66,8 @@ export interface BrainRouteDeps {
   prMerge?: typeof mergeAgentPr
   /** The stale-PR update (default: the real one, gh + notes DB). */
   prUpdate?: typeof updateAgentPr
+  /** The conflict-resolver dispatch (default: the real one, gh + notes DB + worker supervisor). */
+  prResolve?: typeof resolveAgentPrConflicts
   /** The task cancel (default: the real one, notes DB + the proposal store). */
   taskCancel?: typeof cancelAgentTask
   /** bin/deploy (default: the brain host's auto-deployer; null = not running here). */
@@ -166,7 +170,7 @@ async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 
-/** Verify a loopback lead-<repo> caller for `tell-brain` and `pr-update-branch`. */
+/** Verify a loopback lead-<repo> caller for `tell-brain`, `pr-update-branch` and `pr-resolve-conflicts`. */
 function leadCallerTaskId(req: Request, deps: BrainRouteDeps): string | null {
   const origin = clientOrigin(req, peerOf(req))
   if (origin.transport !== "loopback") return null
@@ -238,9 +242,9 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
-/** bin/pr-close, pr-merge and pr-update-branch: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and the notes DB. */
-async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch"): Promise<Response> {
-  const leadTask = op === "pr-update-branch" ? leadCallerTaskId(req, deps) : null
+/** bin/pr-close, pr-merge, pr-update-branch and pr-resolve-conflicts: the gate (wiring/brain-pr-*.ts) re-checks it all on GitHub and the notes DB. */
+async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr-merge" | "pr-update-branch" | "pr-resolve-conflicts"): Promise<Response> {
+  const leadTask = op === "pr-update-branch" || op === "pr-resolve-conflicts" ? leadCallerTaskId(req, deps) : null
   const refused = leadTask ? null : proposeRefusal(req, deps)
   if (refused) return refused
   const body = await readJson(req)
@@ -256,7 +260,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
   const out = op === "pr-merge"
     ? await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason, signal: req.signal })
-    : await (op === "pr-close" ? deps.prClose ?? closeDeadPr : deps.prUpdate ?? updateAgentPr)({ repo, pr, reason })
+    : await (op === "pr-close" ? deps.prClose ?? closeDeadPr : op === "pr-resolve-conflicts" ? deps.prResolve ?? resolveAgentPrConflicts : deps.prUpdate ?? updateAgentPr)({ repo, pr, reason })
   companionLog(`[brain] ${op} ${repo}#${pr} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
 }
@@ -356,6 +360,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return prAction(req, deps, "pr-update-branch")
+    }
+    if (p === "/hooks/brain/pr-resolve-conflicts") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return prAction(req, deps, "pr-resolve-conflicts")
     }
     if (p === "/hooks/brain/task-cancel") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

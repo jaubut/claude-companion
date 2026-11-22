@@ -146,3 +146,41 @@ test("a closed worktree on a stacked branch resumes on it; the stale dispatch/<i
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test("targetBranch: a fresh task checks out an existing origin/dispatch/* head in its own worktree; anything else is refused", async () => {
+  const home = mkdtempSync(join(tmpdir(), "worker-wt-target-"))
+  const git = async (cwd: string, ...args: string[]) => {
+    const r = await realSh("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd, timeoutMs: 20_000 })
+    if (!r.ok) throw new Error(`git ${args.join(" ")}: ${r.err}`)
+    return r.out.trim()
+  }
+  try {
+    const origin = join(home, "origin.git")
+    const repoDir = join(home, "repo")
+    await git(home, "init", "-q", "--bare", "-b", "main", origin)
+    await git(home, "clone", "-q", origin, repoDir)
+    writeFileSync(join(repoDir, "a.txt"), "base\n")
+    await git(repoDir, "add", "a.txt")
+    await git(repoDir, "commit", "-q", "-m", "init")
+    await git(repoDir, "push", "-q", "origin", "HEAD:main")
+    await git(repoDir, "push", "-q", "origin", "HEAD:refs/heads/dispatch/builder1")
+    const tip = await git(repoDir, "rev-parse", "HEAD")
+
+    const wt = await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-repo-pr7-abcd1234", false, undefined, "dispatch/builder1")
+    if (!wt.ok) throw new Error(wt.error)
+    expect(wt.branch).toBe("dispatch/builder1")
+    expect(wt.worktree).toBe(join(home, "apps", "wt", "repo", "conflict-repo-pr7-abcd1234"))
+    expect(await git(wt.worktree, "rev-parse", "HEAD")).toBe(tip)
+    expect(await git(wt.worktree, "symbolic-ref", "--short", "HEAD")).toBe("dispatch/builder1")
+
+    for (const bad of ["main", "master", "feature/x", "dispatch/../main"]) {
+      const r = await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-bad", false, undefined, bad)
+      expect(r).toEqual({ ok: false, error: "invalid_target_branch" })
+    }
+    const missing = await ensureWorktree(realSh, home, [], repoDir, "repo", "conflict-gone", false, undefined, "dispatch/nope")
+    expect(missing).toEqual({ ok: false, error: "target branch not on origin: dispatch/nope" })
+    expect(existsSync(join(home, "apps", "wt", "repo", "conflict-gone"))).toBe(false)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

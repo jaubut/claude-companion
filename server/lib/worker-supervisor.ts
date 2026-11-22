@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
+import { composeWorkerPrompt } from "./field-guide"
 import { clearStaleGitConfigLock } from "./git-config-lock"
 import { decideWorkerModel } from "./jev-model-router"
 import type { ShFn } from "./live-repo"
@@ -15,8 +16,9 @@ import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultK
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
 import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
+import { type InternalTask, type SupervisedTaskSnapshot, toSnapshot } from "./worker-task"
 import { watchTurn } from "./worker-turn-watch"
-import { cloneRepo, closeTaskWorktree, defaultResolveRepoDir, ensureWorktree, finishedPrHead, worktreeDirtyPaths } from "./worker-worktree"
+import { TARGET_BRANCH_RE, cloneRepo, closeTaskWorktree, defaultResolveRepoDir, ensureWorktree, finishedPrHead, worktreeDirtyPaths } from "./worker-worktree"
 
 export {
   ALLOWED_FAMILIES, ALLOWED_MODES, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_SHIP_RULE, WORKER_TURN_RULE,
@@ -33,17 +35,12 @@ export interface DispatchTaskInput {
   claim?: string
   /** Server-only (routes/api.ts, Jeremie's authenticated phone inject): resume with the stored claim. Never from a tool call. */
   inheritClaim?: boolean
+  /** A fresh task starts on this existing `dispatch/*` branch (a PR's head) instead of dispatch/<taskId>: the neutral conflict resolver. */
+  targetBranch?: string
 }
 
 /** What the dispatch made of the task's claim: bound (verified), refused with its reason, lookup failed (pending), or none (absent). */
 export type ClaimStatus = "verified" | `claim_refused:${string}` | "pending" | "absent"
-
-export interface SupervisedTaskSnapshot {
-  taskId: string; repo: string; title: string; builder: string; family: WorkerFamily; model: string | null; branch: string; worktree: string; sessionId: string
-  status: WorkerTaskStatus; turnCount: number; step: string | null; pct: number | null; result: string; prUrl: string | null
-  error: string | null; startedAt: number; updatedAt: number; completedAt: number | null
-  progress?: WorkerProgress // absent on records written before it existed (state file, peer receipts)
-}
 
 export interface WorkerSupervisorDeps {
   host: string; home: string; now(): number; uuid(): string; sh: ShFn; trust(dir: string): void; reportJob(report: BuilderReport): void
@@ -69,21 +66,8 @@ export interface WorkerSupervisorDeps {
 }
 
 export { workerStateFile }
+export type { SupervisedTaskSnapshot }
 
-interface InternalTask extends PersistedTaskRecord {
-  pid: number | null; pidIdentity: string | null; reloadedFromDisk: boolean; sessionStarted: boolean; prLinkBound: boolean | null; handoffClaim: string | null; modelPinned: boolean
-  activeTurn: number; jobId: string; turnReportedTerminal: boolean; turns: WorkerTurn[]; turnsRead: number; dispatchTurn: number
-  handle: SpawnedWorkerHandle | null; exitPromise: Promise<void> | null
-  timeoutTimer: ReturnType<typeof setTimeout> | null; killTimer: ReturnType<typeof setTimeout> | null
-  /** Armed on each `result` event: the process must exit after its turn (reapGraceMs). `lingered`: it didn't, and was stopped. */
-  reapTimer: ReturnType<typeof setTimeout> | null; lingered: boolean
-  waiters: Set<() => void>; stderrTail: string[]
-  plan?: PlanProgress | null // this turn's plan, from the worker's own todo list; not persisted
-}
-function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
-  const { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
-  return { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt, progress: progressOf(t) }
-}
 function waitMsPromise(ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => { const tm = setTimeout(() => resolve(false), ms); tm.unref?.() })
 }
@@ -241,6 +225,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!REPO_NAME_RE.test(repo)) return { ok: false, status: 400, error: "invalid_repo" }
       const prompt = typeof input.prompt === "string" ? input.prompt.trim() : ""
       if (!prompt || prompt.length > PROMPT_MAX - WORKER_FOOTER.length - 2) return { ok: false, status: 400, error: "invalid_prompt" }
+      const targetBranch = input.targetBranch?.trim() || undefined
+      if (targetBranch && !TARGET_BRANCH_RE.test(targetBranch)) return { ok: false, status: 400, error: "invalid_target_branch" }
       const mode = input.mode?.trim() || "auto"
       if (!ALLOWED_MODES.has(mode)) return { ok: false, status: 400, error: "invalid_mode" }
       const agent = input.agent?.trim() || undefined
@@ -272,7 +258,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const repoDir = existing?.repoDir ?? resolveRepo(repo, deps.home) ?? await cloneRepo(deps.sh, deps.home, repo)
         if (!repoDir) return { ok: false, status: 404, error: `repo_not_found: ${repo}` }
 
-        const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing, existing?.branch)
+        const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing, existing?.branch, targetBranch)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
         const otherBranch = existing && wt.branch !== `dispatch/${taskId}` ? wt.branch : null
@@ -338,7 +324,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
         const dCtx = deps.designContext?.().trim() ?? ""
         const branchNote = otherBranch ? `[Resumed worktree is on branch ${otherBranch}, not dispatch/${taskId}: keep working on it, uncommitted work is intact.]\n\n` : ""
-        const effectivePrompt = prompt.startsWith("/") ? prompt : `${branchNote}${(dCtx ? `${prompt}\n\n${dCtx}` : prompt).slice(0, PROMPT_MAX - WORKER_FOOTER.length - 2)}\n\n${WORKER_FOOTER}`
+        const effectivePrompt = composeWorkerPrompt({ prompt, resume, worktree: task.worktree, branchNote, designContext: dCtx, maxChars: PROMPT_MAX })
         const invocation = buildHeadlessWorkerInvocation({ family, prompt: effectivePrompt, sessionId: task.sessionId, resume, mode, agent, model: effectiveModel ?? undefined })
         let settled = false
         let lastOutputAt = deps.now()

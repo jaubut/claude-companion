@@ -28,17 +28,22 @@ function sameRealPath(a: string, b: string): boolean {
   try { return realpathSync(a) === realpathSync(b) } catch { return a === b }
 }
 
+/** A branch a fresh task may be pointed at (a PR's head): `dispatch/*` only, so never main, master or someone's own branch. */
+export const TARGET_BRANCH_RE = /^dispatch\/[\w.-]+$/
+
 /** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's (the task's own
  *  on whatever branch it is checked out; that branch is returned), else created on `prevBranch` (the branch a closed
- *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. */
+ *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. `targetBranch` (a
+ *  neutral resolver on an existing PR's head): that branch's origin tip in a clean worktree, never dispatch/<taskId>. */
 export async function ensureWorktree(
   sh: ShFn, home: string, others: Iterable<{ taskId: string; repo: string; worktree: string }>,
-  repoDir: string, repo: string, taskId: string, ownedByTask: boolean, prevBranch?: string,
+  repoDir: string, repo: string, taskId: string, ownedByTask: boolean, prevBranch?: string, targetBranch?: string,
 ): Promise<{ ok: true; worktree: string; branch: string } | { ok: false; error: string }> {
   clearStaleGitConfigLock(repoDir)
   const wtRoot = join(home, "apps", "wt", repo)
   const worktree = join(wtRoot, taskId)
   let branch = `dispatch/${taskId}`
+  if (targetBranch !== undefined && !TARGET_BRANCH_RE.test(targetBranch)) return { ok: false, error: "invalid_target_branch" }
   for (const other of others) {
     if ((other.taskId !== taskId || other.repo !== repo) && other.worktree.toLowerCase() === worktree.toLowerCase()) {
       return { ok: false, error: `worktree collision with ${other.repo}/${other.taskId}` }
@@ -68,6 +73,14 @@ export async function ensureWorktree(
   const remote = async (b: string) => (await sh("git", ["-C", repoDir, "fetch", "-q", "origin", `+refs/heads/${b}:refs/remotes/origin/${b}`], { cwd: repoDir, timeoutMs: 30_000 })).ok
   // The worker had switched or stacked before the worktree closed: resume on that branch, not a stale dispatch/<taskId>.
   // Never the base branch (checked out in repoDir; the worker's commits there are on origin already).
+  if (targetBranch) {
+    if (!(await remote(targetBranch))) return { ok: false, error: `target branch not on origin: ${targetBranch}` }
+    // A stale local copy is reset to origin only when that loses nothing; git itself refuses a branch checked out elsewhere.
+    const lagging = !(await local(targetBranch)) || (await sh("git", ["-C", repoDir, "merge-base", "--is-ancestor", targetBranch, `origin/${targetBranch}`], { cwd: repoDir, timeoutMs: 10_000 })).ok
+    if (!lagging) return { ok: false, error: `local ${targetBranch} has commits not on origin` }
+    const add = await sh("git", ["-C", repoDir, "worktree", "add", "-q", "-B", targetBranch, worktree, `origin/${targetBranch}`], { cwd: repoDir, timeoutMs: 30_000 })
+    return add.ok ? { ok: true, worktree, branch: targetBranch } : { ok: false, error: `worktree add failed: ${(add.err || add.out).trim().slice(0, 200)}` }
+  }
   const candidates = prevBranch && prevBranch !== branch && prevBranch !== baseBranch ? [prevBranch, branch] : [branch]
   let hasBranch = false; let pushed = false
   for (const b of candidates) {

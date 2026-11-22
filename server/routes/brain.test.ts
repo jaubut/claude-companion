@@ -606,6 +606,35 @@ describe("POST /hooks/brain/pr-update-branch", () => {
   })
 })
 
+describe("POST /hooks/brain/pr-resolve-conflicts", () => {
+  test("brain auth, then input checks; only a valid call reaches the resolver gate, never the other PR gates", async () => {
+    const seen: unknown[] = []
+    const never = async (): Promise<never> => { throw new Error("pr-resolve-conflicts must not reach another PR gate") }
+    const h = route.createBrainRoute({
+      wiring: harnessWiring, sessions: () => sessions, enabled: () => true, prClose: never, prMerge: never, prUpdate: never,
+      prResolve: async (p) => { seen.push(p); return { status: 409, body: { ok: false, error: "not_conflicting" } } },
+    })
+    const post = async (b: unknown, headers: Record<string, string> = AUTH, peer = "127.0.0.1", method = "POST") => {
+      const req = new Request("http://localhost:4245/hooks/brain/pr-resolve-conflicts", { method, headers: { "content-type": "application/json", ...headers }, body: method === "POST" ? JSON.stringify(b) : undefined })
+      recordPeer(req, peer)
+      const res = (await h(req, new URL(req.url)))!
+      return { status: res.status, json: await res.json() as Record<string, unknown> }
+    }
+    const ok = { repo: "o/r", pr: 7, reason: "main moved" }
+    expect((await post(ok, {})).status).toBe(403)
+    expect((await post(ok, { ...AUTH, "x-companion-task-id": "worker" })).status).toBe(403)
+    expect((await post(ok, AUTH, "100.64.0.9")).status).toBe(403)
+    expect((await post(ok, AUTH, "127.0.0.1", "GET")).status).toBe(405)
+    expect((await post({ ...ok, repo: "o/r; rm -rf" })).status).toBe(400)
+    expect((await post({ ...ok, pr: "7" })).status).toBe(400)
+    expect((await post({ ...ok, reason: "" })).status).toBe(400)
+    expect(seen).toHaveLength(0)
+    const r = await post(ok)
+    expect([r.status, r.json]).toEqual([409, { ok: false, error: "not_conflicting" }])
+    expect(seen).toEqual([ok])
+  })
+})
+
 describe("POST /hooks/brain/media", () => {
   test("brain auth, then input checks; only a valid call reaches the media job", async () => {
     const seen: string[] = []
