@@ -16,7 +16,7 @@ import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultK
 import { createReceiptOutbox } from "./worker-receipt-outbox"
 import { type PersistedTaskRecord, type WorkerReceipt, type WorkerTurn, loadTaskRecords, saveTaskRecords, workerReceiptFile, workerStateFile } from "./worker-task-store"
 import { closeTurn, dispatchTurns, openTurn, refreshResult, restoreTurns } from "./worker-turns"
-import { type InternalTask, type SupervisedTaskSnapshot, toSnapshot } from "./worker-task"
+import { type InternalTask, type SupervisedTaskSnapshot, clearTimers, findTask, notifyWaiters, toSnapshot } from "./worker-task"
 import { watchTurn } from "./worker-turn-watch"
 import { TARGET_BRANCH_RE, cloneRepo, closeTaskWorktree, parseTarget, defaultResolveRepoDir, ensureWorktree, finishedPrHead, worktreeDirtyPaths } from "./worker-worktree"
 
@@ -200,16 +200,6 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     return true
   }
 
-  function notifyWaiters(t: InternalTask): void {
-    for (const fn of [...t.waiters]) { t.waiters.delete(fn); fn() }
-  }
-
-  function clearTimers(t: InternalTask): void {
-    if (t.timeoutTimer) { clearTimeout(t.timeoutTimer); t.timeoutTimer = null }
-    if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
-    if (t.reapTimer) { clearTimeout(t.reapTimer); t.reapTimer = null }
-  }
-
   /** Runs fn on a finished task under the dispatch reservation, so a follow-up dispatch never races a worktree removal. */
   async function withReservation<T>(t: InternalTask, fn: () => Promise<T>): Promise<T | null> {
     const wtKey = t.worktree.toLowerCase()
@@ -223,8 +213,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   return {
     async dispatchTask(input: DispatchTaskInput): Promise<{ ok: true; task: SupervisedTaskSnapshot; claim: ClaimStatus } | { ok: false; status: number; error: string }> {
-      const taskId = typeof input.taskId === "string" ? input.taskId.trim() : ""
-      if (!TASK_ID_RE.test(taskId)) return { ok: false, status: 400, error: "invalid_task_id" }
+      const rawId = typeof input.taskId === "string" ? input.taskId.trim() : ""
+      if (!TASK_ID_RE.test(rawId)) return { ok: false, status: 400, error: "invalid_task_id" }
+      const taskId = findTask(tasks, rawId)?.taskId ?? rawId
       const repo = typeof input.repo === "string" ? input.repo.trim() : ""
       if (!REPO_NAME_RE.test(repo)) return { ok: false, status: 400, error: "invalid_repo" }
       const prompt = typeof input.prompt === "string" ? input.prompt.trim() : ""
@@ -268,7 +259,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing, existing?.branch, targetBranch)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
-        const otherBranch = existing && wt.branch !== `dispatch/${taskId}` ? wt.branch : null
+        const otherBranch = wt.branch !== `dispatch/${taskId}` ? wt.branch : null
         const familyChanged = !!existing && existing.family !== family
         // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
         // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row
@@ -496,7 +487,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
     /** `turns`: every turn ended since the last await returned, full text (the brain reads them all, not only `result`). */
     async awaitTask(taskId: string, waitMs = DEFAULT_WAIT_MS): Promise<{ ok: true; task: SupervisedTaskSnapshot; timedOut: boolean; turns: WorkerTurn[] } | { ok: false; status: number; error: string }> {
-      const t = tasks.get(taskId.trim())
+      const t = findTask(tasks, taskId.trim())
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
       const unread = (): WorkerTurn[] => {
         const out = t.turns.filter((x) => x.endedAt !== null && x.turn > t.turnsRead)
@@ -516,9 +507,9 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     },
 
     async interruptTask(taskId: string, opts: { closeWorktree?: boolean } = {}): Promise<{ ok: true; task: SupervisedTaskSnapshot; worktreeRemoved: boolean; note?: string } | { ok: false; status: number; error: string }> {
-      const id = taskId.trim()
-      const t = tasks.get(id)
+      const t = findTask(tasks, taskId.trim())
       if (!t) return { ok: false, status: 404, error: "task_not_found" }
+      const id = t.taskId
       const wtKey = t.worktree.toLowerCase()
       const cleanup = cleanups.get(id); if (cleanup) await cleanup.catch(() => null)
       if (inFlightDispatches.has(id) || inFlightWorktrees.has(wtKey)) return { ok: false, status: 409, error: "task_dispatch_in_progress" }
@@ -543,9 +534,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         }
 
         const exited = await reconcileSurvivingProcess(t)
-        if (!exited) return { ok: true, task: toSnapshot(t), worktreeRemoved: false, note: "worktree kept: worker process has not exited yet" }
-
-        const { removed: worktreeRemoved, note } = opts.closeWorktree ? await closeTaskWorktree(deps.sh, t).finally(savePersistedTasks) : { removed: false, note: undefined }
+        const { removed: worktreeRemoved, note } = !exited ? { removed: false, note: "worktree kept: worker process has not exited yet" }
+          : opts.closeWorktree ? await closeTaskWorktree(deps.sh, t).finally(savePersistedTasks) : { removed: false, note: undefined }
+        // A close that kept the worktree is a failure the caller must see, never ok:true (the interrupt itself stands).
+        if (opts.closeWorktree && note) return { ok: false, status: 409, error: note }
         return { ok: true, task: toSnapshot(t), worktreeRemoved, ...(note ? { note } : {}) }
       } finally {
         inFlightDispatches.delete(id); inFlightWorktrees.delete(wtKey)
@@ -553,7 +545,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     },
 
     setTaskModel(taskId: string, model: string): SupervisedTaskSnapshot | null {
-      const t = tasks.get(taskId.trim())
+      const t = findTask(tasks, taskId.trim())
       if (!t) return null
       const nextFamily = resolveWorkerFamily({ model })
       t.model = model; t.modelPinned = true
@@ -569,7 +561,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
     /** The task and its whole turn history (`bin/worker get`); doesn't move await's read mark. */
     getTaskTurns(taskId: string): { task: SupervisedTaskSnapshot; turns: WorkerTurn[] } | null {
-      const t = tasks.get(taskId.trim())
+      const t = findTask(tasks, taskId.trim())
       return t ? { task: toSnapshot(t), turns: t.turns.map((x) => ({ ...x })) } : null
     },
 
@@ -591,7 +583,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
     ackReceipts(ids: string[]): number { return outbox.ack(ids) },
 
     listTasks(): SupervisedTaskSnapshot[] { return [...tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(toSnapshot) },
-    getTask(taskId: string): SupervisedTaskSnapshot | null { const t = tasks.get(taskId.trim()); return t ? toSnapshot(t) : null },
+    getTask(taskId: string): SupervisedTaskSnapshot | null { const t = findTask(tasks, taskId.trim()); return t ? toSnapshot(t) : null },
   }
 }
 

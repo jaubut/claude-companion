@@ -43,8 +43,8 @@ export function parseTarget(
   return m?.[1] === repo ? { targetBranch, targetPrUrl: url } : { error: "invalid_target_pr" }
 }
 
-/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's (the task's own
- *  on whatever branch it is checked out; that branch is returned), else created on `prevBranch` (the branch a closed
+/** The task's worktree at ~/apps/wt/<repo>/<taskId> on dispatch/<taskId>: reused when it is this repo's, on whatever
+ *  branch it is checked out (that branch is returned), else created on `prevBranch` (the branch a closed
  *  worktree was last on) when it still exists locally or on origin, else on dispatch/<taskId>. `targetBranch` (a
  *  neutral resolver on an existing PR's head): a new worktree on dispatch/<taskId> at that branch's origin tip, never an existing one. */
 export async function ensureWorktree(
@@ -71,9 +71,9 @@ export async function ensureWorktree(
     const curBranch = await sh("git", ["-C", worktree, "symbolic-ref", "-q", "--short", "HEAD"], { cwd: worktree, timeoutMs: 10_000 })
     if (!curBranch.ok) return { ok: false, error: "existing worktree is not on a branch" }
     const bOut = curBranch.out.trim()
-    // Not this task's worktree (fresh dispatch): another branch there is someone else's work, refused.
-    if (!ownedByTask && bOut && bOut !== "origin/main" && bOut !== branch) return { ok: false, error: `existing worktree branch mismatch: ${bOut}` }
-    // The task's own on another branch (a PR's branch the worker was asked to update, a stacked dispatch/<id>-c): reused as-is, never switched, stashed or reset.
+    // The path is keyed by this task id in this repo, so it is the task's own even when its record is gone (a lost
+    // state file): on another branch (one the worker switched to, a PR's branch it was asked to
+    // update, a stacked dispatch/<id>-c) it is reused as-is, never switched, stashed or reset.
     return { ok: true, worktree, branch: bOut && bOut !== "origin/main" ? bOut : branch }
   }
   mkdirSync(wtRoot, { recursive: true })
