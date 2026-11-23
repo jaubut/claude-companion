@@ -7297,7 +7297,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 591,
+          "lines": 592,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -11366,7 +11366,8 @@
         "normalizeAgyCliModelFlag": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/agy-feed.ts"
+            "lib/agy-feed.ts",
+            "lib/worker-supervisor.ts"
           ]
         },
         "readTailLines": {
