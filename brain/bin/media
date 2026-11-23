@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# brain-v2: fetch and analyse a video or image link on the server (POST /hooks/brain/media).
+# brain-v2: fetch and analyse a video, image or design-page link (Dribbble, Pinterest, Behance)
+# on the server (POST /hooks/brain/media). Pages yt-dlp can't read go through headless Chromium.
 #
 #   bin/media <url>     → JSON: meta, palette, transcript, frames[], contactSheet (absolute paths, open with Read)
 #

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import sharp from "sharp"
+import { analysePage } from "./link-media-browser"
 import { MAX_BYTES, checkUrl, safeFetch, startGuardProxy, vetHost } from "./link-media-guard"
 import { type Swatch, palette } from "./link-media-palette"
 import { companionLog } from "./log"
@@ -13,8 +14,9 @@ import { companionLog } from "./log"
 // transcript (no Whisper) and absolute paths of ~10 frames + a contact sheet
 // (the brain opens them with Read). One folder per URL, reused while present,
 // pruned after 7 days. yt-dlp does the fetching (Instagram 401 → the embed
-// captions page), ffmpeg the frames. All network traffic goes through the
-// guard proxy (link-media-guard.ts) and the whole job, fetches and sharp
+// captions page), ffmpeg the frames; a link yt-dlp can't read (design pages:
+// Dribbble, Pinterest, Behance) goes to headless Chromium (link-media-browser.ts).
+// All network traffic goes through the guard proxy (link-media-guard.ts) and the whole job, fetches and sharp
 // included, ends at a 120 s deadline.
 
 const ROOT = process.env.COMPANION_LINK_MEDIA_DIR ?? join(homedir(), ".cache", "companion", "media")
@@ -32,7 +34,7 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const YTDLP = existsSync(join(homedir(), ".local", "bin", "yt-dlp")) ? join(homedir(), ".local", "bin", "yt-dlp") : "yt-dlp"
 
 export interface LinkMediaMeta {
-  source: "yt-dlp" | "instagram-embed" | "direct"
+  source: "yt-dlp" | "instagram-embed" | "direct" | "browser"
   uploader: string | null
   title: string | null
   description: string | null
@@ -361,6 +363,18 @@ async function analyseVideo(url: URL, dir: string, deadline: number): Promise<Re
   }
 }
 
+/** yt-dlp first; when it can't read the link (422), the page in a real browser. */
+async function analyseVideoOrPage(url: URL, dir: string, deadline: number): Promise<Record<string, unknown>> {
+  try {
+    return await analyseVideo(url, dir, deadline)
+  } catch (err) {
+    if (!(err instanceof MediaError) || err.status !== 422) throw err
+    return analysePage(url, dir, deadline).catch((e: unknown) => {
+      throw new MediaError(422, `${err.reason}; browser: ${String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)}`)
+    })
+  }
+}
+
 // ── Image ──
 
 /** The response if it is an image, else null (its body cancelled). */
@@ -419,7 +433,7 @@ export async function build(url: URL, dir: string, opts: BuildOptions = {}): Pro
   mkdirSync(dirname(dir), { recursive: true })
   const workDir = `${dir}.attempt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   mkdirSync(workDir, { recursive: true })
-  const runAttempt = opts.attempt ?? ((w, d) => imageResponse(url, d).then((img) => (img ? analyseImage(url, img, w) : analyseVideo(url, w, d))))
+  const runAttempt = opts.attempt ?? ((w, d) => imageResponse(url, d).then((img) => (img ? analyseImage(url, img, w) : analyseVideoOrPage(url, w, d))))
   const analysis = (async () => runAttempt(workDir, deadline))()
   try {
     const raw = await beforeDeadline(analysis, deadline)
