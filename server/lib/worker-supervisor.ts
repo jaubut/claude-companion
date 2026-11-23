@@ -259,7 +259,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
         const wt = await ensureWorktree(deps.sh, deps.home, tasks.values(), repoDir, repo, taskId, !!existing, existing?.branch, targetBranch)
         if (!wt.ok) return { ok: false, status: 500, error: wt.error }
         deps.trust(wt.worktree)
-        const otherBranch = existing && wt.branch !== `dispatch/${taskId}` ? wt.branch : null
+        const otherBranch = wt.branch !== `dispatch/${taskId}` ? wt.branch : null
         const familyChanged = !!existing && existing.family !== family
         // Every dispatch must present its claim: the stored one is never inherited, since anyone with the task id
         // (list_tasks shows it) can dispatch. The exact claim a bound task holds keeps it bound without asking the row

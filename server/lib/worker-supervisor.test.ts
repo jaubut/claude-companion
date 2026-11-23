@@ -1446,6 +1446,14 @@ sleep 30 & wait $!
       expect(sup.getTask("task-b")!.branch).toBe("dispatch/task-b-c")
       // Nothing mutating ran against the worktree: no checkout, switch, stash, reset or worktree add/remove.
       expect(gitCalls.filter((a) => a.some((x) => ["checkout", "switch", "stash", "reset", "add", "remove", "clean"].includes(x)))).toEqual([])
+
+      // Lost state file (existing === undefined) with an existing worktree on a non-default branch still warns in prompt.
+      mkdirSync(join(home, "apps", "wt", "claude-companion", "task-lost", ".git"), { recursive: true })
+      onBranch = "dispatch/task-lost-c"
+      const lost = await sup.dispatchTask({ taskId: "task-lost", repo: "claude-companion", prompt: "Recover", family: "claude" })
+      expect(lost.ok).toBe(true)
+      expect(spawned[2]!.args.at(-1)).toContain("worktree is on branch dispatch/task-lost-c, not dispatch/task-lost")
+      expect(sup.getTask("task-lost")!.branch).toBe("dispatch/task-lost-c")
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
@@ -1745,7 +1753,32 @@ sleep 30 & wait $!
         expect((await h.sup.interruptTask("0bb587b3")).ok).toBe(true)
 
         await h.sup.dispatchTask({ taskId: "1234abcd", repo: "claude-companion", prompt: "Short" })
+        h.spawned[2]!.onExit(0, null)
         expect(h.sup.getTask("1234abcd9999")!.taskId).toBe("1234abcd")
+        const longToShort = await h.sup.dispatchTask({ taskId: "1234abcd9999", repo: "claude-companion", prompt: "Resume via long" })
+        expect(longToShort.ok && [longToShort.task.taskId, longToShort.task.turnCount]).toEqual(["1234abcd", 2])
+        h.spawned[3]!.onExit(0, null)
+
+        // Non-hex, slug, and suffixed 8+ char IDs never prefix-match across dispatch, get, or interrupt --close-worktree.
+        expect(h.sup.getTask("0bb587b3-resolve")).toBeNull()
+        const resTask = await h.sup.dispatchTask({ taskId: "0bb587b3-resolve", repo: "claude-companion", prompt: "Resolve conflicts" })
+        expect(resTask.ok && [resTask.task.taskId, resTask.task.turnCount]).toEqual(["0bb587b3-resolve", 1])
+        h.spawned[4]!.onExit(0, null)
+        // Pure hex short ID still resolves uniquely to the pure hex long task even alongside 0bb587b3-resolve.
+        expect(h.sup.getTask("0bb587b3")!.taskId).toBe(long)
+
+        await h.sup.dispatchTask({ taskId: "fix-auth-123", repo: "claude-companion", prompt: "Auth 1" })
+        expect(h.sup.getTask("fix-auth-123-2")).toBeNull()
+        expect(await h.sup.interruptTask("fix-auth-123-2", { closeWorktree: true })).toEqual({ ok: false, status: 404, error: "task_not_found" })
+        expect(h.sup.getTask("fix-auth-123")!.status).toBe("running")
+        const slug2 = await h.sup.dispatchTask({ taskId: "fix-auth-123-2", repo: "claude-companion", prompt: "Auth 2" })
+        expect(slug2.ok && [slug2.task.taskId, slug2.task.turnCount]).toEqual(["fix-auth-123-2", 1])
+        h.state.dirty = ""; h.state.pushed = true
+        const closedSlug2 = await h.sup.interruptTask("fix-auth-123-2", { closeWorktree: true })
+        expect(closedSlug2.ok && [closedSlug2.task.taskId, closedSlug2.worktreeRemoved]).toEqual(["fix-auth-123-2", true])
+        expect(h.sup.getTask("fix-auth-123")!.status).toBe("running")
+        expect(existsSync(h.sup.getTask("fix-auth-123")!.worktree)).toBe(true)
+
         await h.sup.dispatchTask({ taskId: "0bb587b3ffff", repo: "claude-companion", prompt: "Other" })
         expect(h.sup.getTask("0bb587b3")).toBeNull()
         expect(h.sup.getTask("0bb587b")).toBeNull() // under 8 chars: exact only
