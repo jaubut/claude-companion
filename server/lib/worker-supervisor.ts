@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { BuilderReport } from "./builder-jobs"
 import { composeWorkerPrompt } from "./field-guide"
@@ -94,13 +94,13 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const outbox = createReceiptOutbox(deps.receiptFile ?? workerReceiptFile(deps.home), deps.now, deps.onReceipt)
 
   function syncTaskSession(t: InternalTask): void {
-    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid ?? t.pid ?? null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
+    try { deps.syncSession?.(toSnapshot(t), t.handle?.pid || t.pid || null, t.prLinkBound === true && !!t.handoffClaim) } catch { /* best effort */ }
     try { deps.onTaskProgress?.(toSnapshot(t)) } catch { /* best effort */ }
   }
 
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t): PersistedTaskRecord => ({
-      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid ?? t.pid ?? null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid, receiptDue: t.receiptDue, routeReason: t.routeReason, targetBranch: t.targetBranch, logFile: t.logFile, logOffset: t.handle?.offset?.() ?? t.logOffset,
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid || t.pid || null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid, ownerPidIdentity: getPidIdentity(selfPid), receiptDue: t.receiptDue, routeReason: t.routeReason, targetBranch: t.targetBranch, logFile: t.logFile, logOffset: t.handle?.offset?.() ?? t.logOffset,
       turns: t.turns, turnsRead: t.turnsRead, dispatchTurn: t.dispatchTurn,
     })).concat(foreignRecords.filter((r) => !tasks.has(r.taskId))))
   }
@@ -118,25 +118,26 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       const savedIdentity = typeof r.pidIdentity === "string" && r.pidIdentity ? r.pidIdentity : null
       // Its output went to files (worker-spawn.ts): the worker is re-attached, not stopped, so a deploy never kills it.
       let attach = wasRunning && typeof r.logFile === "string" && existsSync(`${r.logFile}.out`)
-      let survivingPid: number | null = null
-      let survivingIdentity: string | null = null
+      let survivingPid: number | null = null, survivingIdentity: string | null = null, attachPid: number | null = null
       if (rawPid !== null && isPidAlive(rawPid)) {
-        const currentIdentity = getPidIdentity(rawPid)
         const ownerPid = typeof r.ownerPid === "number" ? r.ownerPid : null
-        if (ownerPid !== null && ownerPid !== selfPid && getParentPid(rawPid) === ownerPid) { foreignRecords.push(r as PersistedTaskRecord); continue }
+        if (ownerPid && ownerPid !== selfPid && (r.ownerPidIdentity ? getPidIdentity(ownerPid) === r.ownerPidIdentity : getParentPid(rawPid) === ownerPid)) { foreignRecords.push(r as PersistedTaskRecord); continue }
+        const currentIdentity = getPidIdentity(rawPid)
         if (savedIdentity && currentIdentity !== null && currentIdentity === savedIdentity) {
           if (!attach) killPid(rawPid, "SIGTERM")
-          if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity }
-        } else if (currentIdentity === null || !savedIdentity) { survivingPid = rawPid; survivingIdentity = savedIdentity; attach = false } // unknown identity != exited: group stays reserved
+          if (isPidAlive(rawPid)) { survivingPid = rawPid; survivingIdentity = savedIdentity; attachPid = rawPid }
+        } else if (currentIdentity === null) { survivingPid = rawPid; survivingIdentity = savedIdentity } // leader exited; group stays reserved while attach replays .out
+        else { if (!savedIdentity) survivingPid = rawPid; attach = false }
         dirty = true
       } else if (rawPid !== null) dirty = true
+      if (!attach && typeof r.logFile === "string" && r.logFile) { rmSync(`${r.logFile}.out`, { force: true }); rmSync(`${r.logFile}.err`, { force: true }) }
       if (wasRunning) dirty = true
       const taskRecord = restoreTask(r, now, attach, survivingPid, survivingIdentity)
       tasks.set(r.taskId, taskRecord)
       syncTaskSession(taskRecord)
       // pid null: it ended while the server was down, the rest of its output is replayed.
       if (attach) attaches.push(() => runTurn(taskRecord, (cb) => attachDetachedWorker({
-        ...cb, logFile: r.logFile!, outFrom: taskRecord.logOffset ?? 0, pid: survivingPid, alive: () => getPidIdentity(survivingPid!) === survivingIdentity,
+        ...cb, logFile: r.logFile!, outFrom: taskRecord.logOffset ?? 0, pid: attachPid, alive: () => getPidIdentity(attachPid!) === survivingIdentity,
       }), { attached: true }))
       else if (wasRunning || r.receiptDue) { enqueueReceipt(taskRecord); dirty = true }
     }
@@ -347,8 +348,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
     if (!settled && task.activeTurn === myTurn) {
       task.handle = handle
-      task.pid = handle.pid > 1 ? handle.pid : null
-      task.pidIdentity = task.pid ? getPidIdentity(task.pid) : null
+      task.pid = handle.pid > 1 ? handle.pid : (o.attached ? task.pid : null)
+      task.pidIdentity = handle.pid > 1 ? getPidIdentity(handle.pid) : (o.attached ? task.pidIdentity : null)
       task.reloadedFromDisk = false
       savePersistedTasks(); syncTaskSession(task)
       watchTurn(task, {

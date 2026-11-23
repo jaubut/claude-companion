@@ -119,7 +119,7 @@ export function spawnDetachedWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle 
  *  our child any more: exit status unknown, onExit gets nulls). pid null: it ended while the server was down; its output is replayed. */
 export function attachDetachedWorker(o: TurnCallbacks & { logFile: string; outFrom: number; pid: number | null; alive(): boolean }): SpawnedWorkerHandle {
   let errFrom = 0
-  try { errFrom = statSync(`${o.logFile}.err`).size } catch { /* none */ }
+  if (o.pid !== null) try { errFrom = statSync(`${o.logFile}.err`).size } catch { /* none */ }
   const f = follow(o.pid ?? 0, { ...o, errFrom })
   const timer = setInterval(() => { if (o.pid === null || !o.alive()) { clearInterval(timer); f.exited(null, null) } }, POLL_MS)
   return f.handle

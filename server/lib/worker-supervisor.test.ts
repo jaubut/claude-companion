@@ -522,10 +522,71 @@ describe("createWorkerSupervisor", () => {
       expect(shCalls.some((a) => a.includes("remove"))).toBe(false)
       expect(await sup2.dispatchTask({ taskId: "noid-1", repo: "claude-companion", prompt: "again" })).toEqual({ ok: false, status: 409, error: "task_already_running" })
 
-      // Whole group gone: cleanup proceeds
+      //Whole group gone: cleanup proceeds
       groupAlive = false
       const done = await sup2.interruptTask("noid-1", { closeWorktree: true })
       expect(done.ok && done.worktreeRemoved).toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("unlinks .out/.err for unattached records with logFile (reused PID mismatch or non-attached crash state) and guards foreign records via ownerPidIdentity after reparenting", async () => {
+    const home = join(tmpdir(), `worker-sup-logs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    const repoDir = join(home, "claude-companion")
+    mkdirSync(join(repoDir, ".git"), { recursive: true })
+    const logDir = join(home, ".claude", "state", "companion-worker-logs")
+    mkdirSync(logDir, { recursive: true })
+    const logReused = join(logDir, "reused-1.t1")
+    const logCrashed = join(logDir, "crashed-1.t1")
+    const logForeign = join(logDir, "foreign-1.t1")
+    for (const f of [logReused, logCrashed, logForeign]) {
+      writeFileSync(`${f}.out`, '{"type":"system","subtype":"init","session_id":"s"}\n')
+      writeFileSync(`${f}.err`, "err\n")
+    }
+    const baseRec = (taskId: string) => ({
+      taskId, repo: "claude-companion", repoDir, title: taskId, builder: `b-${taskId}`, family: "claude",
+      model: "claude-sonnet-5-5", branch: `dispatch/${taskId}`, worktree: join(home, "apps", "wt", "claude-companion", taskId),
+      sessionId: `sid-${taskId}`, status: "running", turnCount: 1, step: "Running", pct: 10,
+      result: "", prUrl: null, error: null, startedAt: 1, updatedAt: 1, completedAt: null,
+    })
+    const statePath = join(home, ".claude", "state", "companion-worker-tasks.json")
+    writeFileSync(statePath, JSON.stringify([
+      // (1) Reused PID identity mismatch -> !attach, must unlink .out and .err
+      { ...baseRec("reused-1"), pid: 8001, pidIdentity: "boot:8001:old", ownerPid: 9001, ownerPidIdentity: "boot:9001:dead", logFile: logReused, logOffset: 0 },
+      // (2) Non-attached crash/interrupted record still carrying logFile -> !attach, must unlink .out and .err
+      { ...baseRec("crashed-1"), status: "interrupted", pid: null, pidIdentity: null, ownerPid: 9001, ownerPidIdentity: "boot:9001:dead", logFile: logCrashed, logOffset: 0 },
+      // (3) Reparented worker (getParentPid !== ownerPid) whose re-attached owner supervisor B (9002) is alive -> foreign, keeps log files
+      { ...baseRec("foreign-1"), pid: 8002, pidIdentity: "boot:8002:live", ownerPid: 9002, ownerPidIdentity: "boot:9002:live-b", logFile: logForeign, logOffset: 0 },
+    ]))
+
+    try {
+      const sup = createWorkerSupervisor({
+        host: "zettlab", home, selfPid: 9003, now: () => 1700000000000, uuid: () => "u", trust: () => {}, reportJob: () => {},
+        isPidAlive: (pid) => pid === 8001 || pid === 8002,
+        getParentPid: () => 1, // reparented to init / systemd --user
+        getPidIdentity: (pid) => {
+          if (pid === 8001) return "boot:8001:reused-other"
+          if (pid === 8002) return "boot:8002:live"
+          if (pid === 9002) return "boot:9002:live-b"
+          if (pid === 9003) return "boot:9003:self-c"
+          return null
+        },
+        sh: async () => ({ ok: true, out: "origin/main\n", err: "", code: 0 }),
+      })
+
+      expect(sup.getTask("reused-1")?.status).toBe("interrupted")
+      expect(existsSync(`${logReused}.out`)).toBe(false)
+      expect(existsSync(`${logReused}.err`)).toBe(false)
+
+      expect(sup.getTask("crashed-1")?.status).toBe("interrupted")
+      expect(existsSync(`${logCrashed}.out`)).toBe(false)
+      expect(existsSync(`${logCrashed}.err`)).toBe(false)
+
+      // Foreign record owned by live server B (9002) is untouched even though getParentPid(8002) === 1
+      expect(sup.getTask("foreign-1")).toBeNull()
+      expect(existsSync(`${logForeign}.out`)).toBe(true)
+      expect(existsSync(`${logForeign}.err`)).toBe(true)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

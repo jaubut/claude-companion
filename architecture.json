@@ -7320,7 +7320,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 594,
+          "lines": 595,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
