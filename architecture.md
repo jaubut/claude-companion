@@ -27,6 +27,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
+| `lib/link-media.ts` | 526 | lib | 22 | state: inflight: Map |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
 | `routes/api.ts` | 507 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved · routes: 26 |
@@ -34,7 +35,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `lib/link-media.ts` | 474 | lib | 18 | state: inflight: Map |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
@@ -93,7 +93,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/jev-model-router.ts` | 269 | lib | 16 | state: OPUS_FLOOR_REASONS: Set |
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
-| `lib/link-media-guard.ts` | 262 | lib | 10 | state: let shared |
+| `lib/link-media-guard.ts` | 263 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
 | `lib/orphan-question.ts` | 259 | lib | 13 | state: raised: Map |
 | `lib/command-offpane-launch.ts` | 255 | lib | 19 | state: versionMemo: Map |
@@ -129,6 +129,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tasks-agent-load.ts` | 211 | lib | 16 |  |
 | `lib/feed.ts` | 210 | lib | 12 | state: let retention, feedListeners: Set, feedResetListeners: Set, feedEvictListeners: Set |
 | `routes/canvas.ts` | 210 | lib | 2 |  |
+| `lib/link-media-browser.ts` | 209 | lib | 13 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `lib/command-catalog.ts` | 205 | lib | 11 |  |
@@ -167,7 +168,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/merge-gate.ts` | 153 | lib | 7 |  |
 | `lib/worker-worktree.ts` | 153 | lib | 8 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
-| `lib/link-media-browser.ts` | 150 | lib | 2 |  |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
 | `routes/records.ts` | 150 | lib | 5 |  |
 | `lib/jev-router.ts` | 149 | lib | 17 |  |
@@ -812,9 +812,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `JevOpts()` | `lib/jev.ts` | `lib/jev-model-router.ts`, `lib/jev-router.ts` |
 | `deliverViaHerdr()` | `lib/herdr-inject.ts` | `lib/keyboard-inject.ts`, `lib/submit-confirm.ts` |
 | `tmuxSocketFlags()` | `lib/tmux-pane.ts` | `lib/keyboard-inject.ts`, `lib/tmux-inject.ts` |
+| `checkUrl()` | `lib/link-media-guard.ts` | `lib/link-media-browser.ts`, `lib/link-media.ts` |
 | `vetHost()` | `lib/link-media-guard.ts` | `lib/link-media-browser.ts`, `lib/link-media.ts` |
 | `startGuardProxy()` | `lib/link-media-guard.ts` | `lib/link-media-browser.ts`, `lib/link-media.ts` |
 | `palette()` | `lib/link-media-palette.ts` | `lib/link-media-browser.ts`, `lib/link-media.ts` |
+| `isPinterestHost()` | `lib/board-url-resolve.ts` | `lib/link-media-extract.ts`, `lib/link-media.ts` |
 | `TaskRow()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts` |
 | `setDone()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `setDue()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |

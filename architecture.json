@@ -3364,9 +3364,20 @@
         },
         {
           "path": "lib/link-media-browser.ts",
-          "lines": 150,
+          "lines": 209,
           "kind": "lib",
           "exports": [
+            "OVER",
+            "CHALLENGED_ERR",
+            "CHROMIUM_PROXY_BYPASS",
+            "CHROMIUM_ARGS",
+            "CHROMIUM_NO_SANDBOX_ARGS",
+            "allowPageRequest",
+            "installRouteGuard",
+            "isSandboxLaunchError",
+            "launchChromium",
+            "loadPage",
+            "fetchFirst",
             "contactSheet",
             "analysePage"
           ],
@@ -3413,7 +3424,7 @@
         },
         {
           "path": "lib/link-media-guard.ts",
-          "lines": 262,
+          "lines": 263,
           "kind": "lib",
           "exports": [
             "UrlCheck",
@@ -3462,7 +3473,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 474,
+          "lines": 526,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
@@ -3478,6 +3489,10 @@
             "vttText",
             "readCappedUtf8",
             "pickCaptionUrl",
+            "cleanVideoFiles",
+            "shouldFallbackToPage",
+            "VideoOrPageDeps",
+            "analyseVideoOrPage",
             "asImage",
             "imageTitle",
             "BuildOptions",
@@ -3492,6 +3507,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/board-url-resolve.ts",
             "lib/link-media-browser.ts",
             "lib/link-media-guard.ts",
             "lib/link-media-palette.ts",
@@ -14148,6 +14164,13 @@
             "lib/keyboard-inject.ts"
           ]
         },
+        "checkUrl": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media-browser.ts",
+            "lib/link-media.ts"
+          ]
+        },
         "findChromiumExecutable": {
           "module": "lib/board-page-capture.ts",
           "callers": [
@@ -14184,7 +14207,8 @@
         "isPinterestHost": {
           "module": "lib/board-url-resolve.ts",
           "callers": [
-            "lib/link-media-extract.ts"
+            "lib/link-media-extract.ts",
+            "lib/link-media.ts"
           ]
         },
         "extractMetaTag": {
@@ -14223,8 +14247,8 @@
             "lib/link-media.ts"
           ]
         },
-        "checkUrl": {
-          "module": "lib/link-media-guard.ts",
+        "OVER": {
+          "module": "lib/link-media-browser.ts",
           "callers": [
             "lib/link-media.ts"
           ]

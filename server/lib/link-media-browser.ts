@@ -3,7 +3,7 @@ import { type Browser, type BrowserContext, type Page, chromium } from "playwrig
 import sharp from "sharp"
 import { findChromiumExecutable } from "./board-page-capture"
 import { extractPage } from "./link-media-extract"
-import { startGuardProxy, vetHost } from "./link-media-guard"
+import { checkUrl, startGuardProxy, vetHost } from "./link-media-guard"
 import { palette } from "./link-media-palette"
 
 // bin/media's fallback for links yt-dlp can't read (Dribbble shots, Pinterest image pins,
@@ -22,10 +22,21 @@ const FRAME_WIDTH = 768
 const SHOT_MAX_H = 8_000
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 const MAX_PAGE_BYTES = 150 * 1024 * 1024
-const OVER = `page over ${MAX_PAGE_BYTES / 1024 / 1024} MB`
+export const OVER = `page over ${MAX_PAGE_BYTES / 1024 / 1024} MB`
+export const CHALLENGED_ERR = "page blocked by bot challenge"
 const SCREENSHOT_RESERVE_MS = 15_000
 const TILE = 256
 const COLS = 4
+
+export const CHROMIUM_PROXY_BYPASS = "<-loopback>"
+export const CHROMIUM_ARGS = [
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--hide-scrollbars",
+  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+  "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
+]
+export const CHROMIUM_NO_SANDBOX_ARGS = ["--no-sandbox", "--disable-setuid-sandbox"]
 
 const left = (deadline: number, max: number): number => Math.max(1, Math.min(max, deadline - Date.now()))
 
@@ -44,12 +55,53 @@ const STAMP = `(() => {
   }
 })()`
 
-const challenged = (page: Page): Promise<boolean> =>
+const challenged = (page: Pick<Page, "evaluate">): Promise<boolean> =>
   page.evaluate(`!!document.getElementById("challenge-container")`).then(Boolean, () => true)
 
-async function load(page: Page, url: URL, deadline: number): Promise<void> {
+export async function allowPageRequest(rawUrl: string, check: typeof checkUrl = checkUrl): Promise<boolean> {
+  if (rawUrl.startsWith("data:") || rawUrl.startsWith("blob:")) return true
+  return (await check(rawUrl)).ok
+}
+
+export async function installRouteGuard(page: Pick<Page, "route">, check: typeof checkUrl = checkUrl): Promise<void> {
+  await page.route("**/*", async (route) => {
+    if (await allowPageRequest(route.request().url(), check)) {
+      await route.continue().catch(() => {})
+    } else {
+      await route.abort("blockedbyclient").catch(() => {})
+    }
+  })
+}
+
+export function isSandboxLaunchError(err: unknown): boolean {
+  return /no usable sandbox|sandbox|setuid|userns|user_namespaces|namespace|zygote|running as root/i.test(
+    String((err as Error)?.message ?? err),
+  )
+}
+
+export async function launchChromium(
+  executablePath: string,
+  proxyUrl: string,
+  deadline: number,
+  launch: typeof chromium.launch = (opts) => chromium.launch(opts),
+): Promise<Browser> {
+  const base = {
+    executablePath,
+    headless: true,
+    proxy: { server: proxyUrl, bypass: CHROMIUM_PROXY_BYPASS },
+  }
+  try {
+    return await launch({ ...base, timeout: left(deadline, 30_000), args: CHROMIUM_ARGS })
+  } catch (err) {
+    if (!isSandboxLaunchError(err) || Date.now() >= deadline) throw err
+    return launch({ ...base, timeout: left(deadline, 30_000), args: [...CHROMIUM_NO_SANDBOX_ARGS, ...CHROMIUM_ARGS] })
+  }
+}
+
+export async function loadPage(page: Page, url: URL, deadline: number, sleepMs = 1_000): Promise<void> {
   await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: left(deadline, 30_000) })
-  for (let i = 0; i < 15 && Date.now() < deadline && (await challenged(page)); i++) await Bun.sleep(1_000)
+  for (let i = 0; i < 15 && Date.now() < deadline && (await challenged(page)); i++) await Bun.sleep(sleepMs)
+  if (await challenged(page)) throw new Error(CHALLENGED_ERR)
   await page.waitForLoadState("networkidle", { timeout: left(deadline, 10_000) }).catch(() => {})
   await page.evaluate(SCROLL).catch(() => {})
   await page.waitForLoadState("networkidle", { timeout: left(deadline, 5_000) }).catch(() => {})
@@ -57,8 +109,15 @@ async function load(page: Page, url: URL, deadline: number): Promise<void> {
 }
 
 /** The first candidate that answers with an image under the size cap. */
-async function fetchFirst(ctx: BrowserContext, urls: string[], referer: string, deadline: number): Promise<Buffer | null> {
+export async function fetchFirst(
+  ctx: Pick<BrowserContext, "request">,
+  urls: string[],
+  referer: string,
+  deadline: number,
+  check: typeof checkUrl = checkUrl,
+): Promise<Buffer | null> {
   for (const u of urls) {
+    if (!(await check(u)).ok) continue
     const res = await ctx.request
       .get(u, { headers: { Referer: referer, Accept: "image/avif,image/webp,image/*,*/*;q=0.8" }, timeout: left(deadline, 20_000), maxRedirects: 5 })
       .catch(() => null)
@@ -111,6 +170,7 @@ export async function contactSheet(frames: string[], dir: string): Promise<strin
 
 /** Load `url` in headless Chromium and return the bin/media analysis of its images. Throws when nothing usable came back. */
 export async function analysePage(url: URL, dir: string, deadline: number): Promise<Record<string, unknown>> {
+  if (Date.now() >= deadline) throw new Error("media fetch timed out")
   const executablePath = findChromiumExecutable()
   if (!executablePath) throw new Error("no Chromium installed for the page fallback")
   let browser: Browser | null = null
@@ -118,14 +178,11 @@ export async function analysePage(url: URL, dir: string, deadline: number): Prom
   const proxy = await startGuardProxy(vetHost, { maxBytes: MAX_PAGE_BYTES, onExceed: kill })
   const watchdog = setTimeout(kill, Math.max(0, deadline - Date.now()))
   try {
-    browser = await chromium.launch({
-      executablePath, headless: true, timeout: left(deadline, 30_000),
-      proxy: { server: proxy.url },
-      args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--hide-scrollbars", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
-    })
+    browser = await launchChromium(executablePath, proxy.url, deadline)
     const ctx = await browser.newContext({ viewport: { width: VIEW_W, height: VIEW_H }, userAgent: UA, deviceScaleFactor: 1, serviceWorkers: "block", acceptDownloads: false })
     const page = await ctx.newPage()
-    await load(page, url, deadline)
+    await installRouteGuard(page)
+    await loadPage(page, url, deadline)
     const found = extractPage(await page.content(), new URL(page.url()))
     const images = await saveImages(ctx, found.images, page.url(), dir, deadline)
     const shot = await screenshot(page, dir)
@@ -140,7 +197,9 @@ export async function analysePage(url: URL, dir: string, deadline: number): Prom
       contactSheet: await contactSheet(shown, dir),
     }
   } catch (err) {
-    throw proxy.exceeded() ? new Error(OVER) : err // the quota trip closed the browser mid-step
+    if (proxy.exceeded()) throw new Error(OVER) // the quota trip closed the browser mid-step
+    if (Date.now() >= deadline) throw new Error("media fetch timed out")
+    throw err
   } finally {
     clearTimeout(watchdog)
     await browser?.close().catch(() => {})
