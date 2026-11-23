@@ -55,6 +55,9 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   routeReason?: string | null
   /** Set on a task started on an existing PR's head (the conflict resolver): its follow-ups keep that PR's footer. */
   targetBranch?: string | null
+  /** The running turn's output files (`<logFile>.out` / `.err`, worker-spawn.ts) and the stdout bytes this record reflects:
+   *  a restart re-attaches to the worker from there instead of killing it. */
+  logFile?: string | null; logOffset?: number
 }
 
 /** Best effort: a failed write keeps the previous file. */

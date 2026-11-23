@@ -2,7 +2,7 @@ import { test, expect, beforeAll, afterAll } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { SpawnWorkerOpts } from "../lib/worker-invocation"
+import type { SpawnWorkerOpts } from "../lib/worker-spawn"
 import { listSessions } from "../lib/sessions"
 
 // POST /api/spawn-session with COMPANION_DESK_HEADLESS=1: a claude spawn is a

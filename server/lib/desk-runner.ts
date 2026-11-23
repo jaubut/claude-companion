@@ -23,10 +23,8 @@ import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import {
-  type SpawnWorkerOpts, type SpawnedWorkerHandle,
-  buildHeadlessClaudeArgs, buildHeadlessCodexArgs, defaultLoadAgentSecrets, defaultSpawnWorker, scrubAgentEnv,
-} from "./worker-invocation"
+import { buildHeadlessClaudeArgs, buildHeadlessCodexArgs, defaultLoadAgentSecrets, scrubAgentEnv } from "./worker-invocation"
+import { type SpawnWorkerOpts, type SpawnedWorkerHandle, defaultSpawnWorker } from "./worker-spawn"
 import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { isAgentPidAlive } from "./agent-pid"
 import { transcriptPath } from "./session-titles"
