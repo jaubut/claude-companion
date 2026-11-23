@@ -10,7 +10,7 @@ import {
   ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_GEMINI_WORKER_MODEL, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
   type PlanProgress, type SpawnWorkerOpts, type SpawnedWorkerHandle, type StreamJsonEvent, type WorkerFamily, type WorkerProgress, type WorkerTaskStatus,
   applyProgressEvent, buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, defaultSpawnWorker, modelFitsFamily, normalizeAgyCliModelFlag, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
 import { createReceiptOutbox } from "./worker-receipt-outbox"
@@ -227,7 +227,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!ALLOWED_MODES.has(mode)) return { ok: false, status: 400, error: "invalid_mode" }
       const agent = input.agent?.trim() || undefined
       if (agent && !SAFE_IDENTIFIER_RE.test(agent)) return { ok: false, status: 400, error: "invalid_agent" }
-      const model = input.model?.trim() || undefined
+      // An agy label ("Gemini 4 Hydrogen (High)") maps to its slug; unknown labels stay invalid.
+      const model = input.model?.trim() ? normalizeAgyCliModelFlag(input.model) : undefined
       if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
       const existing = tasks.get(taskId)
       // A follow-up turn keeps the task's recorded family unless the caller names a family, agent or model.

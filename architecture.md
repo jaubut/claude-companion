@@ -18,7 +18,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/worker-invocation.ts` | 596 | lib | 43 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
-| `lib/worker-supervisor.ts` | 591 | lib | 5 |  |
+| `lib/worker-supervisor.ts` | 592 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -739,6 +739,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `extractToolResult()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
+| `normalizeAgyCliModelFlag()` | `lib/worker-invocation.ts` | `lib/agy-feed.ts`, `lib/worker-supervisor.ts` |
 | `THINKING_MAX()` | `lib/transcript.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts` |
 | `workerOwnsConvo()` | `lib/worker-session.ts` | `lib/agy-feed.ts`, `lib/discover.ts` |
 | `clearExternalSessionActivity()` | `lib/activity.ts` | `lib/agy-feed.ts`, `wiring/desk-deliver.ts` |

@@ -1694,6 +1694,22 @@ sleep 30 & wait $!
       } finally { rmSync(h.home, { recursive: true, force: true }) }
     })
 
+    test("an agy model label ('Gemini 4 Hydrogen (High)') maps to its slug; unknown or shell-shaped labels stay invalid_model", async () => {
+      const h = harness()
+      try {
+        const d = await h.sup.dispatchTask({ taskId: "agy-label", repo: "claude-companion", prompt: "Build", model: "Gemini 4 Hydrogen (High)" })
+        expect(d.ok && [d.task.family, d.task.model]).toEqual(["gemini", "gemini-4-hydrogen-high"])
+        const args = h.spawned[0]!.args
+        expect(args[args.indexOf("--model") + 1]).toBe("gemini-4-hydrogen-high")
+        h.spawned[0]!.onExit(0, null)
+        for (const bad of ["Gemini 4 Hydrogen (High); rm -rf ~", "$(id)", "Gemini 9 Unknown (High)", "gemini-4-hydrogen-high `id`"]) {
+          const r = await h.sup.dispatchTask({ taskId: "agy-bad", repo: "claude-companion", prompt: "Build", model: bad })
+          expect(r).toEqual({ ok: false, status: 400, error: "invalid_model" })
+        }
+        expect(h.spawned).toHaveLength(1)
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
     test("every brief tells the worker to commit, push and open its own PR, and not to end on background work (a88c7bd9)", async () => {
       const h = harness()
       try {
