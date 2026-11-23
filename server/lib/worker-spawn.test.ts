@@ -177,8 +177,7 @@ setInterval(() => {}, 1_000)
       // The unverified PGID was not SIGKILLed, and worktree reservation holds until the background child exits.
       expect(groupAlive(pid)).toBe(true)
       const kept = await b.interruptTask("window-1", { closeWorktree: true })
-      expect(kept.ok && kept.worktreeRemoved).toBe(false)
-      expect(kept.ok && kept.note).toContain("not exited")
+      expect(kept).toEqual({ ok: false, status: 409, error: "worktree kept: worker process has not exited yet" })
 
       process.kill(-pid, "SIGKILL")
       for (let i = 0; i < 100 && groupAlive(pid); i++) await Bun.sleep(20)

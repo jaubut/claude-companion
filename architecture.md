@@ -17,7 +17,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/worker-supervisor.ts` | 595 | lib | 5 |  |
+| `lib/worker-supervisor.ts` | 587 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/worker-invocation.ts` | 570 | lib | 40 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
@@ -222,6 +222,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/worker-mcp.ts` | 96 | route-host | 3 | route: * /api/mcp/workers |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |
+| `lib/worker-task.ts` | 94 | lib | 7 |  |
 | `lib/recent-sessions.ts` | 93 | lib | 4 |  |
 | `lib/turso-test-db.test-util.ts` | 93 | lib | 5 |  |
 | `wiring/trips.ts` | 93 | lib | 6 | state: let live |
@@ -240,7 +241,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/waiting.ts` | 78 | lib | 4 | emits: waiting_input |
 | `lib/tmux-inject.ts` | 77 | lib | 5 |  |
 | `lib/suggest-cleanup.ts` | 76 | lib | 4 |  |
-| `lib/worker-task.ts` | 74 | lib | 4 |  |
 | `wiring/front-door.ts` | 74 | lib | 1 | emits: orchestrator |
 | `wiring/proposals.ts` | 74 | lib | 5 |  |
 | `lib/spawn-seed.ts` | 71 | lib | 8 | state: RETRY: Set |

@@ -90,8 +90,8 @@ test("a worktree on another branch is reused as-is on resume: its branch is retu
     const plain = await ensureWorktree(realSh, home, [], repoDir, "repo", "plain", true)
     expect(plain.ok).toBe(false)
 
-    // A fresh dispatch (not the task's own) never adopts a worktree on an unrelated branch.
-    expect(await ensureWorktree(realSh, home, [], repoDir, "repo", "t2", false)).toEqual({ ok: false, error: "existing worktree branch mismatch: dispatch/t2-c" })
+    // The task's record is gone (no ownedByTask): its own path is still its worktree, resumed on the branch the worker switched to.
+    expect(await ensureWorktree(realSh, home, [], repoDir, "repo", "t2", false)).toEqual({ ok: true, worktree: wt.worktree, branch: "dispatch/t2-c" })
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

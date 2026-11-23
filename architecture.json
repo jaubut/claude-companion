@@ -7320,7 +7320,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 595,
+          "lines": 587,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -7392,13 +7392,16 @@
         },
         {
           "path": "lib/worker-task.ts",
-          "lines": 74,
+          "lines": 94,
           "kind": "lib",
           "exports": [
             "SupervisedTaskSnapshot",
             "InternalTask",
             "toSnapshot",
-            "restoreTask"
+            "restoreTask",
+            "findTask",
+            "notifyWaiters",
+            "clearTimers"
           ],
           "state": [],
           "emits": [],
@@ -16943,6 +16946,18 @@
             "lib/worker-worktree.ts"
           ]
         },
+        "clearTimers": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "notifyWaiters": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "worktreeDirtyPaths": {
           "module": "lib/worker-worktree.ts",
           "callers": [
@@ -16957,6 +16972,12 @@
         },
         "watchTurn": {
           "module": "lib/worker-turn-watch.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "findTask": {
+          "module": "lib/worker-task.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]

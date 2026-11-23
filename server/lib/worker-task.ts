@@ -71,3 +71,23 @@ export function restoreTask(r: ReturnType<typeof loadTaskRecords>[number], now: 
   refreshResult(t)
   return t
 }
+
+/** A task by id, or by the short / long form of its hex id (`0bb587b3` vs `0bb587b3d29b…`, the branch a worker names
+ *  `dispatch/0bb587b3`): exact first, else the one 8+ hex task whose id extends or prefixes it, so every
+ *  by-id call lands on the same record, worktree and branch while slugs / suffixed ids stay distinct. */
+export function findTask<T extends { taskId: string }>(tasks: Map<string, T>, id: string): T | undefined {
+  const exact = tasks.get(id)
+  if (exact || !/^[0-9a-f]{8,}$/i.test(id)) return exact
+  const hits = [...tasks.values()].filter((t) => t.taskId.length >= 8 && /^[0-9a-f]+$/i.test(t.taskId) && (t.taskId.startsWith(id) || id.startsWith(t.taskId)))
+  return hits.length === 1 ? hits[0] : undefined
+}
+
+export function notifyWaiters(t: InternalTask): void {
+  for (const fn of [...t.waiters]) { t.waiters.delete(fn); fn() }
+}
+
+export function clearTimers(t: InternalTask): void {
+  if (t.timeoutTimer) { clearTimeout(t.timeoutTimer); t.timeoutTimer = null }
+  if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
+  if (t.reapTimer) { clearTimeout(t.reapTimer); t.reapTimer = null }
+}
