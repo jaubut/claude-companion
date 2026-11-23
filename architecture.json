@@ -2164,7 +2164,7 @@
         },
         {
           "path": "lib/desk-runner.ts",
-          "lines": 418,
+          "lines": 416,
           "kind": "lib",
           "exports": [
             "DESK_PANE_PREFIX",
@@ -2195,6 +2195,7 @@
           "apiCalls": [],
           "imports": [
             "lib/worker-invocation.ts",
+            "lib/worker-spawn.ts",
             "lib/worker-pid.ts",
             "lib/agent-pid.ts",
             "lib/session-titles.ts",
@@ -7129,7 +7130,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 596,
+          "lines": 570,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7171,10 +7172,7 @@
             "agyWorkerSettings",
             "buildHeadlessGeminiArgs",
             "WORKER_SANDBOX_HOSTS",
-            "buildHeadlessWorkerInvocation",
-            "SpawnedWorkerHandle",
-            "SpawnWorkerOpts",
-            "defaultSpawnWorker"
+            "buildHeadlessWorkerInvocation"
           ],
           "state": [
             "SUBCOMMAND_TOOLS: Set",
@@ -7185,8 +7183,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/secret-redact.ts",
-            "lib/worker-pid.ts"
+            "lib/secret-redact.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7346,8 +7343,34 @@
           "externals": []
         },
         {
+          "path": "lib/worker-spawn.ts",
+          "lines": 127,
+          "kind": "lib",
+          "exports": [
+            "SpawnedWorkerHandle",
+            "SpawnWorkerOpts",
+            "defaultSpawnWorker",
+            "detachedCommand",
+            "spawnDetachedWorker",
+            "attachDetachedWorker"
+          ],
+          "state": [
+            "let scopeOk"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/worker-pid.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/worker-supervisor.ts",
-          "lines": 592,
+          "lines": 588,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -7369,6 +7392,7 @@
             "lib/live-repo.ts",
             "lib/secret-redact.ts",
             "lib/worker-invocation.ts",
+            "lib/worker-spawn.ts",
             "lib/worker-pid.ts",
             "lib/worker-receipt-outbox.ts",
             "lib/worker-task-store.ts",
@@ -7383,7 +7407,7 @@
         },
         {
           "path": "lib/worker-task-store.ts",
-          "lines": 124,
+          "lines": 127,
           "kind": "lib",
           "exports": [
             "workerStateFile",
@@ -7418,12 +7442,13 @@
         },
         {
           "path": "lib/worker-task.ts",
-          "lines": 48,
+          "lines": 94,
           "kind": "lib",
           "exports": [
             "SupervisedTaskSnapshot",
             "InternalTask",
             "toSnapshot",
+            "restoreTask",
             "findTask",
             "notifyWaiters",
             "clearTimers"
@@ -7435,7 +7460,10 @@
           "apiCalls": [],
           "imports": [
             "lib/worker-invocation.ts",
-            "lib/worker-task-store.ts"
+            "lib/worker-spawn.ts",
+            "lib/worker-task-store.ts",
+            "lib/worker-turns.ts",
+            "lib/worker-worktree.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7456,7 +7484,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/worker-invocation.ts",
+            "lib/worker-spawn.ts",
             "lib/worker-task-store.ts"
           ],
           "listeners": [],
@@ -13225,50 +13253,19 @@
           ]
         },
         "SpawnedWorkerHandle": {
-          "module": "lib/worker-invocation.ts",
+          "module": "lib/worker-spawn.ts",
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-supervisor.ts",
             "lib/worker-task.ts",
-            "lib/worker-turn-watch.ts",
-            "wiring/brain-headless.ts"
+            "lib/worker-turn-watch.ts"
           ]
         },
         "SpawnWorkerOpts": {
-          "module": "lib/worker-invocation.ts",
+          "module": "lib/worker-spawn.ts",
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultLoadAgentSecrets": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "buildHeadlessClaudeArgs": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts",
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "buildHeadlessCodexArgs": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultSpawnWorker": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts",
-            "wiring/brain-headless.ts"
           ]
         },
         "defaultGetParentPid": {
@@ -13284,6 +13281,13 @@
             "lib/desk-runner.ts",
             "lib/session-prune-gone.ts",
             "lib/sessions.ts"
+          ]
+        },
+        "defaultSpawnWorker": {
+          "module": "lib/worker-spawn.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
           ]
         },
         "defaultIsPidAlive": {
@@ -13304,7 +13308,14 @@
           "module": "lib/worker-pid.ts",
           "callers": [
             "lib/desk-runner.ts",
-            "lib/worker-invocation.ts",
+            "lib/worker-spawn.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultLoadAgentSecrets": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
             "lib/worker-supervisor.ts"
           ]
         },
@@ -13318,6 +13329,21 @@
             "wiring/auto-compact.ts",
             "wiring/brain-headless.ts",
             "wiring/events.ts"
+          ]
+        },
+        "buildHeadlessClaudeArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "buildHeadlessCodexArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
           ]
         },
         "parseDialog": {
@@ -16869,6 +16895,7 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/worker-supervisor.ts",
+            "lib/worker-task.ts",
             "wiring/desk-deliver.ts"
           ]
         },
@@ -16920,6 +16947,12 @@
             "wiring/brain-lead.ts"
           ]
         },
+        "spawnDetachedWorker": {
+          "module": "lib/worker-spawn.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "PersistedTaskRecord": {
           "module": "lib/worker-task-store.ts",
           "callers": [
@@ -16961,17 +16994,30 @@
         "loadTaskRecords": {
           "module": "lib/worker-task-store.ts",
           "callers": [
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
+          ]
+        },
+        "restoreTask": {
+          "module": "lib/worker-task.ts",
+          "callers": [
             "lib/worker-supervisor.ts"
           ]
         },
-        "restoreTurns": {
+        "attachDetachedWorker": {
+          "module": "lib/worker-spawn.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "openTurn": {
           "module": "lib/worker-turns.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
         },
-        "TARGET_BRANCH_RE": {
-          "module": "lib/worker-worktree.ts",
+        "closeTurn": {
+          "module": "lib/worker-turns.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -16979,7 +17025,8 @@
         "refreshResult": {
           "module": "lib/worker-turns.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts"
           ]
         },
         "clearStaleGitConfigLock": {
@@ -16987,6 +17034,36 @@
           "callers": [
             "lib/worker-supervisor.ts",
             "lib/worker-worktree.ts"
+          ]
+        },
+        "clearTimers": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "notifyWaiters": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "worktreeDirtyPaths": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "closeTaskWorktree": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "watchTurn": {
+          "module": "lib/worker-turn-watch.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
           ]
         },
         "findTask": {
@@ -17019,50 +17096,8 @@
             "lib/worker-supervisor.ts"
           ]
         },
-        "clearTimers": {
-          "module": "lib/worker-task.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "openTurn": {
-          "module": "lib/worker-turns.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "closeTurn": {
-          "module": "lib/worker-turns.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "composeWorkerPrompt": {
           "module": "lib/field-guide.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "notifyWaiters": {
-          "module": "lib/worker-task.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "worktreeDirtyPaths": {
-          "module": "lib/worker-worktree.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "closeTaskWorktree": {
-          "module": "lib/worker-worktree.ts",
-          "callers": [
-            "lib/worker-supervisor.ts"
-          ]
-        },
-        "watchTurn": {
-          "module": "lib/worker-turn-watch.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]
@@ -17071,6 +17106,18 @@
           "module": "lib/worker-worktree.ts",
           "callers": [
             "lib/worker-supervisor.ts"
+          ]
+        },
+        "restoreTurns": {
+          "module": "lib/worker-turns.ts",
+          "callers": [
+            "lib/worker-task.ts"
+          ]
+        },
+        "TARGET_BRANCH_RE": {
+          "module": "lib/worker-worktree.ts",
+          "callers": [
+            "lib/worker-task.ts"
           ]
         },
         "parseTurns": {

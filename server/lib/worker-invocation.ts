@@ -1,9 +1,8 @@
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { redactSecrets } from "./secret-redact"
-import { defaultKillPid } from "./worker-pid"
 
 export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]{1,100}$/
@@ -396,6 +395,8 @@ export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, build
   // Headless claude 2.1.x ships TaskCreate/TaskUpdate (incremental, ids in tool results); 0 brings back TodoWrite, whose
   // every call carries the full list, so the progress bar reads done / total off one event.
   env.CLAUDE_CODE_ENABLE_TASKS = "0"
+  // The server's systemd invocation, not the worker's: a Companion test the worker runs must not take itself for the service.
+  delete env.INVOCATION_ID
   return env
 }
 
@@ -565,31 +566,4 @@ export function buildHeadlessWorkerInvocation(opts: { family: WorkerFamily; prom
   }
   // Worker-only sandbox network additions (lists merge with the user settings): the production jobs Codex already does.
   return { cmd: "claude", args: ["--settings", JSON.stringify({ sandbox: { network: { allowedDomains: WORKER_SANDBOX_HOSTS } } }), ...buildHeadlessClaudeArgs(opts)] }
-}
-
-export interface SpawnedWorkerHandle { pid: number; kill(sig: NodeJS.Signals): void }
-
-export interface SpawnWorkerOpts {
-  cmd: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv
-  onStdoutLine(line: string): void; onStderrLine(line: string): void; onExit(code: number | null, signal: NodeJS.Signals | null): void
-}
-
-export function defaultSpawnWorker(opts: SpawnWorkerOpts): SpawnedWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], detached: true })
-  let outBuf = "", errBuf = ""
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
-  })
-  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
-  })
-  child.on("error", (err) => { opts.onStderrLine(err.message); opts.onExit(1, null) })
-  child.on("close", (code, sig) => {
-    if (outBuf.trim()) opts.onStdoutLine(outBuf)
-    if (errBuf.trim()) opts.onStderrLine(errBuf)
-    opts.onExit(code, sig)
-  })
-  return { pid: child.pid ?? 0, kill(sig: NodeJS.Signals) { if (child.pid) defaultKillPid(child.pid, sig) } }
 }

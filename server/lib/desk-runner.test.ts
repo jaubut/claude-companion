@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type DeskDeps, QUEUE_CAP, createDeskRunner, deskEnv, deskStateFile } from "./desk-runner"
-import type { SpawnWorkerOpts } from "./worker-invocation"
+import type { SpawnWorkerOpts } from "./worker-spawn"
 import type { Session } from "./sessions"
 
 // Fake spawn + timers, a temp HOME for the state file. Covers Verify 1: the

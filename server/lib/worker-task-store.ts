@@ -49,12 +49,15 @@ export interface PersistedTaskRecord extends SupervisedTaskSnapshot {
   dispatchTurn?: number
   /** Completed with no PR, its receipt not queued yet (waits on git status): a reload queues it. */
   receiptDue?: boolean
-  /** The Companion process that spawned the worker: a worker still parented to it belongs to that live server, not to a reloading one. */
-  ownerPid?: number | null
+  /** The Companion process that spawned or re-attached to the worker: while that server is alive, the record belongs to it, not to another reloading instance. */
+  ownerPid?: number | null; ownerPidIdentity?: string | null
   /** The router's reason for the last routed turn (lib/jev-model-router.ts): a security or money task keeps Opus on follow-ups. */
   routeReason?: string | null
   /** Set on a task started on an existing PR's head (the conflict resolver): its follow-ups keep that PR's footer. */
   targetBranch?: string | null
+  /** The running turn's output files (`<logFile>.out` / `.err`, worker-spawn.ts) and the stdout bytes this record reflects:
+   *  a restart re-attaches to the worker from there instead of killing it. */
+  logFile?: string | null; logOffset?: number
 }
 
 /** Best effort: a failed write keeps the previous file. */

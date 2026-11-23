@@ -1,4 +1,4 @@
-import type { SpawnedWorkerHandle } from "./worker-invocation"
+import type { SpawnedWorkerHandle } from "./worker-spawn"
 import type { WorkerTurn } from "./worker-task-store"
 
 /** A running turn checks in with the brain every CHECKIN_MS; it is stopped only after IDLE_KILL_MS with no output (or past an explicit timeoutS). */
