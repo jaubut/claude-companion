@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import sharp from "sharp"
+import { isPinterestHost } from "./board-url-resolve"
+import { OVER, analysePage } from "./link-media-browser"
 import { MAX_BYTES, checkUrl, safeFetch, startGuardProxy, vetHost } from "./link-media-guard"
 import { type Swatch, palette } from "./link-media-palette"
 import { companionLog } from "./log"
@@ -13,8 +15,9 @@ import { companionLog } from "./log"
 // transcript (no Whisper) and absolute paths of ~10 frames + a contact sheet
 // (the brain opens them with Read). One folder per URL, reused while present,
 // pruned after 7 days. yt-dlp does the fetching (Instagram 401 → the embed
-// captions page), ffmpeg the frames. All network traffic goes through the
-// guard proxy (link-media-guard.ts) and the whole job, fetches and sharp
+// captions page), ffmpeg the frames; a link yt-dlp can't read (design pages:
+// Dribbble, Pinterest, Behance) goes to headless Chromium (link-media-browser.ts).
+// All network traffic goes through the guard proxy (link-media-guard.ts) and the whole job, fetches and sharp
 // included, ends at a 120 s deadline.
 
 const ROOT = process.env.COMPANION_LINK_MEDIA_DIR ?? join(homedir(), ".cache", "companion", "media")
@@ -32,7 +35,7 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const YTDLP = existsSync(join(homedir(), ".local", "bin", "yt-dlp")) ? join(homedir(), ".local", "bin", "yt-dlp") : "yt-dlp"
 
 export interface LinkMediaMeta {
-  source: "yt-dlp" | "instagram-embed" | "direct"
+  source: "yt-dlp" | "instagram-embed" | "direct" | "browser"
   uploader: string | null
   title: string | null
   description: string | null
@@ -346,18 +349,81 @@ async function transcript(info: Info, deadline: number): Promise<string | null> 
   return t.length > TRANSCRIPT_MAX ? `${t.slice(0, TRANSCRIPT_MAX - 1)}…` : t || null
 }
 
+/** Remove any downloaded or partial `video.*` files from `dir` so they never persist in the 7-day cache. */
+export function cleanVideoFiles(dir: string): void {
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) {
+    if (name.startsWith("video.")) rmSync(join(dir, name), { force: true })
+  }
+}
+
 async function analyseVideo(url: URL, dir: string, deadline: number): Promise<Record<string, unknown>> {
   const info = await fetchInfo(url, deadline)
   const video = await download(url.href, info, dir, deadline)
-  const duration = await probeDuration(video, deadline)
-  const frames = await extractFrames(video, duration, dir, deadline)
-  const sheet = await contactSheet(dir, deadline)
-  const colours: Swatch[] = await palette(frames)
-  const captions = await transcript(info, deadline).catch(() => null)
-  rmSync(video, { force: true })
-  return {
-    kind: "video", meta: { ...info.meta, duration: info.meta.duration ?? duration }, truncated: (info.meta.duration ?? 0) > MAX_SECONDS,
-    palette: colours, transcript: captions, frames, contactSheet: sheet,
+  try {
+    const duration = await probeDuration(video, deadline)
+    const frames = await extractFrames(video, duration, dir, deadline)
+    const sheet = await contactSheet(dir, deadline)
+    const colours: Swatch[] = await palette(frames)
+    const captions = await transcript(info, deadline).catch(() => null)
+    return {
+      kind: "video", meta: { ...info.meta, duration: info.meta.duration ?? duration }, truncated: (info.meta.duration ?? 0) > MAX_SECONDS,
+      palette: colours, transcript: captions, frames, contactSheet: sheet,
+    }
+  } finally {
+    rmSync(video, { force: true })
+    cleanVideoFiles(dir)
+  }
+}
+
+const VIDEO_ONLY_HOST = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|tiktok\.com|vimeo\.com)$/i
+const DESIGN_HOST = /(^|\.)(dribbble\.com|behance\.net)$/i
+const YT_FALLBACK_ERR = /unsupported url|no video formats found|no media found|there is no video|is not a video|unable to extract video/i
+const YT_NO_FALLBACK_ERR =
+  /metadata over \d+ MB|unreadable JSON|unsupported media protocol|sign in|not a bot|login required|log in|rate-limit|private|unavailable|age-restricted|members-only/i
+
+/**
+ * True only when `fetchInfo` failed because yt-dlp doesn't support the page or found no video formats
+ * (or on design-reference hosts like Dribbble/Behance/Pinterest). Never true after `fetchInfo` succeeded
+ * (`probeDuration` / `extractFrames`), on known video-only hosts, or on bot-check/login/private/unavailable errors.
+ */
+export function shouldFallbackToPage(url: URL, err: unknown): boolean {
+  if (!(err instanceof MediaError) || err.status !== 422) return false
+  if (!err.reason.startsWith("could not read this link: ")) return false
+  if (VIDEO_ONLY_HOST.test(url.hostname)) return false
+  if (YT_NO_FALLBACK_ERR.test(err.reason)) return false
+  if (DESIGN_HOST.test(url.hostname) || isPinterestHost(url.hostname)) return true
+  return YT_FALLBACK_ERR.test(err.reason)
+}
+
+export interface VideoOrPageDeps {
+  video?: (url: URL, dir: string, deadline: number) => Promise<Record<string, unknown>>
+  page?: (url: URL, dir: string, deadline: number) => Promise<Record<string, unknown>>
+}
+
+/** yt-dlp first; when `fetchInfo` can't read a non-video / design link, load the page in headless Chromium. */
+export async function analyseVideoOrPage(
+  url: URL,
+  dir: string,
+  deadline: number,
+  deps: VideoOrPageDeps = {},
+): Promise<Record<string, unknown>> {
+  const runVideo = deps.video ?? analyseVideo
+  const runPage = deps.page ?? analysePage
+  try {
+    return await runVideo(url, dir, deadline)
+  } catch (err) {
+    cleanVideoFiles(dir)
+    if (!shouldFallbackToPage(url, err)) throw err
+    if (Date.now() >= deadline) throw new MediaError(504, "media fetch timed out")
+    const fetchErr = err as MediaError
+    return runPage(url, dir, deadline).catch((e: unknown) => {
+      if (e instanceof MediaError) throw e
+      const msg = String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200)
+      if (msg === OVER || /page over \d+ MB/i.test(msg)) throw new MediaError(413, msg)
+      if (Date.now() >= deadline || /timed? ?out|timeout/i.test(msg)) throw new MediaError(504, msg || "media fetch timed out")
+      throw new MediaError(422, `${fetchErr.reason}; browser: ${msg}`)
+    })
   }
 }
 
@@ -419,7 +485,7 @@ export async function build(url: URL, dir: string, opts: BuildOptions = {}): Pro
   mkdirSync(dirname(dir), { recursive: true })
   const workDir = `${dir}.attempt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   mkdirSync(workDir, { recursive: true })
-  const runAttempt = opts.attempt ?? ((w, d) => imageResponse(url, d).then((img) => (img ? analyseImage(url, img, w) : analyseVideo(url, w, d))))
+  const runAttempt = opts.attempt ?? ((w, d) => imageResponse(url, d).then((img) => (img ? analyseImage(url, img, w) : analyseVideoOrPage(url, w, d))))
   const analysis = (async () => runAttempt(workDir, deadline))()
   try {
     const raw = await beforeDeadline(analysis, deadline)

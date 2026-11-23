@@ -3363,8 +3363,68 @@
           "externals": []
         },
         {
+          "path": "lib/link-media-browser.ts",
+          "lines": 209,
+          "kind": "lib",
+          "exports": [
+            "OVER",
+            "CHALLENGED_ERR",
+            "CHROMIUM_PROXY_BYPASS",
+            "CHROMIUM_ARGS",
+            "CHROMIUM_NO_SANDBOX_ARGS",
+            "allowPageRequest",
+            "installRouteGuard",
+            "isSandboxLaunchError",
+            "launchChromium",
+            "loadPage",
+            "fetchFirst",
+            "contactSheet",
+            "analysePage"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-page-capture.ts",
+            "lib/link-media-extract.ts",
+            "lib/link-media-guard.ts",
+            "lib/link-media-palette.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": [
+            "playwright-core",
+            "sharp"
+          ]
+        },
+        {
+          "path": "lib/link-media-extract.ts",
+          "lines": 126,
+          "kind": "lib",
+          "exports": [
+            "PageExtract",
+            "MAX_PAGE_IMAGES",
+            "largestSrc",
+            "upgrades",
+            "extractPage"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/board-url-resolve.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/link-media-guard.ts",
-          "lines": 262,
+          "lines": 263,
           "kind": "lib",
           "exports": [
             "UrlCheck",
@@ -3413,7 +3473,7 @@
         },
         {
           "path": "lib/link-media.ts",
-          "lines": 460,
+          "lines": 526,
           "kind": "lib",
           "exports": [
             "LinkMediaMeta",
@@ -3429,6 +3489,10 @@
             "vttText",
             "readCappedUtf8",
             "pickCaptionUrl",
+            "cleanVideoFiles",
+            "shouldFallbackToPage",
+            "VideoOrPageDeps",
+            "analyseVideoOrPage",
             "asImage",
             "imageTitle",
             "BuildOptions",
@@ -3443,6 +3507,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/board-url-resolve.ts",
+            "lib/link-media-browser.ts",
             "lib/link-media-guard.ts",
             "lib/link-media-palette.ts",
             "lib/log.ts"
@@ -14098,19 +14164,60 @@
             "lib/keyboard-inject.ts"
           ]
         },
-        "MAX_BYTES": {
+        "checkUrl": {
           "module": "lib/link-media-guard.ts",
           "callers": [
+            "lib/link-media-browser.ts",
             "lib/link-media.ts"
+          ]
+        },
+        "findChromiumExecutable": {
+          "module": "lib/board-page-capture.ts",
+          "callers": [
+            "lib/link-media-browser.ts"
           ]
         },
         "vetHost": {
           "module": "lib/link-media-guard.ts",
           "callers": [
+            "lib/link-media-browser.ts",
             "lib/link-media.ts"
           ]
         },
         "startGuardProxy": {
+          "module": "lib/link-media-guard.ts",
+          "callers": [
+            "lib/link-media-browser.ts",
+            "lib/link-media.ts"
+          ]
+        },
+        "extractPage": {
+          "module": "lib/link-media-extract.ts",
+          "callers": [
+            "lib/link-media-browser.ts"
+          ]
+        },
+        "palette": {
+          "module": "lib/link-media-palette.ts",
+          "callers": [
+            "lib/link-media-browser.ts",
+            "lib/link-media.ts"
+          ]
+        },
+        "isPinterestHost": {
+          "module": "lib/board-url-resolve.ts",
+          "callers": [
+            "lib/link-media-extract.ts",
+            "lib/link-media.ts"
+          ]
+        },
+        "extractMetaTag": {
+          "module": "lib/board-url-resolve.ts",
+          "callers": [
+            "lib/link-media-extract.ts"
+          ]
+        },
+        "MAX_BYTES": {
           "module": "lib/link-media-guard.ts",
           "callers": [
             "lib/link-media.ts"
@@ -14122,20 +14229,26 @@
             "lib/link-media.ts"
           ]
         },
+        "contactSheet": {
+          "module": "lib/link-media-browser.ts",
+          "callers": [
+            "lib/link-media.ts"
+          ]
+        },
         "Swatch": {
           "module": "lib/link-media-palette.ts",
           "callers": [
             "lib/link-media.ts"
           ]
         },
-        "palette": {
-          "module": "lib/link-media-palette.ts",
+        "analysePage": {
+          "module": "lib/link-media-browser.ts",
           "callers": [
             "lib/link-media.ts"
           ]
         },
-        "checkUrl": {
-          "module": "lib/link-media-guard.ts",
+        "OVER": {
+          "module": "lib/link-media-browser.ts",
           "callers": [
             "lib/link-media.ts"
           ]
@@ -21766,7 +21879,8 @@
         "playwright-core": {
           "version": "1.65.1",
           "modules": [
-            "lib/board-page-capture.ts"
+            "lib/board-page-capture.ts",
+            "lib/link-media-browser.ts"
           ]
         },
         "sharp": {
@@ -21775,6 +21889,7 @@
             "lib/board-page-capture.ts",
             "lib/board-render.ts",
             "lib/board-url-resolve.ts",
+            "lib/link-media-browser.ts",
             "lib/link-media-palette.ts",
             "lib/link-media.ts",
             "lib/media.ts",

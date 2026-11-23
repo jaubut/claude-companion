@@ -60,6 +60,7 @@ export function isPrivateIp(ip: string): boolean {
 /** Resolve a host to one public address to connect to; throws the refusal reason. */
 export async function vetHost(hostname: string): Promise<string> {
   const host = hostname.replace(/^\[|\]$/g, "")
+  if (/(^|\.)localhost\.?$/i.test(host)) throw new Error("private or loopback host refused")
   let addrs: string[]
   if (isIP(host)) addrs = [host]
   else {
