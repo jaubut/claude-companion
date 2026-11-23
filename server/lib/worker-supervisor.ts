@@ -10,7 +10,7 @@ import {
   ALLOWED_FAMILIES, ALLOWED_MODES, DEFAULT_GEMINI_WORKER_MODEL, DEFAULT_REAP_GRACE_MS, REPO_NAME_RE, SAFE_IDENTIFIER_RE, TASK_ID_RE, WORKER_FOOTER, WORKER_SHIP_RULE, WORKER_TURN_RULE,
   type PlanProgress, type StreamJsonEvent, type WorkerFamily, type WorkerProgress, type WorkerTaskStatus,
   applyProgressEvent, buildHeadlessClaudeArgs, buildHeadlessCodexArgs, buildHeadlessGeminiArgs, progressOf,
-  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, parseStreamJsonLine, resolveWorkerFamily,
+  buildHeadlessWorkerInvocation, buildWorkerEnv, defaultLoadAgentSecrets, modelFitsFamily, normalizeAgyCliModelFlag, parseStreamJsonLine, resolveWorkerFamily,
 } from "./worker-invocation"
 import { type SpawnWorkerOpts, type SpawnedWorkerHandle, attachDetachedWorker, defaultSpawnWorker, spawnDetachedWorker } from "./worker-spawn"
 import { defaultGetParentPid, defaultGetPidIdentity, defaultIsPidAlive, defaultKillPid } from "./worker-pid"
@@ -85,7 +85,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
   const killPid = deps.killPid ?? defaultKillPid
   const getPidIdentity = deps.getPidIdentity ?? ((pid: number) => defaultGetPidIdentity(pid) ?? (deps.isPidAlive ? `mock:${pid}` : null))
   const getParentPid = deps.getParentPid ?? (deps.isPidAlive ? () => null : defaultGetParentPid)
-  const selfPid = deps.selfPid ?? process.pid
+  const selfPid = deps.selfPid ?? process.pid, selfPidIdentity = getPidIdentity(selfPid)
   const stateFile = deps.stateFile ?? workerStateFile(deps.home)
   // Records of workers another live Companion (prod, while a test or dev instance loads the same file) still runs: kept as-is.
   const foreignRecords: PersistedTaskRecord[] = []
@@ -100,7 +100,7 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
 
   function savePersistedTasks(): void {
     saveTaskRecords(stateFile, [...tasks.values()].map((t): PersistedTaskRecord => ({
-      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid || t.pid || null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid, ownerPidIdentity: getPidIdentity(selfPid), receiptDue: t.receiptDue, routeReason: t.routeReason, targetBranch: t.targetBranch, logFile: t.logFile, logOffset: t.handle?.offset?.() ?? t.logOffset,
+      ...toSnapshot(t), repoDir: t.repoDir, pid: t.handle?.pid || t.pid || null, pidIdentity: t.pidIdentity, sessionStarted: t.sessionStarted, prLinkBound: t.prLinkBound, handoffClaim: t.handoffClaim, modelPinned: t.modelPinned, ownerPid: selfPid, ownerPidIdentity: selfPidIdentity, receiptDue: t.receiptDue, routeReason: t.routeReason, targetBranch: t.targetBranch, logFile: t.logFile, logOffset: t.handle?.offset?.() ?? t.logOffset,
       turns: t.turns, turnsRead: t.turnsRead, dispatchTurn: t.dispatchTurn,
     })).concat(foreignRecords.filter((r) => !tasks.has(r.taskId))))
   }
@@ -256,9 +256,10 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
           settled = true; resolveExit(); o.cleanup?.()
           if (task.activeTurn !== myTurn) return
           // Re-attached after a restart: not our child, so no exit status; the turn's own `result` event says how it went.
+          const tail = task.stderrTail.join(" | ")
           if (o.attached && code === null && !sig) {
             if (task.turns.at(-1)?.status === "completed") code = 0
-            else task.error ??= `${family} exited while Companion was restarting, before its turn reported`
+            else task.error ??= (`${family} exited ${handle?.pid > 1 ? "after re-attaching" : "while Companion was restarting"}, before its turn reported${tail ? `: ${tail}` : ""}`).slice(0, 400)
           }
           clearTimers(task); task.handle = null; task.exitPromise = null
           if (task.pid !== null && !isPidAlive(task.pid)) { task.pid = null; task.pidIdentity = null; task.reloadedFromDisk = false }
@@ -314,7 +315,6 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
             return
           }
           task.status = "failed"
-          const tail = task.stderrTail.join(" | ")
           task.error = task.error ?? (`${family} exited (code=${code ?? "null"} sig=${sig ?? "none"})${tail ? `: ${tail}` : ""}`).slice(0, 400)
           task.step = `Failed: ${task.error.slice(0, 100)}`
           if (!task.turnReportedTerminal) {
@@ -371,7 +371,8 @@ export function createWorkerSupervisor(deps: WorkerSupervisorDeps) {
       if (!ALLOWED_MODES.has(mode)) return { ok: false, status: 400, error: "invalid_mode" }
       const agent = input.agent?.trim() || undefined
       if (agent && !SAFE_IDENTIFIER_RE.test(agent)) return { ok: false, status: 400, error: "invalid_agent" }
-      const model = input.model?.trim() || undefined
+      // An agy label ("Gemini 4 Hydrogen (High)") maps to its slug; unknown labels stay invalid.
+      const model = input.model?.trim() ? normalizeAgyCliModelFlag(input.model) : undefined
       if (model && !SAFE_IDENTIFIER_RE.test(model)) return { ok: false, status: 400, error: "invalid_model" }
       const existing = tasks.get(taskId)
       // A follow-up turn keeps the task's recorded family unless the caller names a family, agent or model.

@@ -535,9 +535,11 @@ describe("createWorkerSupervisor", () => {
     const logReused = join(logDir, "reused-1.t1")
     const logCrashed = join(logDir, "crashed-1.t1")
     const logForeign = join(logDir, "foreign-1.t1")
-    for (const f of [logReused, logCrashed, logForeign]) {
+    const logRestartDied = join(logDir, "restart-died.t1")
+    const logPostAttachDied = join(logDir, "post-attach-died.t1")
+    for (const f of [logReused, logCrashed, logForeign, logRestartDied, logPostAttachDied]) {
       writeFileSync(`${f}.out`, '{"type":"system","subtype":"init","session_id":"s"}\n')
-      writeFileSync(`${f}.err`, "err\n")
+      writeFileSync(`${f}.err`, "fatal crash on stderr\n")
     }
     const baseRec = (taskId: string) => ({
       taskId, repo: "claude-companion", repoDir, title: taskId, builder: `b-${taskId}`, family: "claude",
@@ -553,18 +555,25 @@ describe("createWorkerSupervisor", () => {
       { ...baseRec("crashed-1"), status: "interrupted", pid: null, pidIdentity: null, ownerPid: 9001, ownerPidIdentity: "boot:9001:dead", logFile: logCrashed, logOffset: 0 },
       // (3) Reparented worker (getParentPid !== ownerPid) whose re-attached owner supervisor B (9002) is alive -> foreign, keeps log files
       { ...baseRec("foreign-1"), pid: 8002, pidIdentity: "boot:8002:live", ownerPid: 9002, ownerPidIdentity: "boot:9002:live-b", logFile: logForeign, logOffset: 0 },
+      // (4) Worker that exited during restart window without a result event (pid=null at attach) -> includes stderrTail and "while Companion was restarting"
+      { ...baseRec("restart-died"), pid: 8003, pidIdentity: "boot:8003:gone", ownerPid: 9001, ownerPidIdentity: "boot:9001:dead", logFile: logRestartDied, logOffset: 0 },
+      // (5) Worker alive at attach time that later exits without a result event -> includes stderrTail and "after re-attaching"
+      { ...baseRec("post-attach-died"), pid: 8004, pidIdentity: "boot:8004:live", ownerPid: 9001, ownerPidIdentity: "boot:9001:dead", logFile: logPostAttachDied, logOffset: 0 },
     ]))
 
+    let postAttachAlive = true
+    let selfPidIdentityCalls = 0
     try {
       const sup = createWorkerSupervisor({
         host: "zettlab", home, selfPid: 9003, now: () => 1700000000000, uuid: () => "u", trust: () => {}, reportJob: () => {},
-        isPidAlive: (pid) => pid === 8001 || pid === 8002,
+        isPidAlive: (pid) => pid === 8001 || pid === 8002 || (pid === 8004 && postAttachAlive),
         getParentPid: () => 1, // reparented to init / systemd --user
         getPidIdentity: (pid) => {
           if (pid === 8001) return "boot:8001:reused-other"
           if (pid === 8002) return "boot:8002:live"
+          if (pid === 8004) return postAttachAlive ? "boot:8004:live" : null
           if (pid === 9002) return "boot:9002:live-b"
-          if (pid === 9003) return "boot:9003:self-c"
+          if (pid === 9003) { selfPidIdentityCalls++; return "boot:9003:self-c" }
           return null
         },
         sh: async () => ({ ok: true, out: "origin/main\n", err: "", code: 0 }),
@@ -582,6 +591,20 @@ describe("createWorkerSupervisor", () => {
       expect(sup.getTask("foreign-1")).toBeNull()
       expect(existsSync(`${logForeign}.out`)).toBe(true)
       expect(existsSync(`${logForeign}.err`)).toBe(true)
+
+      const diedDuringRestart = await sup.awaitTask("restart-died", 2_000)
+      expect(diedDuringRestart.ok && diedDuringRestart.task.status).toBe("failed")
+      expect(diedDuringRestart.ok && diedDuringRestart.task.error).toBe("claude exited while Companion was restarting, before its turn reported: fatal crash on stderr")
+
+      writeFileSync(`${logPostAttachDied}.err`, "fatal crash on stderr\npost-attach stderr boom\n")
+      await Bun.sleep(250)
+      postAttachAlive = false
+      const diedAfterAttach = await sup.awaitTask("post-attach-died", 2_000)
+      expect(diedAfterAttach.ok && diedAfterAttach.task.status).toBe("failed")
+      expect(diedAfterAttach.ok && diedAfterAttach.task.error).toBe("claude exited after re-attaching, before its turn reported: post-attach stderr boom")
+
+      // Cached once at supervisor creation, never re-probed per task or per savePersistedTasks() call
+      expect(selfPidIdentityCalls).toBe(1)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
@@ -1752,6 +1775,22 @@ sleep 30 & wait $!
           spawnWorker: (o) => { h.spawned.push(o); return { pid: 0, kill() {} } },
         })
         expect(reloaded.getTask(legacyId)?.family).toBe("claude")
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("an agy model label ('Gemini 4 Hydrogen (High)') maps to its slug; unknown or shell-shaped labels stay invalid_model", async () => {
+      const h = harness()
+      try {
+        const d = await h.sup.dispatchTask({ taskId: "agy-label", repo: "claude-companion", prompt: "Build", model: "Gemini 4 Hydrogen (High)" })
+        expect(d.ok && [d.task.family, d.task.model]).toEqual(["gemini", "gemini-4-hydrogen-high"])
+        const args = h.spawned[0]!.args
+        expect(args[args.indexOf("--model") + 1]).toBe("gemini-4-hydrogen-high")
+        h.spawned[0]!.onExit(0, null)
+        for (const bad of ["Gemini 4 Hydrogen (High); rm -rf ~", "$(id)", "Gemini 9 Unknown (High)", "gemini-4-hydrogen-high `id`"]) {
+          const r = await h.sup.dispatchTask({ taskId: "agy-bad", repo: "claude-companion", prompt: "Build", model: bad })
+          expect(r).toEqual({ ok: false, status: 400, error: "invalid_model" })
+        }
+        expect(h.spawned).toHaveLength(1)
       } finally { rmSync(h.home, { recursive: true, force: true }) }
     })
 
