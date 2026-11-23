@@ -25,3 +25,23 @@ export function toSnapshot(t: InternalTask): SupervisedTaskSnapshot {
   const { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt } = t
   return { taskId, repo, title, builder, family, model, branch, worktree, sessionId, status, turnCount, step, pct, result, prUrl, error, startedAt, updatedAt, completedAt, progress: progressOf(t) }
 }
+
+/** A task by id, or by the short / long form of it (`0bb587b3` vs `0bb587b3d29b…`, the branch a worker names
+ *  `dispatch/0bb587b3`): exact first, else the one task whose id extends or prefixes it (8+ chars, unique), so every
+ *  by-id call lands on the same record, worktree and branch. */
+export function findTask<T extends { taskId: string }>(tasks: Map<string, T>, id: string): T | undefined {
+  const exact = tasks.get(id)
+  if (exact || id.length < 8) return exact
+  const hits = [...tasks.values()].filter((t) => t.taskId.length >= 8 && (t.taskId.startsWith(id) || id.startsWith(t.taskId)))
+  return hits.length === 1 ? hits[0] : undefined
+}
+
+export function notifyWaiters(t: InternalTask): void {
+  for (const fn of [...t.waiters]) { t.waiters.delete(fn); fn() }
+}
+
+export function clearTimers(t: InternalTask): void {
+  if (t.timeoutTimer) { clearTimeout(t.timeoutTimer); t.timeoutTimer = null }
+  if (t.killTimer) { clearTimeout(t.killTimer); t.killTimer = null }
+  if (t.reapTimer) { clearTimeout(t.reapTimer); t.reapTimer = null }
+}

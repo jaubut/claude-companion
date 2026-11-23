@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-22",
+  "generatedAt": "2026-11-23",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -7297,7 +7297,7 @@
         },
         {
           "path": "lib/worker-supervisor.ts",
-          "lines": 599,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "DispatchTaskInput",
@@ -7368,12 +7368,15 @@
         },
         {
           "path": "lib/worker-task.ts",
-          "lines": 28,
+          "lines": 48,
           "kind": "lib",
           "exports": [
             "SupervisedTaskSnapshot",
             "InternalTask",
-            "toSnapshot"
+            "toSnapshot",
+            "findTask",
+            "notifyWaiters",
+            "clearTimers"
           ],
           "state": [],
           "emits": [],
@@ -16896,6 +16899,12 @@
             "lib/worker-worktree.ts"
           ]
         },
+        "findTask": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "parseTarget": {
           "module": "lib/worker-worktree.ts",
           "callers": [
@@ -16920,6 +16929,12 @@
             "lib/worker-supervisor.ts"
           ]
         },
+        "clearTimers": {
+          "module": "lib/worker-task.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "openTurn": {
           "module": "lib/worker-turns.ts",
           "callers": [
@@ -16934,6 +16949,12 @@
         },
         "composeWorkerPrompt": {
           "module": "lib/field-guide.ts",
+          "callers": [
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "notifyWaiters": {
+          "module": "lib/worker-task.ts",
           "callers": [
             "lib/worker-supervisor.ts"
           ]

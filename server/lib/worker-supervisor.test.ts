@@ -273,14 +273,14 @@ describe("createWorkerSupervisor", () => {
       expect(spawned[1]!.args).toContain("11111111-2222-4333-8444-555555555555")
       expect(reports.at(-1)?.id).toBe("task-1:t2")
 
-      // Interrupt turn 2 with dirty worktree -> worktree kept, only 1 "aborted" event emitted
+      // Interrupt turn 2 with dirty worktree -> interrupted, but the close answers ok:false with why; only 1 "aborted" event emitted
       dirtyWorktree = true
       const intDirty = await sup.interruptTask("task-1", { closeWorktree: true })
-      expect(intDirty.ok).toBe(true)
-      if (!intDirty.ok) return
-      expect(intDirty.task.status).toBe("interrupted")
-      expect(intDirty.worktreeRemoved).toBe(false)
-      expect(intDirty.note).toContain("uncommitted")
+      expect(intDirty.ok).toBe(false)
+      if (intDirty.ok) return
+      expect(intDirty.status).toBe(409)
+      expect(intDirty.error).toContain("uncommitted")
+      expect(sup.getTask("task-1")!.status).toBe("interrupted")
       expect(signals).toContain("SIGTERM")
       expect(reports.filter((r) => r.id === "task-1:t2" && r.event === "aborted")).toHaveLength(1)
 
@@ -463,20 +463,15 @@ describe("createWorkerSupervisor", () => {
 
       // Cleanup / redispatch is blocked both in-memory and across a restart while descendants remain alive and leader identity is null
       const intWhileGroupAlive = await supReusedPid.interruptTask("pg-1", { closeWorktree: true })
-      expect(intWhileGroupAlive.ok).toBe(true)
-      if (intWhileGroupAlive.ok) {
-        expect(intWhileGroupAlive.worktreeRemoved).toBe(false)
-        expect(intWhileGroupAlive.note).toContain("not exited")
-      }
+      expect(intWhileGroupAlive).toEqual({ ok: false, status: 409, error: "worktree kept: worker process has not exited yet" })
+      const intNoClose = await supReusedPid.interruptTask("pg-1")
+      expect(intNoClose.ok && [intNoClose.worktreeRemoved, intNoClose.note]).toEqual([false, "worktree kept: worker process has not exited yet"])
       const dispWhileGroupAlive = await supReusedPid.dispatchTask({ taskId: "pg-1", repo: "claude-companion", prompt: "Blocked" })
       expect(dispWhileGroupAlive).toEqual({ ok: false, status: 409, error: "task_already_running" })
 
       const supRestartedWithOrphanGroup = makeSup()
       const intAfterRestart = await supRestartedWithOrphanGroup.interruptTask("pg-1", { closeWorktree: true })
-      expect(intAfterRestart.ok).toBe(true)
-      if (intAfterRestart.ok) {
-        expect(intAfterRestart.worktreeRemoved).toBe(false)
-      }
+      expect(intAfterRestart.ok).toBe(false)
 
       // If the group later exits and PID 7777 is reused in-memory by an unrelated process, interrupt/dispatch does not signal it
       currentPidIdentity = "boot1:7777:unrelated-new-owner"
@@ -1717,8 +1712,7 @@ sleep 30 & wait $!
         expect(r!.note).toBe(`No PR, and 3 uncommitted or ignored file(s) left in ${wt}: worktree kept. Resume the task to commit and open the PR.`)
         expect(workerReceipt(r!.task, { host: "mac", note: r!.note })).toContain("worktree kept")
         expect(h.removed).toEqual([])
-        const out = await h.sup.interruptTask("a88c7bd9", { closeWorktree: true })
-        expect(out.ok && [out.worktreeRemoved, out.note]).toEqual([false, `worktree kept: 3 uncommitted or ignored file(s) in ${wt}`])
+        expect(await h.sup.interruptTask("a88c7bd9", { closeWorktree: true })).toEqual({ ok: false, status: 409, error: `worktree kept: 3 uncommitted or ignored file(s) in ${wt}` })
         expect(await h.sup.sweepWorktrees()).toEqual([])
         expect(h.removed).toEqual([])
 
@@ -1733,6 +1727,28 @@ sleep 30 & wait $!
         }
         expect(h.removed).toEqual([h.sup.getTask("b2")!.worktree])
         expect(h.sup.pendingReceipts().find((r) => r.task.taskId === "b2")!.note).toBeNull()
+      } finally { rmSync(h.home, { recursive: true, force: true }) }
+    })
+
+    test("the short and long form of a task id (0bb587b3 / 0bb587b3d29b…) land on the same task and worktree; an ambiguous prefix on none", async () => {
+      const h = harness({ dirty: " M a.ts\n" })
+      const long = "0bb587b3d29b40658c7709be77d3c5d8"
+      try {
+        await h.sup.dispatchTask({ taskId: long, repo: "claude-companion", prompt: "Fix it" })
+        h.spawned[0]!.onStdoutLine(result("Half done."))
+        h.spawned[0]!.onExit(0, null)
+        await Bun.sleep(5)
+        expect(h.sup.getTask("0bb587b3")!.taskId).toBe(long)
+        const again = await h.sup.dispatchTask({ taskId: "0bb587b3", repo: "claude-companion", prompt: "Finish it" })
+        expect(again.ok && [again.task.taskId, again.task.turnCount, again.task.worktree]).toEqual([long, 2, join(h.home, "apps", "wt", "claude-companion", long)])
+        expect(h.sup.listTasks()).toHaveLength(1)
+        expect((await h.sup.interruptTask("0bb587b3")).ok).toBe(true)
+
+        await h.sup.dispatchTask({ taskId: "1234abcd", repo: "claude-companion", prompt: "Short" })
+        expect(h.sup.getTask("1234abcd9999")!.taskId).toBe("1234abcd")
+        await h.sup.dispatchTask({ taskId: "0bb587b3ffff", repo: "claude-companion", prompt: "Other" })
+        expect(h.sup.getTask("0bb587b3")).toBeNull()
+        expect(h.sup.getTask("0bb587b")).toBeNull() // under 8 chars: exact only
       } finally { rmSync(h.home, { recursive: true, force: true }) }
     })
 

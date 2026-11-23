@@ -51,7 +51,7 @@ export const WORKER_MCP_TOOLS = [
       required: ["task_id"],
       properties: {
         task_id: { type: "string", description: "Task identifier to interrupt." },
-        close_worktree: { type: "boolean", description: "When true, removes the task's git worktree and local `dispatch/<task_id>` branch iff clean and pushed." },
+        close_worktree: { type: "boolean", description: "When true, removes the task's git worktree and local `dispatch/<task_id>` branch iff clean and pushed; else ok:false with the reason (the interrupt still happens)." },
         host: { type: "string", description: "Target worker host (`local`, `zettlab`, `mac`). Defaults to `local`." },
       },
     },
