@@ -46,7 +46,8 @@ interface GateTools {
 }
 
 export interface GateDeps { gh: GhFn; exec: ExecFn }
-export interface GatePr { url: string; approved?: boolean }
+export interface GateHead { url: string; sha: string; base: string; labels: string[] }
+export interface GatePr { url: string; approved?: boolean; head?: GateHead }
 export interface GatePass { ok: true; head: string; base: string }
 export type GateResult = GatePass | { ok: false; status: number; error: string; extra: Record<string, unknown> }
 export type MergeGateFn = (deps: GateDeps, pr: GatePr) => Promise<GateResult>
@@ -105,12 +106,57 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
   const tools = await loadTools(dir)
   if (typeof tools === "string") return unavailable(tools)
   if (!selfCheck(tools)) return unavailable("gate self-check failed")
-  const head = await readHead(deps.gh, pr.url)
+
+  const knownHead =
+    pr.head &&
+    typeof pr.head.url === "string" &&
+    pr.head.url === pr.url &&
+    typeof pr.head.sha === "string" &&
+    pr.head.sha.length > 0 &&
+    typeof pr.head.base === "string" &&
+    pr.head.base.length > 0 &&
+    Array.isArray(pr.head.labels)
+      ? pr.head
+      : null
+
+  const speculativeUrl = knownHead ? knownHead.url : pr.url
+  const speculativeRef = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/.exec(speculativeUrl)
+
+  const headPromise = knownHead ? Promise.resolve(knownHead) : readHead(deps.gh, pr.url)
+  // Only fetch files in parallel when the caller already completed a head read before mergeGate (knownHead !== null),
+  // preserving the strict causal bracket: head read 1 -> file list fetch -> head read 2.
+  const earlyFilesPromise =
+    knownHead && speculativeRef
+      ? deps
+          .gh(["api", "--paginate", `repos/${speculativeRef[1]}/pulls/${speculativeRef[2]}/files`, "--jq", '.[] | [.filename, .previous_filename // ""] | @tsv'])
+          .then(
+            (ok) => ({ ok: true as const, value: ok }),
+            (err: unknown) => ({ ok: false as const, err }),
+          )
+      : null
+  const earlyOriginPromise = speculativeRef
+    ? deps
+        .exec("SELECT origin FROM tasks WHERE dispatch_pr_url = ?", [speculativeUrl])
+        .then(
+          (ok) => ({ ok: true as const, value: ok }),
+          (err: unknown) => ({ ok: false as const, err }),
+        )
+    : null
+
+  const head = await headPromise
   if (!head) return unavailable("couldn't read the PR head")
   // GitHub's own url from here on: a stale or lower-cased one finds no task, which reads as unknown, which is stricter.
   const ref = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/.exec(head.url)
   if (!ref) return unavailable("not a GitHub PR url")
-  const files = await deps.gh(["api", "--paginate", `repos/${ref[1]}/pulls/${ref[2]}/files`, "--jq", '.[] | [.filename, .previous_filename // ""] | @tsv'])
+
+  let files: Awaited<ReturnType<GhFn>>
+  if (earlyFilesPromise && head.url === speculativeUrl) {
+    const res = await earlyFilesPromise
+    if (!res.ok) throw res.err
+    files = res.value
+  } else {
+    files = await deps.gh(["api", "--paginate", `repos/${ref[1]}/pulls/${ref[2]}/files`, "--jq", '.[] | [.filename, .previous_filename // ""] | @tsv'])
+  }
   if (files.code !== 0) return unavailable("couldn't read the PR files")
   const paths = tools.parseGatePaths(files.stdout)
   // taintedSensitive compares against the diff's file count, so it takes one name per file; the verdict takes both sides of a rename.
@@ -118,7 +164,14 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
   if (!paths.length) return unavailable("empty file list")
   if (newNames.length >= FILES_CEILING) return unavailable("file list too long to trust")
 
-  const { rows } = await deps.exec("SELECT origin FROM tasks WHERE dispatch_pr_url = ?", [head.url])
+  let rows: Row[]
+  if (earlyOriginPromise && head.url === speculativeUrl) {
+    const res = await earlyOriginPromise
+    if (!res.ok) throw res.err
+    rows = res.value.rows
+  } else {
+    rows = (await deps.exec("SELECT origin FROM tasks WHERE dispatch_pr_url = ?", [head.url])).rows
+  }
   const origin = tools.leastTrusted(rows.map((r: Row) => (r.origin ?? null) as string | null))
   let taint: GateInput["taint"]
   if (tools.isTainted(origin)) {
@@ -129,7 +182,7 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
 
   // Read again: the files above may belong to a newer head than the one the caller would pin, or to another base.
   const again = await readHead(deps.gh, pr.url)
-  if (!again) return unavailable("couldn't read the PR head")
+  if (!again || again.url !== head.url) return unavailable("couldn't read the PR head")
   if (again.sha !== head.sha) return { ok: false, status: 409, error: "head_moved", extra: {} }
   if (again.base !== head.base) return { ok: false, status: 409, error: "base_moved", extra: {} }
 

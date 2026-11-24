@@ -122,29 +122,22 @@ async function runActionForTurn(
     if (!repo || !prNum || !expectedSha) return fail(400, "pr_target_missing")
     if (req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
 
-    // Verify live GitHub PR head SHA and displayed metadata match the card before calling mergeAgentPr.
-    const live = await hydratePrGateData({ repo, pr: prNum }, deps.gh ?? realGh)
-    if (!live.ok) return { status: live.status, body: live.body }
-    if (live.pr.headSha !== expectedSha) {
-      return fail(409, "head_moved", { expected: expectedSha, actual: live.pr.headSha })
-    }
-    if (prModel.title !== live.pr.title || prModel.url !== live.pr.url) {
-      return fail(409, "pr_metadata_stale", {
-        expectedTitle: prModel.title ?? null,
-        actualTitle: live.pr.title,
-        expectedUrl: prModel.url ?? null,
-        actualUrl: live.pr.url,
-      })
-    }
-
+    const expectedTitle = typeof prModel.title === "string" ? prModel.title : null
+    const expectedUrl = typeof prModel.url === "string" ? prModel.url : null
     const mergeFn = deps.prMerge ?? mergeAgentPr
-    const mergeOut = await mergeFn({
-      repo,
-      pr: prNum,
-      reason: "Approved via A2UI PR Gate card",
-      humanApproved: true,
-      ...(deps.signal ? { signal: deps.signal } : {}),
-    })
+    const mergeOut = await mergeFn(
+      {
+        repo,
+        pr: prNum,
+        reason: "Approved via A2UI PR Gate card",
+        humanApproved: true,
+        expectedHeadSha: expectedSha,
+        expectedTitle,
+        expectedUrl,
+        ...(deps.signal ? { signal: deps.signal } : {}),
+      },
+      deps.gh ? { gh: deps.gh } : undefined,
+    )
     if (mergeOut.status !== 200 || mergeOut.body.ok !== true) {
       return { status: mergeOut.status, body: mergeOut.body }
     }

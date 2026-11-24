@@ -510,5 +510,55 @@ describe("bin/pr-merge gate: the merge", () => {
       park("pr:needs-human", "tainted (web) PR: file list may be truncated — human merge"),
     )
     expect((await mergeAgentPr({ ...input, humanApproved: true }, taintedTruncatedPark.deps)).status).toBe(403)
+
+    // Fast-path card merge (humanApproved: true + expectedHeadSha/expectedTitle/expectedUrl):
+    // 1) checks expectedHeadSha / expectedTitle / expectedUrl on the single initial view() without invoking gate
+    let gateInvocations = 0
+    const fastWorld = worldWithRealGate({ files: [{ path: "server/lib/feed-format.ts" }] }, "server/lib/feed-format.ts\t\n")
+    const countedDeps = {
+      ...fastWorld.deps,
+      gate: (async (d, p) => {
+        gateInvocations++
+        return fastWorld.deps.gate(d, p)
+      }) as MergeGateFn,
+    }
+    const staleHeadOut = await mergeAgentPr(
+      { ...input, humanApproved: true, expectedHeadSha: OLD, expectedTitle: "feed: wrap long titles", expectedUrl: URL },
+      countedDeps,
+    )
+    expect(staleHeadOut).toEqual({
+      status: 409,
+      body: { ok: false, error: "head_moved", expected: OLD, actual: SHA },
+    })
+    expect(gateInvocations).toBe(0)
+
+    const staleMetaOut = await mergeAgentPr(
+      { ...input, humanApproved: true, expectedHeadSha: SHA, expectedTitle: "wrong title", expectedUrl: URL },
+      countedDeps,
+    )
+    expect(staleMetaOut).toEqual({
+      status: 409,
+      body: {
+        ok: false,
+        error: "pr_metadata_stale",
+        expectedTitle: "wrong title",
+        actualTitle: "feed: wrap long titles",
+        expectedUrl: URL,
+        actualUrl: URL,
+      },
+    })
+    expect(gateInvocations).toBe(0)
+
+    // 2) Full card merge with real mergeGate spawns 3 pre-merge gh pr view calls (initial view + post-files readHead + final prReadiness base check)
+    fastWorld.calls.length = 0
+    const fastMergeOut = await mergeAgentPr(
+      { ...input, humanApproved: true, expectedHeadSha: SHA, expectedTitle: "feed: wrap long titles", expectedUrl: URL },
+      countedDeps,
+    )
+    expect(fastMergeOut.status).toBe(200)
+    const mergeIdx = fastWorld.calls.findIndex((c) => c[1] === "merge")
+    expect(mergeIdx).toBeGreaterThan(0)
+    const preMergeViews = fastWorld.calls.slice(0, mergeIdx).filter((c) => c[0] === "pr" && c[1] === "view")
+    expect(preMergeViews).toHaveLength(3)
   })
 })
