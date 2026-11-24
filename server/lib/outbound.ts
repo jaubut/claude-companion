@@ -333,7 +333,7 @@ export function currentOutbound(store: OutboundStore, id: string): SourceItem | 
 
 // ── message id ───────────────────────────────────────────────────────────────
 
-/** The Gmail message id out of the sender's stdout: JSON {id} / {messageId}, else an `id: <hex>` line. */
+/** The Gmail message id out of the sender's stdout: JSON {id} / {messageId}, else a `sent: <hex>` / `id: <hex>` line. */
 export function parseMessageId(stdout: string): string | null {
   const text = stdout.trim()
   for (const line of [text, ...text.split("\n").reverse()]) {
@@ -343,5 +343,5 @@ export function parseMessageId(stdout: string): string | null {
       if (typeof v === "string" && /^[\w-]{6,}$/.test(v)) return v
     } catch { /* not JSON */ }
   }
-  return /\b(?:message[ _-]?id|id)\s*[:=]\s*([0-9a-f]{8,})\b/i.exec(text)?.[1] ?? null
+  return /\b(?:message[ _-]?id|id|sent)\s*[:=]\s*([0-9a-f]{8,})\b/i.exec(text)?.[1] ?? null
 }

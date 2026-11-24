@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite"
 import { type A2UICreateSurfaceMessage, createSurfaceTurn, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
 import { getAuthToken } from "../lib/auth"
 import { classifyBrainEvent } from "../lib/brain-event-triage"
-import { type OutboundPayload, type OutboundSender, type OutboundStore, createOutboundStore } from "../lib/outbound"
+import { type OutboundPayload, type OutboundSender, type OutboundStore, createOutboundStore, parseMessageId } from "../lib/outbound"
 import type { Session } from "../lib/sessions"
 import type { GhFn } from "../lib/triage-pr"
 import { recordPeer } from "../lib/vault-guard"
@@ -662,7 +662,11 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     const emailSender: OutboundSender = async (p) => {
       if (shouldFailSend) throw new Error("gmail.py exited 1: OAuth refresh failed")
       sentPayloads.push(p)
-      return { messageId: "18f00aabbccdd123" }
+      return {
+        messageId: parseMessageId(
+          `sent: 1a20ecd3c5eb013e thread 1a20ecd3c5eb013e | to: ${p.to.join(", ")} | subject: ${p.subject}\n`,
+        ),
+      }
     }
 
     const { call, emittedTurns, enqueuedTurns } = makeHarness({
@@ -765,7 +769,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       action: "email.confirm",
       state: "sent",
       outboundId,
-      messageId: "18f00aabbccdd123",
+      messageId: "1a20ecd3c5eb013e",
       to: "client1@example.com, client2@example.com",
       enabledCc: ["ops@example.com"],
       subject: "Q4 Statement",
@@ -781,8 +785,22 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         inReplyTo: "<orig-99@mail.example.com>",
       },
     ])
+    const { gmailArgv } = await import("../wiring/outbound")
+    expect(gmailArgv(sentPayloads[0]!).slice(2)).toEqual([
+      "send",
+      "--account",
+      "hello",
+      "--to",
+      "client1@example.com, client2@example.com",
+      "--cc",
+      "ops@example.com",
+      "--subject",
+      "Q4 Statement",
+      "--reply-to",
+      "<orig-99@mail.example.com>",
+    ])
     expect(store.get(outboundId)!.status).toBe("sent")
-    expect(store.get(outboundId)!.messageId).toBe("18f00aabbccdd123")
+    expect(store.get(outboundId)!.messageId).toBe("1a20ecd3c5eb013e")
     expect(enqueuedTurns).toHaveLength(0)
 
     const receiptTurn = emittedTurns.at(-1) as { role: string; text: string; threadId: string }
