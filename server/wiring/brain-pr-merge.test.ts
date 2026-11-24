@@ -549,7 +549,7 @@ describe("bin/pr-merge gate: the merge", () => {
     })
     expect(gateInvocations).toBe(0)
 
-    // 2) Full card merge with real mergeGate spawns only 2 pre-merge gh pr view calls (initial view + post-files readHead)
+    // 2) Full card merge with real mergeGate spawns 3 pre-merge gh pr view calls (initial view + post-files readHead + final prReadiness base check)
     fastWorld.calls.length = 0
     const fastMergeOut = await mergeAgentPr(
       { ...input, humanApproved: true, expectedHeadSha: SHA, expectedTitle: "feed: wrap long titles", expectedUrl: URL },
@@ -559,6 +559,6 @@ describe("bin/pr-merge gate: the merge", () => {
     const mergeIdx = fastWorld.calls.findIndex((c) => c[1] === "merge")
     expect(mergeIdx).toBeGreaterThan(0)
     const preMergeViews = fastWorld.calls.slice(0, mergeIdx).filter((c) => c[0] === "pr" && c[1] === "view")
-    expect(preMergeViews).toHaveLength(2)
+    expect(preMergeViews).toHaveLength(3)
   })
 })

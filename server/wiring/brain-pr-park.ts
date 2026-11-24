@@ -20,7 +20,7 @@ export async function parked(
   const [{ rows }, last] = await Promise.all([
     exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url]),
     exec(
-      "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND (target_id = ? OR target_id IN (SELECT id FROM tasks WHERE dispatch_pr_url = ?)) ORDER BY id DESC LIMIT 20",
+      "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND (target_id = ? OR target_id IN (SELECT CAST(id AS TEXT) FROM tasks WHERE dispatch_pr_url = ?)) ORDER BY id DESC LIMIT 20",
       [v.url, v.url],
     ),
   ])

@@ -336,10 +336,18 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     const { call, enqueuedTurns } = makeHarness({
       gh,
       prMerge: async (p) => {
-        mergeCalls++
         expect(p.repo).toBe("jaubut/claude-companion")
         expect(p.pr).toBe(501)
         expect(p.signal).toBeInstanceOf(AbortSignal)
+        expect(p.expectedTitle).toBe("feat(a2ui): server slice")
+        expect(p.expectedUrl).toBe("https://github.com/jaubut/claude-companion/pull/501")
+        if (p.expectedHeadSha !== undefined && p.expectedHeadSha !== currentHead) {
+          return {
+            status: 409,
+            body: { ok: false, error: "head_moved", expected: p.expectedHeadSha, actual: currentHead },
+          }
+        }
+        mergeCalls++
         await mergeGate.promise
         return {
           status: 200,

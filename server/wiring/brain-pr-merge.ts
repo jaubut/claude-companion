@@ -66,7 +66,6 @@ interface PrMergeInput {
   expectedHeadSha?: string
   expectedTitle?: string | null
   expectedUrl?: string | null
-  gh?: GhFn
 }
 interface PrMergeDeps {
   gh: GhFn
@@ -223,9 +222,9 @@ function notApproved(v: PrView, claudeNormal = false, clientOrigin = false): str
   return out
 }
 
-export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps): Promise<Out> {
-  const gh = p.gh ?? deps.gh
-  const v = await view(gh, p)
+export async function mergeAgentPr(p: PrMergeInput, deps: Partial<PrMergeDeps> = realDeps): Promise<Out> {
+  const fullDeps: PrMergeDeps = { ...realDeps, ...deps }
+  const v = await view(fullDeps.gh, p)
   if ("status" in v) return v
   if (p.expectedHeadSha !== undefined && v.headRefOid !== p.expectedHeadSha) {
     return fail(409, "head_moved", { expected: p.expectedHeadSha, actual: v.headRefOid })
@@ -247,17 +246,16 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   }
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   const cardApproved = p.humanApproved === true
-  const humanApproved = cardApproved || deps.humanApproved?.(p.pr, p.repo) === true
-  const gateDeps = p.gh ? { ...deps, gh } : deps
+  const humanApproved = cardApproved || fullDeps.humanApproved?.(p.pr, p.repo) === true
   const canCheckPark = !v.isDraft && /^dispatch\/[\w.-]+$/.test(v.headRefName)
   const parkPromise = canCheckPark
-    ? parked(deps.exec, v, humanApproved, cardApproved).then(
+    ? parked(fullDeps.exec, v, humanApproved, cardApproved).then(
         (ok) => ({ ok: true as const, value: ok }),
         (err: unknown) => ({ ok: false as const, err }),
       )
     : null
   const [g, parkRes] = await Promise.all([
-    deps.gate(gateDeps, {
+    fullDeps.gate(fullDeps, {
       url: v.url,
       approved: cardApproved,
       ...(cardApproved
@@ -270,42 +268,39 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (g.head !== v.headRefOid) return fail(409, "head_moved")
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
-  if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  if (!parkRes!.ok) {
-    const err = parkRes!.err
+  if (!/^dispatch\/[\w.-]+$/.test(v.headRefName) || !parkRes) return fail(403, "not_agent_branch", { branch: v.headRefName })
+  if (!parkRes.ok) {
+    const err = parkRes.err
     companionLog(`[brain] pr-merge: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
   }
-  const park = parkRes!.value
+  const park = parkRes.value
   if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
   if (!humanApproved) {
-    const claudePaused = existsSync(deps.pausedFlag ?? CLAUDE_PAUSED_FLAG)
-    const claudeNormal = !claudePaused && existsSync(deps.claudeNormalFlag ?? CLAUDE_NORMAL_FLAG)
+    const claudePaused = existsSync(fullDeps.pausedFlag ?? CLAUDE_PAUSED_FLAG)
+    const claudeNormal = !claudePaused && existsSync(fullDeps.claudeNormalFlag ?? CLAUDE_NORMAL_FLAG)
     const unapproved = notApproved(v, claudeNormal, park.clientOrigin)
     if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   }
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
-  // When cardApproved is true, mergeGate ran in parallel with parked() and its post-files readHead just verified g.base.
-  if (!cardApproved) {
-    const last = await prReadiness(gh, v.url).catch(() => null)
-    if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
-    if (last.base !== g.base) return fail(409, "base_moved")
-  }
+  const last = await prReadiness(fullDeps.gh, v.url).catch(() => null)
+  if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
+  if (last.base !== g.base) return fail(409, "base_moved")
   if (p.signal?.aborted) return fail(409, "client_gone")
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>
   try {
-    run = await gh(["pr", "merge", String(p.pr), "--repo", p.repo, "--squash", "--delete-branch", "--match-head-commit", v.headRefOid])
+    run = await fullDeps.gh(["pr", "merge", String(p.pr), "--repo", p.repo, "--squash", "--delete-branch", "--match-head-commit", v.headRefOid])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
-  const after = await prState(gh, v.url).catch(() => "unknown")
+  const after = await prState(fullDeps.gh, v.url).catch(() => "unknown")
   if (after !== "MERGED") return fail(502, "merge_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
   const taskId = park.taskIds[0] ?? null
   try {
-    await deps.exec(
+    await fullDeps.exec(
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
       [BRAIN_AGENT, PR_MERGE_ACTION, taskId ? "task" : "pr", taskId ?? v.url, `${p.repo}#${p.pr} merged by the brain: ${reason}`.slice(0, 200),
         JSON.stringify({ repo: p.repo, pr: p.pr, url: v.url, branch: v.headRefName, head: v.headRefOid, title: v.title.slice(0, 200), reason, tasks: park.taskIds, source: "companion" })],
@@ -313,7 +308,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   } catch (err) {
     companionLog(`[brain] pr-merge: activity row failed (${(err as Error)?.name ?? "error"})`)
   }
-  deps.event(`Brain merged ${p.repo}#${p.pr} (${v.title.slice(0, 80)}): ${reason}`)
+  fullDeps.event(`Brain merged ${p.repo}#${p.pr} (${v.title.slice(0, 80)}): ${reason}`)
   companionLog(`[brain] pr-merge ${p.repo}#${p.pr} merged at ${v.headRefOid.slice(0, 7)}`)
   return { status: 200, body: { ok: true, merged: true, url: v.url, head: v.headRefOid } }
 }

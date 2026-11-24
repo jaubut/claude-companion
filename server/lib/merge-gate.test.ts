@@ -142,6 +142,36 @@ describe("mergeGate: the verdict", () => {
       await mergeGate(world({ bases: ["release"] }), { url: URL, head: knownHead }, { tools }),
     ).toEqual({ ok: false, status: 409, error: "base_moved", extra: {} })
   })
+  test("when head is omitted, files are only fetched after the first head read completes (prevents commit-A files passing under commit-B head reads)", async () => {
+    const SHA_B = "2222222222222222222222222222222222222222"
+    let firstViewCompleted = false
+    const callOrder: string[] = []
+    const deps: GateDeps = {
+      gh: async (args) => {
+        const what = args[0] === "api" ? "files" : args[1] === "diff" ? "diff" : "view"
+        callOrder.push(what)
+        if (what === "view") {
+          await Bun.sleep(5)
+          // Commit B pushed before the first head read finishes: both head reads observe SHA_B
+          firstViewCompleted = true
+          return ok(JSON.stringify({ url: URL, headRefOid: SHA_B, baseRefName: "main", labels: [] }))
+        }
+        if (what === "files") {
+          // If files were fetched before the first head read finished, it would return commit A's safe file list
+          return ok(firstViewCompleted ? "hooks/guard.py\t\n" : "server/lib/a.ts\t\n")
+        }
+        return ok("")
+      },
+      exec: async () => ({ rows: [{ origin: "jeremie" }], affected: 0 }),
+    }
+    expect(await mergeGate(deps, { url: URL }, { tools })).toEqual({
+      ok: false,
+      status: 403,
+      error: "human-merge-path",
+      extra: { action: "park", reason: "touches hooks/guard.py — human merge only", head: SHA_B },
+    })
+    expect(callOrder).toEqual(["view", "files", "view"])
+  })
 })
 
 describe("mergeGate: loading", () => {

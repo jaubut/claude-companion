@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 449,
+          "lines": 433,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -3830,7 +3830,7 @@
         },
         {
           "path": "lib/merge-gate.ts",
-          "lines": 204,
+          "lines": 208,
           "kind": "lib",
           "exports": [
             "GATE_BUDGET_MS",
@@ -9438,7 +9438,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 328,
+          "lines": 323,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",

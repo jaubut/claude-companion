@@ -124,36 +124,20 @@ async function runActionForTurn(
 
     const expectedTitle = typeof prModel.title === "string" ? prModel.title : null
     const expectedUrl = typeof prModel.url === "string" ? prModel.url : null
-    // When a test overrides deps.prMerge with a stub, verify head/metadata beforehand so stub call counts stay exact;
-    // in production (mergeAgentPr), pass expectedHeadSha/expectedTitle/expectedUrl into mergeAgentPr to check on its single view() read.
-    if (deps.prMerge) {
-      const live = await hydratePrGateData({ repo, pr: prNum }, deps.gh ?? realGh)
-      if (!live.ok) return { status: live.status, body: live.body }
-      if (live.pr.headSha !== expectedSha) {
-        return fail(409, "head_moved", { expected: expectedSha, actual: live.pr.headSha })
-      }
-      if (expectedTitle !== live.pr.title || expectedUrl !== live.pr.url) {
-        return fail(409, "pr_metadata_stale", {
-          expectedTitle,
-          actualTitle: live.pr.title,
-          expectedUrl,
-          actualUrl: live.pr.url,
-        })
-      }
-    }
-
     const mergeFn = deps.prMerge ?? mergeAgentPr
-    const mergeOut = await mergeFn({
-      repo,
-      pr: prNum,
-      reason: "Approved via A2UI PR Gate card",
-      humanApproved: true,
-      expectedHeadSha: expectedSha,
-      expectedTitle,
-      expectedUrl,
-      ...(deps.gh ? { gh: deps.gh } : {}),
-      ...(deps.signal ? { signal: deps.signal } : {}),
-    })
+    const mergeOut = await mergeFn(
+      {
+        repo,
+        pr: prNum,
+        reason: "Approved via A2UI PR Gate card",
+        humanApproved: true,
+        expectedHeadSha: expectedSha,
+        expectedTitle,
+        expectedUrl,
+        ...(deps.signal ? { signal: deps.signal } : {}),
+      },
+      deps.gh ? { gh: deps.gh } : undefined,
+    )
     if (mergeOut.status !== 200 || mergeOut.body.ok !== true) {
       return { status: mergeOut.status, body: mergeOut.body }
     }

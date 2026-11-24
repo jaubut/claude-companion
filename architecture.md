@@ -41,11 +41,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/a2ui-actions.ts` | 449 | lib | 1 | state: inFlightActions: Map |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
+| `lib/a2ui-actions.ts` | 433 | lib | 1 | state: inFlightActions: Map |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
@@ -69,8 +69,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-mcp.ts` | 336 | lib | 15 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/ops-triage.ts` | 331 | lib | 19 |  |
-| `wiring/brain-pr-merge.ts` | 328 | lib | 4 |  |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
+| `wiring/brain-pr-merge.ts` | 323 | lib | 4 |  |
 | `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-headless.ts` | 321 | lib | 11 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
@@ -135,12 +135,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/canvas.ts` | 210 | lib | 2 |  |
 | `lib/link-media-browser.ts` | 209 | lib | 13 |  |
 | `lib/auto-compact-keep.ts` | 208 | lib | 11 | state: CLOSING_WORDS: Set |
+| `lib/merge-gate.ts` | 208 | lib | 8 |  |
 | `lib/receipt-checks.ts` | 208 | lib | 27 | state: CURRENCIES: Set |
 | `lib/command-catalog.ts` | 205 | lib | 11 |  |
 | `lib/front-door.ts` | 205 | lib | 9 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
-| `lib/merge-gate.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `routes/triage.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |

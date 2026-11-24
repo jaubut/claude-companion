@@ -110,6 +110,7 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
   const knownHead =
     pr.head &&
     typeof pr.head.url === "string" &&
+    pr.head.url === pr.url &&
     typeof pr.head.sha === "string" &&
     pr.head.sha.length > 0 &&
     typeof pr.head.base === "string" &&
@@ -122,14 +123,17 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
   const speculativeRef = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/.exec(speculativeUrl)
 
   const headPromise = knownHead ? Promise.resolve(knownHead) : readHead(deps.gh, pr.url)
-  const earlyFilesPromise = speculativeRef
-    ? deps
-        .gh(["api", "--paginate", `repos/${speculativeRef[1]}/pulls/${speculativeRef[2]}/files`, "--jq", '.[] | [.filename, .previous_filename // ""] | @tsv'])
-        .then(
-          (ok) => ({ ok: true as const, value: ok }),
-          (err: unknown) => ({ ok: false as const, err }),
-        )
-    : null
+  // Only fetch files in parallel when the caller already completed a head read before mergeGate (knownHead !== null),
+  // preserving the strict causal bracket: head read 1 -> file list fetch -> head read 2.
+  const earlyFilesPromise =
+    knownHead && speculativeRef
+      ? deps
+          .gh(["api", "--paginate", `repos/${speculativeRef[1]}/pulls/${speculativeRef[2]}/files`, "--jq", '.[] | [.filename, .previous_filename // ""] | @tsv'])
+          .then(
+            (ok) => ({ ok: true as const, value: ok }),
+            (err: unknown) => ({ ok: false as const, err }),
+          )
+      : null
   const earlyOriginPromise = speculativeRef
     ? deps
         .exec("SELECT origin FROM tasks WHERE dispatch_pr_url = ?", [speculativeUrl])
@@ -178,7 +182,7 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
 
   // Read again: the files above may belong to a newer head than the one the caller would pin, or to another base.
   const again = await readHead(deps.gh, pr.url)
-  if (!again) return unavailable("couldn't read the PR head")
+  if (!again || again.url !== head.url) return unavailable("couldn't read the PR head")
   if (again.sha !== head.sha) return { ok: false, status: 409, error: "head_moved", extra: {} }
   if (again.base !== head.base) return { ok: false, status: 409, error: "base_moved", extra: {} }
 
