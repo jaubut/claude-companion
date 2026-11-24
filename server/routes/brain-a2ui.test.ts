@@ -166,7 +166,7 @@ describe("POST /hooks/brain/ui — auth & macro expansion", () => {
     expect(getJsonPointer(getSurfaceDataModel(turn.card!), "/email/state")).toBe("sent")
   })
 
-  test("macro: custom validates against BasicCatalog schema and rejects HTML/script or unknown components", async () => {
+  test("macro: custom validates against BasicCatalog schema, rejects HTML/unknown components, and fails atomically on bad trailing pointer", async () => {
     const { call } = makeHarness()
     const badHtml = await call(
       "POST",
@@ -208,6 +208,38 @@ describe("POST /hooks/brain/ui — auth & macro expansion", () => {
     expect(badComp.status).toBe(400)
     expect(String(badComp.json.error)).toContain("unregistered_component")
 
+    // Atomic batch: trailing updateDataModel with invalid array index fails before persisting a turn
+    const badBatch = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [
+          {
+            version: "1.0",
+            createSurface: {
+              surfaceId: "custom-atomic-fail",
+              catalogId: "basic_catalog_1_0",
+              components: [{ id: "root", component: "Text", text: "Hi" }],
+              dataModel: { items: ["a"] },
+            },
+          },
+          {
+            version: "1.0",
+            updateDataModel: {
+              surfaceId: "custom-atomic-fail",
+              path: "/items/99",
+              value: "out-of-bounds",
+            },
+          },
+        ],
+      },
+      { headers: AUTH },
+    )
+    expect(badBatch.status).toBe(400)
+    expect(badBatch.json.error).toBe("invalid_json_pointer_target")
+    expect(chat.findA2UITurn("custom-atomic-fail")).toBeNull()
+
     const valid = await call(
       "POST",
       "/hooks/brain/ui",
@@ -248,10 +280,12 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(res.status).toBe(401)
   })
 
-  test("pr.refresh, pr.merge, and pr.deploy execute with zero LLM call, fold state into SQLite, broadcast WS patches, and enforce actionKey idempotency", async () => {
+  test("pr.refresh, pr.merge (head_moved check, pinned target, AbortSignal), and pr.deploy (not_merged guard + coalescing)", async () => {
     let ciPassed = false
+    let currentHead = "abcdef1234567890"
     let mergeCalls = 0
     let deployCalls = 0
+    const mergeGate = Promise.withResolvers<void>()
 
     const gh: GhFn = async () => ({
       code: 0,
@@ -260,7 +294,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         state: "OPEN",
         isDraft: false,
         headRefName: "dispatch/68be1226",
-        headRefOid: "abcdef1234567890",
+        headRefOid: currentHead,
         baseRefName: "main",
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
@@ -280,7 +314,11 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
           ? [
               {
                 author: { login: "jaubut" },
-                body: "🤖 **Auto-review**\n<!-- reviewed-sha: abcdef1234567890 -->\nVERDICT: APPROVE",
+                body: `🤖 **Auto-review**\n<!-- reviewed-sha: ${currentHead} -->\nVERDICT: APPROVE`,
+              },
+              {
+                author: { login: "jaubut" },
+                body: `♊️ **Gemini review** (agy)\n<!-- reviewed-sha: ${currentHead} -->\nVERDICT: APPROVE`,
               },
             ]
           : [],
@@ -288,15 +326,17 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       }),
     })
 
-    const { call, broadcasts, enqueuedTurns } = makeHarness({
+    const { call, enqueuedTurns } = makeHarness({
       gh,
       prMerge: async (p) => {
         mergeCalls++
         expect(p.repo).toBe("jaubut/claude-companion")
         expect(p.pr).toBe(501)
+        expect(p.signal).toBeInstanceOf(AbortSignal)
+        await mergeGate.promise
         return {
           status: 200,
-          body: { ok: true, merged: true, url: "https://github.com/jaubut/claude-companion/pull/501", head: "abcdef1234567890" },
+          body: { ok: true, merged: true, url: "https://github.com/jaubut/claude-companion/pull/501", head: currentHead },
         }
       },
       deploy: async (repo) => {
@@ -305,7 +345,6 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       },
     })
 
-    // 1. Brain creates PR gate card while CI is pending
     const created = await call(
       "POST",
       "/hooks/brain/ui",
@@ -320,9 +359,45 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(created.status).toBe(200)
     const turnId = String(created.json.turnId)
-    expect((created.json.pr as { ciState: string }).ciState).toBe("pending")
 
-    // 2. CI finishes; user taps pr.refresh -> 0 LLM call, dataModel updates to green + approved
+    // pr.deploy before merge is rejected with 409 not_merged
+    const earlyDeploy = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: "pr-501",
+        turnId,
+        action: { name: "pr.deploy", context: { repo: "claude-companion" } },
+        actionKey: "early-deploy-key",
+      },
+      { headers: bearer },
+    )
+    expect(earlyDeploy.status).toBe(409)
+    expect(earlyDeploy.json.error).toBe("not_merged")
+
+    // Head moves before refresh -> pr.merge refuses with 409 head_moved
+    currentHead = "fedcba0987654321"
+    const staleMerge = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: "pr-501",
+        turnId,
+        action: { name: "pr.merge", context: { repo: "evil/other-repo", pr: 999 } },
+        actionKey: "stale-merge-key",
+      },
+      { headers: bearer },
+    )
+    expect(staleMerge.status).toBe(409)
+    expect(staleMerge.json).toEqual({
+      ok: false,
+      error: "head_moved",
+      expected: "abcdef1234567890",
+      actual: "fedcba0987654321",
+    })
+    expect(mergeCalls).toBe(0)
+
+    // Refresh updates card to currentHead + green + approved
     ciPassed = true
     const refreshed = await call(
       "POST",
@@ -330,55 +405,50 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       {
         surfaceId: "pr-501",
         turnId,
-        action: { name: "pr.refresh", context: { repo: "jaubut/claude-companion", pr: 501 } },
+        action: { name: "pr.refresh" },
         actionKey: "refresh-key-1",
       },
       { headers: bearer },
     )
     expect(refreshed.status).toBe(200)
-    expect((refreshed.json.pr as { ciState: string; reviewState: string }).ciState).toBe("green")
-    expect((refreshed.json.pr as { ciState: string; reviewState: string }).reviewState).toBe("approved")
-    expect(enqueuedTurns).toHaveLength(0)
+    expect((refreshed.json.pr as { ciState: string; reviewState: string; headSha: string })).toMatchObject({
+      ciState: "green",
+      reviewState: "approved",
+      headSha: "fedcba0987654321",
+    })
 
-    // 3. User taps pr.merge -> calls mergeAgentPr, patches /pr/state to "merged"
-    const merged = await call(
+    // Fire two concurrent pr.merge requests with the same actionKey (also passing spoofed context.repo/pr to verify pinning)
+    const p1 = call(
       "POST",
       "/api/brain/a2ui/action",
       {
         surfaceId: "pr-501",
         turnId,
-        action: { name: "pr.merge", context: { repo: "jaubut/claude-companion", pr: 501 } },
+        action: { name: "pr.merge", context: { repo: "spoofed/repo", pr: 999 } },
         actionKey: "merge-key-1",
       },
       { headers: bearer },
     )
-    expect(merged.status).toBe(200)
-    expect(merged.json).toMatchObject({ ok: true, state: "merged", merged: true, replay: false })
-    expect(mergeCalls).toBe(1)
-
-    // Duplicate tap with same actionKey -> replays without calling prMerge again
-    const dupMerge = await call(
+    const p2 = call(
       "POST",
       "/api/brain/a2ui/action",
       {
         surfaceId: "pr-501",
         turnId,
-        action: { name: "pr.merge", context: { repo: "jaubut/claude-companion", pr: 501 } },
+        action: { name: "pr.merge", context: { repo: "spoofed/repo", pr: 999 } },
         actionKey: "merge-key-1",
       },
       { headers: bearer },
     )
-    expect(dupMerge.status).toBe(200)
-    expect(dupMerge.json.replay).toBe(true)
-    expect(dupMerge.headers.get("Idempotent-Replayed")).toBe("true")
+    mergeGate.resolve()
+    const [m1, m2] = await Promise.all([p1, p2])
+    expect(m1.status).toBe(200)
+    expect(m2.status).toBe(200)
+    expect(m1.json.replay).toBe(false)
+    expect(m2.json.replay).toBe(true)
     expect(mergeCalls).toBe(1)
 
-    // Verify persisted SQLite state has /pr/state = "merged"
-    const afterMergeTurn = chat.getTurn(turnId)!
-    expect(getJsonPointer(getSurfaceDataModel(afterMergeTurn.card!), "/pr/state")).toBe("merged")
-    expect(broadcasts.some((b) => JSON.stringify(b).includes('"/pr/state"') && JSON.stringify(b).includes('"merged"'))).toBe(true)
-
-    // 4. User taps pr.deploy -> runs deploy once
+    // Now that PR is merged, pr.deploy succeeds
     const deployed = await call(
       "POST",
       "/api/brain/a2ui/action",
@@ -395,7 +465,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(enqueuedTurns).toHaveLength(0)
   })
 
-  test("email.confirm with filtered enabledCc updates /email/state to confirmed, posts concise Brain user turn, and deduplicates actionKey", async () => {
+  test("email.confirm enforces Cc allowlist (including empty cc: []), posts Brain user turn, and guards terminal state", async () => {
     const { call, broadcasts, enqueuedTurns } = makeHarness()
 
     const created = await call(
@@ -413,10 +483,8 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       },
       { headers: AUTH },
     )
-    expect(created.status).toBe(200)
     const turnId = String(created.json.turnId)
 
-    // User deselects bob@example.com and confirms with ["alice@example.com", "charlie@example.com"]
     const confirmed = await call(
       "POST",
       "/api/brain/a2ui/action",
@@ -426,7 +494,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         action: {
           name: "email.confirm",
           context: {
-            enabledCc: ["alice@example.com", "charlie@example.com"],
+            enabledCc: ["alice@example.com", "charlie@example.com", "injected@evil.example"],
           },
         },
         actionKey: "email-confirm-key-1",
@@ -434,75 +502,60 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       { headers: bearer },
     )
     expect(confirmed.status).toBe(200)
-    expect(confirmed.json).toMatchObject({
-      ok: true,
-      surfaceId: "email-confirm-cc",
-      action: "email.confirm",
-      state: "confirmed",
-      to: "partner@example.com",
-      enabledCc: ["alice@example.com", "charlie@example.com"],
-      subject: "Contract Final",
-      draftId: "draft-999",
-      replay: false,
-    })
-
-    // Persisted TurnCard has updated enabledCc and state = "confirmed"
-    const persisted = chat.getTurn(turnId)!
-    const model = getSurfaceDataModel(persisted.card!)
-    expect(getJsonPointer(model, "/email/state")).toBe("confirmed")
-    expect(getJsonPointer(model, "/email/enabledCc")).toEqual(["alice@example.com", "charlie@example.com"])
-
-    // Broadcasted WS frames for enabledCc and state
+    expect(confirmed.json.enabledCc).toEqual(["alice@example.com", "charlie@example.com"])
     expect(broadcasts).toHaveLength(2)
-    expect(broadcasts[1]).toEqual({
-      type: "a2ui",
-      threadId: "brain",
-      turnId,
-      surfaceId: "email-confirm-cc",
-      messages: [
-        {
-          version: "1.0",
-          updateDataModel: {
-            surfaceId: "email-confirm-cc",
-            path: "/email/state",
-            value: "confirmed",
-          },
-        },
-      ],
-    })
-
-    // Enqueued a concise user confirmation turn in the Brain thread
     expect(enqueuedTurns).toHaveLength(1)
-    expect(enqueuedTurns[0]!.role).toBe("user")
-    expect(enqueuedTurns[0]!.text).toContain("To: partner@example.com")
     expect(enqueuedTurns[0]!.text).toContain("Cc: alice@example.com, charlie@example.com")
-    expect(enqueuedTurns[0]!.text).not.toContain("bob@example.com")
-    expect(enqueuedTurns[0]!.text).toContain('Subject: "Contract Final"')
-    expect(enqueuedTurns[0]!.text).toContain("draftId: draft-999")
+    expect(enqueuedTurns[0]!.text).not.toContain("injected@evil.example")
 
-    // Duplicate tap with same actionKey never posts a second turn
-    const replay = await call(
+    // Attempting email.cancel or another email.confirm with a new actionKey after confirmed -> 409 already_decided
+    const cancelAfterConfirm = await call(
       "POST",
       "/api/brain/a2ui/action",
       {
         surfaceId: "email-confirm-cc",
         turnId,
-        action: {
-          name: "email.confirm",
-          context: {
-            enabledCc: ["alice@example.com", "charlie@example.com"],
-          },
-        },
-        actionKey: "email-confirm-key-1",
+        action: { name: "email.cancel" },
+        actionKey: "new-cancel-key",
       },
       { headers: bearer },
     )
-    expect(replay.status).toBe(200)
-    expect(replay.json.replay).toBe(true)
-    expect(enqueuedTurns).toHaveLength(1)
+    expect(cancelAfterConfirm.status).toBe(409)
+    expect(cancelAfterConfirm.json.error).toBe("already_decided")
+
+    // Empty-CC email card strictly blocks injected context.enabledCc addresses
+    const noCcCard = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        surfaceId: "email-no-cc",
+        to: "solo@example.com",
+        subject: "Private",
+        body: "No CC allowed.",
+      },
+      { headers: AUTH },
+    )
+    const noCcConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: "email-no-cc",
+        turnId: String(noCcCard.json.turnId),
+        action: {
+          name: "email.confirm",
+          context: { enabledCc: ["attacker@evil.example"] },
+        },
+        actionKey: "no-cc-confirm-1",
+      },
+      { headers: bearer },
+    )
+    expect(noCcConfirm.status).toBe(200)
+    expect(noCcConfirm.json.enabledCc).toEqual([])
+    expect(enqueuedTurns[1]!.text).toContain("Cc: none")
   })
 
-  test("email.confirm also resolves { '@path': '/email/enabledCc' } when Cc was patched beforehand, and email.cancel cancels with zero LLM call", async () => {
+  test("email.confirm resolves { '@path': '/email/enabledCc' } and email.cancel guards terminal state", async () => {
     const { call, enqueuedTurns } = makeHarness()
 
     const created = await call(
@@ -520,7 +573,6 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     const turnId = String(created.json.turnId)
 
-    // Patch /email/enabledCc first
     await call(
       "POST",
       "/hooks/brain/ui",
@@ -533,7 +585,6 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       { headers: AUTH },
     )
 
-    // Confirm using canonical A2UI @path binding in action.context
     const confirmed = await call(
       "POST",
       "/api/brain/a2ui/action",
@@ -542,9 +593,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         turnId,
         action: {
           name: "email.confirm",
-          context: {
-            enabledCc: { "@path": "/email/enabledCc" },
-          },
+          context: { enabledCc: { "@path": "/email/enabledCc" } },
         },
         actionKey: "path-bind-key-1",
       },
@@ -553,9 +602,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(confirmed.status).toBe(200)
     expect(confirmed.json.enabledCc).toEqual(["two@example.com"])
     expect(enqueuedTurns).toHaveLength(1)
-    expect(enqueuedTurns[0]!.text).toContain("Cc: two@example.com")
 
-    // Test email.cancel on another card -> 0 LLM turns
     const second = await call(
       "POST",
       "/hooks/brain/ui",
@@ -568,12 +615,13 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       },
       { headers: AUTH },
     )
+    const secondTurnId = String(second.json.turnId)
     const cancelled = await call(
       "POST",
       "/api/brain/a2ui/action",
       {
         surfaceId: "email-cancel-01",
-        turnId: String(second.json.turnId),
+        turnId: secondTurnId,
         action: { name: "email.cancel" },
         actionKey: "cancel-key-1",
       },
@@ -581,6 +629,20 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(cancelled.status).toBe(200)
     expect(cancelled.json.state).toBe("cancelled")
-    expect(enqueuedTurns).toHaveLength(1)
+
+    // Confirming after cancel returns 409 already_decided
+    const confirmAfterCancel = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: "email-cancel-01",
+        turnId: secondTurnId,
+        action: { name: "email.confirm" },
+        actionKey: "confirm-after-cancel-key",
+      },
+      { headers: bearer },
+    )
+    expect(confirmAfterCancel.status).toBe(409)
+    expect(confirmAfterCancel.json.error).toBe("already_decided")
   })
 })

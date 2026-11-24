@@ -17,7 +17,12 @@ import {
   validateA2UIMessage,
   validateA2UIMessages,
 } from "./a2ui"
-import { buildEmailConfirmSurface, buildPrGateSurface, hydratePrGateData } from "./a2ui-macros"
+import {
+  buildEmailConfirmSurface,
+  buildPrGateSurface,
+  computeReviewState,
+  hydratePrGateData,
+} from "./a2ui-macros"
 import { isBrainInternalEvent } from "./brain"
 import { classifyBrainEvent } from "./brain-event-triage"
 
@@ -225,9 +230,94 @@ describe("SQLite TurnCard persistence, JSON-pointer folding, and WS broadcast", 
     expect(btn?.label).toBe("Sent!")
     expect(btn?.disabled).toBe(true)
   })
+
+  test("turnId-scoped updateSurfaceData and updateSurfaceComponents mutate the exact turn even when two turns share surfaceId", () => {
+    const first = buildEmailConfirmSurface({ to: "one@example.com", subject: "First", body: "1", surfaceId: "dup-surf" })
+    const second = buildEmailConfirmSurface({ to: "two@example.com", subject: "Second", body: "2", surfaceId: "dup-surf" })
+    if (!first.ok || !second.ok) throw new Error("failed")
+    const turn1 = createSurfaceTurn({ surfaceId: "dup-surf", text: first.text, messages: first.messages }, { emitTurn: () => {} })
+    const turn2 = createSurfaceTurn({ surfaceId: "dup-surf", text: second.text, messages: second.messages }, { emitTurn: () => {} })
+
+    const patched = updateSurfaceData("dup-surf", "/email/state", "cancelled", {
+      turnId: turn1.id,
+      broadcast: () => {},
+    })
+    expect(patched.ok).toBe(true)
+    if (patched.ok) expect(patched.frame.turnId).toBe(turn1.id)
+
+    const compPatched = updateSurfaceComponents(
+      "dup-surf",
+      [{ id: "cancel_btn", component: "Button", label: "Cancelled 1", disabled: true }],
+      { turnId: turn1.id, broadcast: () => {} },
+    )
+    expect(compPatched.ok).toBe(true)
+
+    // turn1 was mutated; turn2 remains untouched ("pending")
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn1.id)!.card!), "/email/state")).toBe("cancelled")
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn2.id)!.card!), "/email/state")).toBe("pending")
+  })
 })
 
-describe("PrGateCard hydration", () => {
+describe("PrGateCard hydration & computeReviewState tier rules", () => {
+  test("computeReviewState enforces author match and high/normal/low review tier cascade rules", () => {
+    const sha = "deadbeef1234567"
+    const claudeApprove = {
+      author: { login: "jaubut" },
+      body: `🤖 **Auto-review**\n<!-- reviewed-sha: ${sha} -->\nVERDICT: APPROVE`,
+    }
+    const geminiApprove = {
+      author: { login: "jaubut" },
+      body: `♊️ **Gemini review** (agy)\n<!-- reviewed-sha: ${sha} -->\nVERDICT: APPROVE`,
+    }
+    const normalMarker = { author: { login: "jaubut" }, body: "<!-- review-tier: normal -->" }
+    const lowMarker = { author: { login: "jaubut" }, body: "<!-- review-tier: low -->" }
+
+    // Unmarked / high tier requires BOTH Claude and Gemini/Codex from the PR author
+    expect(computeReviewState([claudeApprove], sha, "", "jaubut", [{ path: "server/a.ts" }])).toBe("pending")
+    expect(computeReviewState([geminiApprove], sha, "", "jaubut", [{ path: "server/a.ts" }])).toBe("pending")
+    expect(computeReviewState([claudeApprove, geminiApprove], sha, "", "jaubut", [{ path: "server/a.ts" }])).toBe("approved")
+
+    // Foreign author comments are ignored
+    expect(
+      computeReviewState(
+        [
+          { ...claudeApprove, author: { login: "impostor" } },
+          { ...geminiApprove, author: { login: "impostor" } },
+        ],
+        sha,
+        "APPROVED",
+        "jaubut",
+        [{ path: "server/a.ts" }],
+      ),
+    ).toBe("pending")
+
+    // Normal tier non-client requires Gemini (or Claude when claudeNormal is true)
+    expect(
+      computeReviewState([normalMarker, geminiApprove], sha, "", "jaubut", [{ path: "server/a.ts" }], {
+        claudeNormal: false,
+      }),
+    ).toBe("approved")
+    expect(
+      computeReviewState([normalMarker, claudeApprove], sha, "", "jaubut", [{ path: "server/a.ts" }], {
+        claudeNormal: true,
+      }),
+    ).toBe("approved")
+
+    // Low tier on allowlisted files approves with 0 reviews, unless CHANGES on head
+    expect(computeReviewState([lowMarker], sha, "", "jaubut", [{ path: "docs/plan.md" }, { path: "server/a.test.ts" }])).toBe("approved")
+    expect(
+      computeReviewState(
+        [
+          lowMarker,
+          { author: { login: "jaubut" }, body: `🤖 **Auto-review**\n<!-- reviewed-sha: ${sha} -->\nVERDICT: CHANGES` },
+        ],
+        sha,
+        "",
+        "jaubut",
+        [{ path: "docs/plan.md" }],
+      ),
+    ).toBe("changes_requested")
+  })
   test("hydrates green + approved PR with deploy button when deployRepo is provided", async () => {
     const hydrated = await hydratePrGateData(
       { repo: "jaubut/claude-companion", pr: 412, deployRepo: "claude-companion" },

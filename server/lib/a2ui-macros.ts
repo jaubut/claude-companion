@@ -1,19 +1,24 @@
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import {
   A2UI_BASIC_CATALOG_ID,
   A2UI_VERSION,
   type A2UIComponent,
+  type A2UICreateSurfaceMessage,
   type A2UIEngineDeps,
   type A2UIMessage,
   SURFACE_ID_RE,
   containsHtmlOrScript,
   createSurfaceTurn,
   isValidJsonPointer,
+  setJsonPointer,
   updateSurfaceComponents,
   updateSurfaceData,
   validateA2UIMessages,
 } from "./a2ui"
-import { type Turn, getTurn } from "./orchestrator-chat"
+import type { Turn } from "./orchestrator-chat"
 import { type GhFn, realGh } from "./triage-pr"
 import type { DeployResult } from "../wiring/auto-deploy"
 import type { mergeAgentPr } from "../wiring/brain-pr-merge"
@@ -22,10 +27,14 @@ export { handleA2UIAction } from "./a2ui-actions"
 
 // Server-side A2UI v1.0 macro expansion (`EmailConfirmCard`, `PrGateCard`, `patch`, `custom`).
 
-const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
+export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const GEMINI_HEADING = /^♊️? \*\*Gemini review\*\* \(agy\b/u
 const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
+const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|md)$/
+const LOW_FILE_LIMIT = 100
+const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
+const CLAUDE_NORMAL_FLAG = join(homedir(), ".claude", "state", "claude-review-normal")
 const PR_VIEW_FIELDS =
   "state,isDraft,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments,files"
 
@@ -239,20 +248,47 @@ function computeCiState(checks: GhCheck[], mergeable: string, mergeStateStatus: 
   return "pending"
 }
 
-function computeReviewState(
+export function computeReviewState(
   comments: GhComment[],
   headSha: string,
   reviewDecision: string,
+  authorLogin = "",
+  files: Array<{ path?: string }> = [],
+  opts: { claudeNormal?: boolean; clientOrigin?: boolean } = {},
 ): "approved" | "changes_requested" | "pending" {
   if (reviewDecision === "CHANGES_REQUESTED") return "changes_requested"
-  const stamp = headSha ? `<!-- reviewed-sha: ${headSha} -->` : ""
-  const headBodies = stamp
-    ? comments.map((c) => String(c.body ?? "")).filter((b) => b.includes(stamp))
-    : []
-  const reviewBodies = headBodies.filter((b) => CLAUDE_HEADING.test(b) || GEMINI_HEADING.test(b) || CODEX_HEADING.test(b))
-  if (reviewBodies.some((b) => /VERDICT:\s*CHANGES/i.test(b))) return "changes_requested"
-  if (reviewBodies.some((b) => /VERDICT:\s*APPROVE/i.test(b)) || reviewDecision === "APPROVED") return "approved"
-  return "pending"
+  if (!authorLogin || !headSha) return "pending"
+  const stamp = `<!-- reviewed-sha: ${headSha} -->`
+  const authorComments = comments.filter((c) => c.author?.login === authorLogin)
+  const head = authorComments
+    .filter((c) => String(c.body ?? "").includes(stamp))
+    .map((c) => String(c.body))
+  const claude = head.filter((b) => CLAUDE_HEADING.test(b))
+  const second = head.filter((b) => GEMINI_HEADING.test(b) || CODEX_HEADING.test(b))
+  if ([...claude, ...second].some((b) => /VERDICT:\s*CHANGES/i.test(b))) return "changes_requested"
+
+  const tier = authorComments
+    .map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1])
+    .filter(Boolean)
+    .at(-1)
+  if (
+    tier === "low" &&
+    files.length > 0 &&
+    files.length < LOW_FILE_LIMIT &&
+    files.every((f) => LOW_FILE.test(String(f.path)))
+  ) {
+    return "approved"
+  }
+
+  const claudePaused = existsSync(CLAUDE_PAUSED_FLAG)
+  const claudeNormal = opts.claudeNormal ?? (!claudePaused && existsSync(CLAUDE_NORMAL_FLAG))
+  const clientOrigin = opts.clientOrigin ?? false
+  const normalClaudeOnly = claudeNormal && tier === "normal" && !clientOrigin
+  const normalGeminiOnly = !claudeNormal && tier === "normal" && !clientOrigin
+
+  if (!normalGeminiOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
+  if (!normalClaudeOnly && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
+  return "approved"
 }
 
 function stripAngleTags(s: string): string {
@@ -307,11 +343,14 @@ export async function hydratePrGateData(
   const mergeable = String(parsed.mergeable ?? "UNKNOWN")
   const mergeStateStatus = String(parsed.mergeStateStatus ?? "UNKNOWN")
   const reviewDecision = String(parsed.reviewDecision ?? "")
+  const authorObj = parsed.author && typeof parsed.author === "object" ? (parsed.author as { login?: unknown }) : null
+  const authorLogin = typeof authorObj?.login === "string" ? authorObj.login : ""
   const checks = Array.isArray(parsed.statusCheckRollup) ? (parsed.statusCheckRollup as GhCheck[]) : []
   const comments = Array.isArray(parsed.comments) ? (parsed.comments as GhComment[]) : []
+  const files = Array.isArray(parsed.files) ? (parsed.files as Array<{ path?: string }>) : []
 
   const ciState = computeCiState(checks, mergeable, mergeStateStatus)
-  const reviewState = computeReviewState(comments, headSha, reviewDecision)
+  const reviewState = computeReviewState(comments, headSha, reviewDecision, authorLogin, files)
 
   return {
     ok: true,
@@ -419,6 +458,7 @@ export interface A2UIRouteDeps {
   deploy?: ((repo: string) => Promise<DeployResult>) | null
   onUserTurn?: (turn: Turn) => void
   engine?: A2UIEngineDeps
+  signal?: AbortSignal
 }
 
 /** Execute `POST /hooks/brain/ui` macro expansion (`email`, `pr`, `patch`, `custom`). */
@@ -517,21 +557,36 @@ export async function executeA2UIMacro(
         ? body.text.trim()
         : `A2UI surface [${surfaceId}]`
       if (containsHtmlOrScript(summary)) return fail(400, "html_not_allowed")
-      const turn = createSurfaceTurn(
-        { surfaceId, text: summary, messages: [first] },
-        deps.engine,
-      )
+      const foldedCreate: A2UICreateSurfaceMessage = structuredClone(first)
       for (const msg of messages.slice(1)) {
+        if ("createSurface" in msg) {
+          return fail(400, "duplicate_create_surface")
+        }
         if ("updateDataModel" in msg) {
-          updateSurfaceData(surfaceId, msg.updateDataModel.path, msg.updateDataModel.value, deps.engine)
+          try {
+            foldedCreate.createSurface.dataModel = setJsonPointer(
+              foldedCreate.createSurface.dataModel,
+              msg.updateDataModel.path,
+              msg.updateDataModel.value,
+            )
+          } catch {
+            return fail(400, "invalid_json_pointer_target")
+          }
         } else if ("updateComponents" in msg) {
-          updateSurfaceComponents(surfaceId, msg.updateComponents.components, deps.engine)
+          for (const comp of msg.updateComponents.components) {
+            const idx = foldedCreate.createSurface.components.findIndex((c) => c.id === comp.id)
+            if (idx >= 0) foldedCreate.createSurface.components[idx] = comp
+            else foldedCreate.createSurface.components.push(comp)
+          }
         }
       }
-      const latest = (deps.engine?.getTurn ?? getTurn)(turn.id) ?? turn
+      const turn = createSurfaceTurn(
+        { surfaceId, text: summary, messages: [foldedCreate] },
+        deps.engine,
+      )
       return {
         status: 200,
-        body: { ok: true, macro: "custom", turnId: latest.id, surfaceId, turn: latest },
+        body: { ok: true, macro: "custom", turnId: turn.id, surfaceId, turn },
       }
     }
 

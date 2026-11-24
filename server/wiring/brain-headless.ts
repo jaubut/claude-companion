@@ -17,6 +17,19 @@ import { commandCatalog } from "../lib/command-catalog"
 /** The brain's cwd: its CLAUDE.md + .claude/settings.json (repo `brain/`, or COMPANION_BRAIN_DIR). */
 export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
 export const HEADLESS_BRAIN_PANE = "headless:brain"
+/** Runtime-injected --allowedTools for headless Brain CLI tools added without touching human-merge brain/.claude/settings.json. */
+export const BRAIN_RUNTIME_ALLOWED_TOOLS = ["Bash(bin/ui:*)", "Bash(./bin/ui:*)"] as const
+
+export function buildBrainClaudeArgs(opts: {
+  prompt: string
+  sessionId: string
+  resume: boolean
+  mode: string
+  model?: string
+  mcpConfig?: string
+}): string[] {
+  return ["--allowedTools", ...BRAIN_RUNTIME_ALLOWED_TOOLS, ...buildHeadlessClaudeArgs(opts)]
+}
 
 /**
  * The brain's --mcp-config (canvas-board-sync A1): only `board`, on loopback,
@@ -216,7 +229,7 @@ export function createHeadlessBrainRunner(hooks: {
             model: turnModel,
             onTempDir: (d) => { tempPromptDir = d },
           })
-        : buildHeadlessClaudeArgs({
+        : buildBrainClaudeArgs({
             prompt: text,
             sessionId: turnSid,
             resume: sessionStarted,

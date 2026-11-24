@@ -146,12 +146,14 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 244,
+          "lines": 305,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
           ],
-          "state": [],
+          "state": [
+            "inFlightActions: Map"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -172,15 +174,17 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 558,
+          "lines": 613,
           "kind": "lib",
           "exports": [
+            "REPO_RE",
             "EmailMacroInput",
             "PrMacroInput",
             "HydratedPrData",
             "MacroOutcome",
             "parseCcList",
             "buildEmailConfirmSurface",
+            "computeReviewState",
             "hydratePrGateData",
             "buildPrGateSurface",
             "A2UIRouteDeps",
@@ -205,7 +209,7 @@
         },
         {
           "path": "lib/a2ui.ts",
-          "lines": 525,
+          "lines": 535,
           "kind": "lib",
           "exports": [
             "A2UI_VERSION",
@@ -8043,7 +8047,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 460,
+          "lines": 461,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -9275,11 +9279,13 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 306,
+          "lines": 319,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
+            "BRAIN_RUNTIME_ALLOWED_TOOLS",
+            "buildBrainClaudeArgs",
             "writeBrainMcpConfig",
             "getBrainModel",
             "BrainFamily",
@@ -11444,6 +11450,12 @@
             "companion-server.ts#* /"
           ]
         },
+        "A2UIActionRequest": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
         "A2UIEngineDeps": {
           "module": "lib/a2ui.ts",
           "callers": [
@@ -11489,6 +11501,12 @@
             "lib/a2ui-actions.ts"
           ]
         },
+        "REPO_RE": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
         "hydratePrGateData": {
           "module": "lib/a2ui-macros.ts",
           "callers": [
@@ -11505,7 +11523,6 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/a2ui-actions.ts",
-            "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
             "wiring/brain-handoff.ts",
             "wiring/brain.ts",
@@ -11521,11 +11538,20 @@
             "wiring/worker-blocked.ts"
           ]
         },
-        "findA2UITurn": {
+        "Turn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/a2ui-actions.ts",
-            "lib/a2ui.ts"
+            "lib/a2ui-macros.ts",
+            "lib/a2ui.ts",
+            "lib/dispatch-poller.ts",
+            "lib/front-door.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/worker-blocked.ts",
+            "wiring/body.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "deployRepo": {
@@ -11651,6 +11677,13 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "findA2UITurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts"
+          ]
+        },
         "A2UI_BASIC_CATALOG_ID": {
           "module": "lib/a2ui.ts",
           "callers": [
@@ -11664,6 +11697,12 @@
           ]
         },
         "A2UIComponent": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "A2UICreateSurfaceMessage": {
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-macros.ts"
@@ -11695,6 +11734,12 @@
           ]
         },
         "isValidJsonPointer": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "setJsonPointer": {
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-macros.ts"
@@ -11734,21 +11779,6 @@
           "callers": [
             "lib/a2ui-macros.ts",
             "routes/brain.ts"
-          ]
-        },
-        "Turn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/a2ui-macros.ts",
-            "lib/a2ui.ts",
-            "lib/dispatch-poller.ts",
-            "lib/front-door.ts",
-            "lib/orchestrator-brain.ts",
-            "lib/worker-blocked.ts",
-            "wiring/body.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "TurnCard": {

@@ -383,6 +383,8 @@ export interface A2UIEngineDeps {
   setCard?: typeof setTurnCard
   broadcast?: (frame: Record<string, unknown>) => void
   emitTurn?: (turn: Turn) => void
+  /** Optional target turnId so updates mutate and broadcast for an exact turn even when surfaceIds collide. */
+  turnId?: string
 }
 
 /** Extract the current folded dataModel from an A2UI TurnCard. */
@@ -431,10 +433,14 @@ export function updateSurfaceData(
   if (containsHtmlOrScript(value)) return { ok: false, status: 400, error: "html_not_allowed" }
 
   const find = deps.findTurn ?? findA2UITurn
+  const get = deps.getTurn ?? getTurn
   const setCard = deps.setCard ?? setTurnCard
   const bcast = deps.broadcast ?? defaultBroadcast
 
-  const existing = find(surfaceId)
+  const byTurnId = deps.turnId ? get(deps.turnId) : null
+  const existing = deps.turnId
+    ? (byTurnId && byTurnId.card?.kind === "a2ui" && byTurnId.card.surfaceId === surfaceId ? byTurnId : null)
+    : find(surfaceId)
   if (!existing || existing.card?.kind !== "a2ui") {
     return { ok: false, status: 404, error: "surface_not_found" }
   }
@@ -486,10 +492,14 @@ export function updateSurfaceComponents(
   }
 
   const find = deps.findTurn ?? findA2UITurn
+  const get = deps.getTurn ?? getTurn
   const setCard = deps.setCard ?? setTurnCard
   const bcast = deps.broadcast ?? defaultBroadcast
 
-  const existing = find(surfaceId)
+  const byTurnId = deps.turnId ? get(deps.turnId) : null
+  const existing = deps.turnId
+    ? (byTurnId && byTurnId.card?.kind === "a2ui" && byTurnId.card.surfaceId === surfaceId ? byTurnId : null)
+    : find(surfaceId)
   if (!existing || existing.card?.kind !== "a2ui") {
     return { ok: false, status: 404, error: "surface_not_found" }
   }

@@ -356,6 +356,7 @@ async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response>
     deploy: deps.deploy,
     onUserTurn: (t) => deps.wiring.enqueue(t),
     engine: deps.a2uiEngine,
+    signal: req.signal,
   })
   return Response.json(out.body, {
     status: out.status,
