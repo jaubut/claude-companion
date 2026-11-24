@@ -1,9 +1,12 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
+import { type A2UICreateSurfaceMessage, createSurfaceTurn, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
+import { buildPrGateSurface } from "../lib/a2ui-macros"
 import { BRAIN_THREAD, deliveryText } from "../lib/brain"
-import { appendTurn, getThread, type Turn } from "../lib/orchestrator-chat"
+import { appendTurn, findA2UITurn, getThread, type Turn } from "../lib/orchestrator-chat"
+import type { GhFn } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
-import { createStuckEvents, stuckLine } from "./brain-stuck-events"
+import { createStuckEvents, emitStuckPrGateCard, stuckLine } from "./brain-stuck-events"
 
 const url = (n: number) => `https://github.com/jaubut/r/pull/${n}`
 const meta = (n: number, over: Record<string, unknown> = {}) => ({ url: url(n), repo: "r", pr: n, kind: "stuck-parked", stuck_key: `park:${n}`, reason: "parked 5 h: merge conflict", ...over })
@@ -162,5 +165,166 @@ describe("the reader", () => {
     await h.reader.tick()
     expect(h.cursor()).toBe("5")
     expect(h.logs.join()).toContain("database is locked")
+  })
+  test("onStuckRow auto-emits and updates PrGateCard for green stuck-parked / loop-budget / loop-stop PRs and skips red or tainted PRs", async () => {
+    let headSha = "aaaa1111bbbb2222"
+    let ciConclusion = "SUCCESS"
+    const ghCalls: string[][] = []
+    const gh: GhFn = async (args) => {
+      ghCalls.push(args)
+      const repoArg = args[args.indexOf("--repo") + 1] ?? "jaubut/claude-companion"
+      const prArg = args[2] ?? "88"
+      return {
+        code: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          state: "OPEN",
+          isDraft: false,
+          headRefName: "dispatch/8888",
+          headRefOid: headSha,
+          baseRefName: "main",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          reviewDecision: "",
+          url: `https://github.com/${repoArg}/pull/${prArg}`,
+          title: `PR #${prArg}`,
+          author: { login: "jaubut" },
+          labels: [],
+          statusCheckRollup: [{ status: "COMPLETED", conclusion: ciConclusion, name: "test" }],
+          comments: [],
+          files: [],
+        }),
+      }
+    }
+
+    const emittedTurns: Turn[] = []
+    const broadcasts: Record<string, unknown>[] = []
+    const db = new Database(":memory:")
+    db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, agent_slug TEXT, action TEXT, meta TEXT)")
+    const rows = [
+      // 1. Tainted PR -> must be skipped without calling gh
+      row(10, {
+        url: "https://github.com/jaubut/claude-companion/pull/81",
+        repo: "claude-companion",
+        pr: 81,
+        kind: "stuck-parked",
+        stuck_key: "park:81",
+        reason: "tainted (web) PR touches server/lib/auth.ts — human merge only",
+      }),
+      // 2. Green stuck-parked PR on claude-companion -> emits PrGateCard with deployRepo="claude-companion" and reason
+      row(11, {
+        url: "https://github.com/jaubut/claude-companion/pull/88",
+        repo: "claude-companion",
+        pr: 88,
+        kind: "stuck-parked",
+        stuck_key: "park:88",
+        reason: "touches db/migrations/001.sql (prod schema) — human merge only",
+      }),
+    ]
+    for (const r of rows) {
+      db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, 'pr-shepherd', ?, ?)").run(r.id, r.action, r.meta)
+    }
+    let saved: string | null = "9"
+    const reader = createStuckEvents({
+      exec: async (sql, args) => ({ rows: db.query(sql).all(...(args as never[])) as never[], affected: 0 }),
+      event: () => {},
+      getCursor: () => saved,
+      setCursor: (id) => { saved = id },
+      log: () => {},
+      onStuckRow: (m) =>
+        emitStuckPrGateCard(m, {
+          gh,
+          engine: {
+            emitTurn: (t) => emittedTurns.push(t),
+            broadcast: (f) => broadcasts.push(f),
+          },
+        }),
+    })
+
+    await reader.tick()
+    // Tainted PR #81 was skipped; only PR #88 hydrated and emitted a card
+    expect(ghCalls).toHaveLength(1)
+    expect(emittedTurns).toHaveLength(1)
+    const surfaceId = "pr-jaubut-claude-companion-88"
+    expect(emittedTurns[0]!.card?.surfaceId).toBe(surfaceId)
+    const turn88 = findA2UITurn(surfaceId)!
+    const model88 = getSurfaceDataModel(turn88.card!)
+    expect(getJsonPointer(model88, "/pr/headSha")).toBe("aaaa1111bbbb2222")
+    expect(getJsonPointer(model88, "/pr/deployRepo")).toBe("claude-companion")
+    expect(getJsonPointer(model88, "/pr/reason")).toBe("touches db/migrations/001.sql (prod schema) — human merge only")
+
+    // 3. Subsequent loop-budget event on the same open surfaceId updates existing surface in-place via updateSurfaceData
+    headSha = "cccc3333dddd4444"
+    db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, 'pr-shepherd', 'pr:brain-event', ?)").run(
+      12,
+      JSON.stringify({
+        url: "https://github.com/jaubut/claude-companion/pull/88",
+        repo: "claude-companion",
+        pr: 88,
+        kind: "loop-budget",
+        stuck_key: "loop:88",
+        reason: "review verdict CHANGES after 2 fix runs",
+      }),
+    )
+    await reader.tick()
+    expect(emittedTurns).toHaveLength(1) // updated in-place, no duplicate turn
+    expect(broadcasts).toHaveLength(1)
+    const updatedModel = getSurfaceDataModel(findA2UITurn(surfaceId)!.card!)
+    expect(getJsonPointer(updatedModel, "/pr/headSha")).toBe("cccc3333dddd4444")
+    expect(getJsonPointer(updatedModel, "/pr/reason")).toBe("review verdict CHANGES after 2 fix runs")
+
+    // 4. Red CI PR is skipped
+    ciConclusion = "FAILURE"
+    db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, 'pr-shepherd', 'pr:brain-event', ?)").run(
+      13,
+      JSON.stringify({
+        url: "https://github.com/jaubut/claude-companion/pull/89",
+        repo: "claude-companion",
+        pr: 89,
+        kind: "loop-stop",
+        stuck_key: "loop:89",
+        reason: "CI still failing after 3 fixes",
+      }),
+    )
+    await reader.tick()
+    expect(findA2UITurn("pr-jaubut-claude-companion-89")).toBeNull()
+
+    // 5. Updating an existing PrGateCard initially created without a reason adds reason_text component in-place
+    ciConclusion = "SUCCESS"
+    const noReasonBuilt = buildPrGateSurface({
+      repo: "jaubut/claude-companion",
+      number: 90,
+      title: "PR #90",
+      url: "https://github.com/jaubut/claude-companion/pull/90",
+      headSha: "cccc3333dddd4444",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      ciState: "green",
+      reviewState: "approved",
+      state: "open",
+      deployRepo: "claude-companion",
+    })
+    if (!noReasonBuilt.ok) throw new Error(noReasonBuilt.error)
+    createSurfaceTurn({ surfaceId: noReasonBuilt.surfaceId, text: noReasonBuilt.text, messages: noReasonBuilt.messages }, { emitTurn: () => {} })
+    const before90 = (findA2UITurn("pr-jaubut-claude-companion-90")!.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    expect(before90.components.some((c) => c.id === "reason_text")).toBe(false)
+
+    db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, 'pr-shepherd', 'pr:brain-event', ?)").run(
+      14,
+      JSON.stringify({
+        url: "https://github.com/jaubut/claude-companion/pull/90",
+        repo: "claude-companion",
+        pr: 90,
+        kind: "stuck-parked",
+        stuck_key: "park:90",
+        reason: "touches hooks/guard.py — human merge only",
+      }),
+    )
+    await reader.tick()
+    const after90Turn = findA2UITurn("pr-jaubut-claude-companion-90")!
+    const after90Cs = (after90Turn.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    expect(after90Cs.components.some((c) => c.id === "reason_text")).toBe(true)
+    expect(after90Cs.components.find((c) => c.id === "col")?.children).toContain("reason_text")
+    expect(getJsonPointer(getSurfaceDataModel(after90Turn.card!), "/pr/reason")).toBe("touches hooks/guard.py — human merge only")
   })
 })

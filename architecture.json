@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 305,
+          "lines": 440,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -161,12 +161,15 @@
           "imports": [
             "lib/a2ui.ts",
             "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
             "lib/brain.ts",
             "lib/orchestrator-chat.ts",
+            "lib/outbound.ts",
             "lib/triage-pr.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-merge.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/outbound.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -174,7 +177,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 613,
+          "lines": 597,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -182,9 +185,11 @@
             "PrMacroInput",
             "HydratedPrData",
             "MacroOutcome",
+            "resolveOutboundStore",
+            "parseToList",
             "parseCcList",
             "buildEmailConfirmSurface",
-            "computeReviewState",
+            "stripAngleTags",
             "hydratePrGateData",
             "buildPrGateSurface",
             "A2UIRouteDeps",
@@ -198,10 +203,48 @@
           "imports": [
             "lib/a2ui.ts",
             "lib/orchestrator-chat.ts",
+            "lib/outbound.ts",
+            "lib/a2ui-pr-state.ts",
             "lib/triage-pr.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-merge.ts",
+            "wiring/outbound.ts",
             "lib/a2ui-actions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/a2ui-pr-state.ts",
+          "lines": 139,
+          "kind": "lib",
+          "exports": [
+            "GhCheck",
+            "GhComment",
+            "computeCiState",
+            "computeReviewState",
+            "prSurfaceId",
+            "isReservedAction",
+            "backsOutbound",
+            "backsPrGate",
+            "isOutboundSurface",
+            "isPrGateSurface",
+            "checkSurfaceWriteGuard",
+            "checkDataModelGuard",
+            "checkComponentActionsGuard"
+          ],
+          "state": [
+            "RESERVED_OUTBOUND_ACTIONS: Set",
+            "RESERVED_PR_ACTIONS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/a2ui.ts",
+            "lib/orchestrator-chat.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1545,7 +1588,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 301,
+          "lines": 305,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -1565,6 +1608,7 @@
             "deliveryText",
             "fitDelivery",
             "fitQueued",
+            "BRAIN_A2UI_RULES",
             "bootSeed",
             "TICK_MS",
             "RESTART_WINDOW_MS",
@@ -3786,7 +3830,7 @@
         },
         {
           "path": "lib/merge-gate.ts",
-          "lines": 153,
+          "lines": 155,
           "kind": "lib",
           "exports": [
             "GATE_BUDGET_MS",
@@ -4178,7 +4222,7 @@
         },
         {
           "path": "lib/outbound.ts",
-          "lines": 335,
+          "lines": 348,
           "kind": "lib",
           "exports": [
             "OutboundAccount",
@@ -8047,7 +8091,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 461,
+          "lines": 470,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -8068,6 +8112,7 @@
             "lib/link-media.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
+            "lib/outbound.ts",
             "lib/sessions.ts",
             "lib/triage-pr.ts",
             "lib/vault-guard.ts",
@@ -8826,7 +8871,7 @@
         },
         {
           "path": "routes/triage.ts",
-          "lines": 165,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "createTriageHandler",
@@ -8838,6 +8883,9 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/a2ui.ts",
+            "lib/a2ui-macros.ts",
+            "lib/brain.ts",
             "lib/idempotency.ts",
             "lib/repo-rework.ts",
             "lib/triage-engine.ts",
@@ -9279,7 +9327,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 319,
+          "lines": 321,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -9291,6 +9339,7 @@
             "BrainFamily",
             "brainFamilyForModel",
             "resolveBrainSessionModel",
+            "AGY_BOOT_PREFIX",
             "createHeadlessBrainRunner"
           ],
           "state": [],
@@ -9388,7 +9437,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 277,
+          "lines": 280,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9419,7 +9468,7 @@
         },
         {
           "path": "wiring/brain-pr-park.ts",
-          "lines": 37,
+          "lines": 48,
           "kind": "lib",
           "exports": [
             "hardStopPark",
@@ -9532,25 +9581,31 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 189,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",
             "stuckLine",
             "createStuckEvents",
+            "emitStuckPrGateCard",
             "startStuckEvents"
           ],
-          "state": [],
+          "state": [
+            "PR_GATE_CARD_KINDS: Set"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/a2ui.ts",
+            "lib/a2ui-macros.ts",
             "lib/brain.ts",
             "lib/brain-store.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/secret-redact.ts",
+            "lib/triage-pr.ts",
             "lib/turso.ts",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
@@ -11461,13 +11516,18 @@
           "callers": [
             "lib/a2ui-actions.ts",
             "lib/a2ui-macros.ts",
-            "routes/brain.ts"
+            "lib/a2ui-pr-state.ts",
+            "routes/brain.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "getSurfaceDataModel": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-actions.ts"
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "resolveA2UIContext": {
@@ -11480,7 +11540,8 @@
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-actions.ts",
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "validateA2UIActionRequest": {
@@ -11504,19 +11565,61 @@
         "REPO_RE": {
           "module": "lib/a2ui-macros.ts",
           "callers": [
-            "lib/a2ui-actions.ts"
+            "lib/a2ui-actions.ts",
+            "routes/triage.ts"
           ]
         },
         "hydratePrGateData": {
           "module": "lib/a2ui-macros.ts",
           "callers": [
-            "lib/a2ui-actions.ts"
+            "lib/a2ui-actions.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "parseCcList": {
           "module": "lib/a2ui-macros.ts",
           "callers": [
             "lib/a2ui-actions.ts"
+          ]
+        },
+        "prSurfaceId": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "resolveOutboundStore": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "stripAngleTags": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "wiring/brain-stuck-events.ts"
+          ]
+        },
+        "OutboundRecord": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "OutboundPayload": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "wiring/outbound.ts"
+          ]
+        },
+        "payloadHash": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
           ]
         },
         "getTurn": {
@@ -11571,6 +11674,7 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
@@ -11663,6 +11767,7 @@
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "routes/triage.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-handoff.ts",
             "wiring/brain-lead.ts",
@@ -11677,11 +11782,40 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "policyRefusal": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "gmailSender": {
+          "module": "wiring/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "sendable": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
         "findA2UITurn": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/a2ui-actions.ts",
-            "lib/a2ui.ts"
+            "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
+            "lib/a2ui.ts",
+            "wiring/brain-stuck-events.ts"
+          ]
+        },
+        "isReservedAction": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
           ]
         },
         "A2UI_BASIC_CATALOG_ID": {
@@ -11699,13 +11833,15 @@
         "A2UIComponent": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts"
           ]
         },
         "A2UICreateSurfaceMessage": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "A2UIMessage": {
@@ -11730,7 +11866,9 @@
         "createSurfaceTurn": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "routes/triage.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "isValidJsonPointer": {
@@ -11748,13 +11886,119 @@
         "updateSurfaceComponents": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "validateA2UIMessages": {
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-macros.ts"
+          ]
+        },
+        "OutboundAccount": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "OutboundSender": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts",
+            "wiring/outbound.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "OutboundStore": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts",
+            "routes/triage.ts",
+            "wiring/outbound.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "parseProposal": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "GhCheck": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "GhComment": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "backsOutbound": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "backsPrGate": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "checkComponentActionsGuard": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "checkDataModelGuard": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "checkSurfaceWriteGuard": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "computeCiState": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "computeReviewState": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "isOutboundSurface": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "isPrGateSurface": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "outboundStore": {
+          "module": "wiring/outbound.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "routes/triage.ts",
+            "wiring/triage.ts"
           ]
         },
         "GhFn": {
@@ -11768,6 +12012,7 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
             "wiring/github-webhook.ts",
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
@@ -19396,25 +19641,30 @@
             "routes/triage.ts"
           ]
         },
-        "OutboundStore": {
-          "module": "lib/outbound.ts",
-          "callers": [
-            "routes/triage.ts",
-            "wiring/outbound.ts",
-            "wiring/triage.ts"
-          ]
-        },
         "produceOutbound": {
           "module": "lib/outbound.ts",
           "callers": [
             "routes/triage.ts"
           ]
         },
-        "outboundStore": {
-          "module": "wiring/outbound.ts",
+        "buildEmailConfirmSurface": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "routes/triage.ts"
+          ]
+        },
+        "triageEngine": {
+          "module": "wiring/triage.ts",
           "callers": [
             "routes/triage.ts",
-            "wiring/triage.ts"
+            "wiring/repo-view.ts",
+            "wiring/triage-repos.ts"
+          ]
+        },
+        "repoRunner": {
+          "module": "wiring/triage-repos.ts",
+          "callers": [
+            "routes/triage.ts"
           ]
         },
         "RepoView": {
@@ -19427,20 +19677,6 @@
           "module": "wiring/repo-view.ts",
           "callers": [
             "routes/triage.ts"
-          ]
-        },
-        "repoRunner": {
-          "module": "wiring/triage-repos.ts",
-          "callers": [
-            "routes/triage.ts"
-          ]
-        },
-        "triageEngine": {
-          "module": "wiring/triage.ts",
-          "callers": [
-            "routes/triage.ts",
-            "wiring/repo-view.ts",
-            "wiring/triage-repos.ts"
           ]
         },
         "Reply": {
@@ -20170,6 +20406,12 @@
           "module": "wiring/brain-workers.ts",
           "callers": [
             "wiring/brain-restore.ts"
+          ]
+        },
+        "buildPrGateSurface": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "getTaskByDispatchId": {
@@ -21132,19 +21374,6 @@
             "wiring/triage.ts"
           ]
         },
-        "OutboundPayload": {
-          "module": "lib/outbound.ts",
-          "callers": [
-            "wiring/outbound.ts"
-          ]
-        },
-        "OutboundSender": {
-          "module": "lib/outbound.ts",
-          "callers": [
-            "wiring/outbound.ts",
-            "wiring/triage.ts"
-          ]
-        },
         "parseMessageId": {
           "module": "lib/outbound.ts",
           "callers": [
@@ -21687,12 +21916,6 @@
         },
         "ownsTrips": {
           "module": "wiring/trips.ts",
-          "callers": [
-            "wiring/triage.ts"
-          ]
-        },
-        "gmailSender": {
-          "module": "wiring/outbound.ts",
           "callers": [
             "wiring/triage.ts"
           ]

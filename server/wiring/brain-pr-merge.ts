@@ -24,8 +24,9 @@ export { retiredPark } from "./brain-pr-park"
 //   parked (403): no live shepherd park or hold, except the client-origin /
 //     sensitive-path review park (the MFA human-review policy, retired
 //     2026-10-31: money, origin and paths alone no longer gate a green,
-//     twice-approved agent PR). A tainted park or one that says `human merge`
-//     is never retired, including with a client-origin prefix.
+//     twice-approved agent PR) or non-tainted pr:needs-human parks when
+//     humanApproved is true. A tainted park that says `human merge` or a
+//     `pr:hold` row is never retired or lifted, including with a client-origin prefix.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
 //   not_approved (409):
 //     - low tier (allowlisted low files): 0 reviews required (any CHANGES still blocks)
@@ -70,6 +71,7 @@ const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-pa
 const CLAUDE_NORMAL_FLAG = join(homedir(), ".claude", "state", "claude-review-normal")
 const HUMAN_APPROVAL_WINDOW_MS = 30 * 60_000
 const NEGATION_RE = /\b(don't|dont|do not|never|no|wait|hold|stop|refuse|pas)\b/i
+const SYNTHESIZED_A2UI_USER_TURN_RE = /^(?:Email confirmed \[|Confirmed deploy \[)/i
 const MERGE_VERB_RE = /\b(merge|ship|land|refresh|update|unblock|fusionne|fusionner)\b/i
 const SHORT_CONFIRM_RE = /^(?:yes|yep|yeah|ok|okay|go|go ahead|go for it|do it|merge it|merge as is|you have (?:the )?permission|permission granted|approved?|proceed|unblock(?: it)?|oui|vas-y)[.!?\s]*$/i
 const TASK_CANCEL_VERB_RE = /\b(cancel|permission|unblock|clear|close|drop|kill|yes|ok|okay|go|do it|approved?|oui|vas-y|annule)\b/i
@@ -91,7 +93,7 @@ export function hasRecentUserMergeApproval(
     if (t.createdAt < cutoff) break
     if (t.role !== "user") continue
     const text = t.text.trim()
-    if (!text || NEGATION_RE.test(text)) continue
+    if (!text || SYNTHESIZED_A2UI_USER_TURN_RE.test(text) || NEGATION_RE.test(text)) continue
     if (MERGE_VERB_RE.test(text) && prBoundaryRe.test(text)) return true
     if (MERGE_VERB_RE.test(text) || SHORT_CONFIRM_RE.test(text) || /\bpermission\b/i.test(text)) {
       const userNamedAction = MERGE_VERB_RE.test(text) || /\bpermission\b/i.test(text)
@@ -124,7 +126,7 @@ export function hasRecentUserTaskCancelApproval(
     if (t.createdAt < cutoff) break
     if (t.role !== "user") continue
     const text = t.text.trim()
-    if (!text || NEGATION_RE.test(text)) continue
+    if (!text || SYNTHESIZED_A2UI_USER_TURN_RE.test(text) || NEGATION_RE.test(text)) continue
     if (text.includes(id8) && TASK_CANCEL_VERB_RE.test(text)) return true
     if (SHORT_CONFIRM_RE.test(text) || TASK_CANCEL_VERB_RE.test(text)) {
       for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
@@ -215,16 +217,17 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const v = await view(deps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
-  const g = await deps.gate(deps, { url: v.url })
+  const cardApproved = p.humanApproved === true
+  const humanApproved = cardApproved || deps.humanApproved?.(p.pr, p.repo) === true
+  const g = await deps.gate(deps, { url: v.url, approved: cardApproved })
   if (!g.ok) return fail(g.status, g.error, g.extra)
   if (g.head !== v.headRefOid) return fail(409, "head_moved")
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  const humanApproved = p.humanApproved === true || deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
   try {
-    park = await parked(deps.exec, v, humanApproved)
+    park = await parked(deps.exec, v, humanApproved, cardApproved)
   } catch (err) {
     companionLog(`[brain] pr-merge: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")

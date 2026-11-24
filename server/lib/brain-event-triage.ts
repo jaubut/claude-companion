@@ -21,8 +21,8 @@ export interface BrainEventCandidate {
   card?: { kind: string } | null
 }
 
-/** Self-echoes from actions the Brain itself just executed and already got tool output for. */
-const SELF_ECHO_RE = /^Brain (?:merged|closed|updated) /i
+/** Self-echoes from actions the Brain itself just executed and already got tool output for, plus A2UI email send receipts. */
+const SELF_ECHO_RE = /^(?:Brain (?:merged|closed|updated) |Sent email \[)/i
 
 /** Post-merge / terminal dispatch-poller receipts that need no Brain action. */
 const DONE_RECEIPT_RE = /^done \[[0-9a-f]{6,32}\]/i

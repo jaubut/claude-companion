@@ -66,8 +66,10 @@ export function resolveBrainSessionModel(configured: string, env: Record<string,
   return "claude-opus-5-5"
 }
 
-const AGY_BOOT_PREFIX =
-  "[System: Read ./CLAUDE.md and ./AGENTS.md and follow them strictly. You are the read-only Brain: never edit or write files; use bin/* CLI tools and MCP servers.]\n\n"
+export const AGY_BOOT_PREFIX =
+  "[System: Read ./CLAUDE.md and ./AGENTS.md and follow them strictly. You are the read-only Brain: never edit or write files; use bin/* CLI tools and MCP servers. " +
+  "A2UI v1.0 card rules: (1) Non-dictated outbound emails MUST be proposed with `./bin/ui email --to <addr> [--cc <csv>] [--account personal|hello] --subject \"<subj>\" --body \"<body>\" --why \"<why>\"` (tapping Send Email on the card sends directly via gmail.py with the toggled Cc list; use --dry-run only for demos). " +
+  "(2) Green PRs needing Jeremie's merge approval (prod-schema, human-merge-path, pr:needs-human, or review-quota holds) MUST be accompanied by `./bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] --reason \"<why>\"` so Jeremie gets a 1-tap Merge/Refresh card in the feed.]\n\n"
 
 export function createHeadlessBrainRunner(hooks: {
   noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void

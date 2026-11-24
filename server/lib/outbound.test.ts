@@ -257,6 +257,31 @@ describe("human only", () => {
   })
 })
 
+describe("updateCc", () => {
+  test("updates cc_json and payload_hash atomically when proposed at expectedHash; returns null on stale hash, invalid address, or policy refusal", () => {
+    const { id, payloadHash: oldHash } = propose({ cc: ["a@example.com", "b@example.com"] })
+    // Stale hash returns null
+    expect(store.updateCc(id, ["a@example.com"], "wrong-hash", clock + 1)).toBeNull()
+    // Invalid email address returns null
+    expect(store.updateCc(id, ["not-an-email"], oldHash, clock + 1)).toBeNull()
+    // Policy refusal (> 10 total recipients) returns null
+    const tenCc = Array.from({ length: 10 }, (_, i) => `cc${i}@example.com`)
+    expect(store.updateCc(id, tenCc, oldHash, clock + 1)).toBeNull()
+
+    // Valid subset updates cc and payloadHash
+    const updated = store.updateCc(id, ["b@example.com"], oldHash, clock + 5)
+    expect(updated).not.toBeNull()
+    expect(updated!.cc).toEqual(["b@example.com"])
+    expect(updated!.payloadHash).not.toBe(oldHash)
+    expect(updated!.updatedAt).toBe(clock + 5)
+    expect(store.get(id)!.cc).toEqual(["b@example.com"])
+    expect(store.get(id)!.payloadHash).toBe(updated!.payloadHash)
+
+    // Old hash is now stale
+    expect(store.updateCc(id, [], oldHash, clock + 10)).toBeNull()
+  })
+})
+
 describe("parseMessageId", () => {
   test("JSON or an id line", () => {
     expect(parseMessageId('{"id":"18c2f0a1b2c3d4e5","threadId":"x"}')).toBe("18c2f0a1b2c3d4e5")

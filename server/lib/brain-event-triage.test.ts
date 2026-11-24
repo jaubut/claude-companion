@@ -13,6 +13,7 @@ describe("classifyBrainEvent", () => {
     expect(classifyBrainEvent(ev("Brain merged jaubut/remorquage-pelchat#202 (feat(db): PG): routine"))).toBe("silent")
     expect(classifyBrainEvent(ev("Brain closed jaubut/claude-companion#310: superseded"))).toBe("silent")
     expect(classifyBrainEvent(ev("Brain updated jaubut/claude-companion#311: stale CI"))).toBe("silent")
+    expect(classifyBrainEvent(ev('Sent email [outbound-123] -> client@example.com (Cc: ops@example.com): "Invoice"'))).toBe("silent")
     expect(classifyBrainEvent(ev("done [eaedcf7f] handoff — Brouemont client dashboard\nhttps://github.com/jaubut/tls-dashboard-v2/pull/450"))).toBe("silent")
     expect(classifyBrainEvent(ev("PR ready [eaedcf7f] handoff — Brouemont client dashboard\nhttps://github.com/jaubut/tls-dashboard-v2/pull/450"))).toBe("silent")
     expect(classifyBrainEvent(ev("Deploying claude-companion 76153ec→932663c (1 commit): restarting"))).toBe("silent")

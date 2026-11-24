@@ -12,13 +12,19 @@ import {
   REPO_RE,
   hydratePrGateData,
   parseCcList,
+  prSurfaceId,
+  resolveOutboundStore,
+  stripAngleTags,
 } from "./a2ui-macros"
+import { isReservedAction } from "./a2ui-pr-state"
 import { BRAIN_THREAD } from "./brain"
 import { type Turn, appendTurn, findA2UITurn, getTurn, setTurnCard } from "./orchestrator-chat"
+import { type OutboundPayload, type OutboundRecord, payloadHash, policyRefusal, sendable } from "./outbound"
 import { realGh } from "./triage-pr"
 import { autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { orchEmit } from "../wiring/orchestrator"
+import { gmailSender } from "../wiring/outbound"
 
 // Deterministic bidirectional A2UI v1.0 action router (`POST /api/brain/a2ui/action`).
 // Enforces surface-persisted `actionKey` idempotency, in-flight request coalescing,
@@ -30,6 +36,22 @@ const fail = (status: number, error: string, extra: Record<string, unknown> = {}
 })
 
 const inFlightActions = new Map<string, Promise<MacroOutcome>>()
+
+/**
+ * What the card displays (with the record's current Cc, a subset of the card's Cc options) hashes to
+ * the stored record: the hash is recomputed, never read from card data, so what Jeremie saw is what sends.
+ */
+function cardShowsRecord(email: Record<string, unknown>, rec: OutboundRecord): boolean {
+  const shown = {
+    account: email.account,
+    to: Array.isArray(email.toList) ? email.toList : [],
+    cc: rec.cc,
+    subject: email.subject,
+    body: email.body,
+    inReplyTo: email.inReplyTo ?? null,
+  } as OutboundPayload
+  return payloadHash(shown) === rec.payloadHash
+}
 
 /** Record an idempotent action result on the surface's TurnCard in SQLite. */
 function rememberActionKey(
@@ -60,28 +82,30 @@ async function runActionForTurn(
   const name = req.action.name
 
   if (name === "pr.refresh") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
-    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim())
-      ? prModel.repo.trim()
-      : typeof context.repo === "string" && REPO_RE.test(context.repo.trim())
-        ? context.repo.trim()
-        : ""
-    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0
-      ? prModel.number
-      : typeof context.pr === "number" && Number.isInteger(context.pr) && context.pr > 0
-        ? context.pr
-        : 0
+    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
+    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
+    if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
     const deployRepo = typeof prModel.deployRepo === "string" ? prModel.deployRepo : null
-    const hydrated = await hydratePrGateData({ repo, pr: prNum, deployRepo }, deps.gh ?? realGh)
+    const existingReason = typeof prModel.reason === "string" && prModel.reason.trim() ? prModel.reason.trim() : null
+    const hydrated = await hydratePrGateData(
+      { repo, pr: prNum, deployRepo, ...(existingReason ? { reason: existingReason } : {}) },
+      deps.gh ?? realGh,
+    )
     if (!hydrated.ok) return { status: hydrated.status, body: hydrated.body }
-    const patched = updateSurfaceData(req.surfaceId, "/pr", hydrated.pr, scopedEngine)
+    const nextPr = {
+      ...hydrated.pr,
+      ...(existingReason ? { reason: existingReason } : prModel.reason !== undefined ? { reason: null } : {}),
+    }
+    const patched = updateSurfaceData(req.surfaceId, "/pr", nextPr, scopedEngine)
     if (!patched.ok) return fail(patched.status, patched.error)
     const outBody: Record<string, unknown> = {
       ok: true,
       surfaceId: req.surfaceId,
       turnId: turn.id,
       action: "pr.refresh",
-      pr: hydrated.pr,
+      pr: nextPr,
       replay: false,
     }
     rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
@@ -89,18 +113,28 @@ async function runActionForTurn(
   }
 
   if (name === "pr.merge") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
     // Pin repo and prNum strictly to the surface's hydrated prModel so context cannot redirect a merge.
     const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
     const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
     const expectedSha = typeof prModel.headSha === "string" ? prModel.headSha.trim() : ""
     if (!repo || !prNum || !expectedSha) return fail(400, "pr_target_missing")
+    if (req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
 
-    // Verify live GitHub PR head SHA matches the card's hydrated headSha before calling mergeAgentPr.
+    // Verify live GitHub PR head SHA and displayed metadata match the card before calling mergeAgentPr.
     const live = await hydratePrGateData({ repo, pr: prNum }, deps.gh ?? realGh)
     if (!live.ok) return { status: live.status, body: live.body }
     if (live.pr.headSha !== expectedSha) {
       return fail(409, "head_moved", { expected: expectedSha, actual: live.pr.headSha })
+    }
+    if (prModel.title !== live.pr.title || prModel.url !== live.pr.url) {
+      return fail(409, "pr_metadata_stale", {
+        expectedTitle: prModel.title ?? null,
+        actualTitle: live.pr.title,
+        expectedUrl: prModel.url ?? null,
+        actualUrl: live.pr.url,
+      })
     }
 
     const mergeFn = deps.prMerge ?? mergeAgentPr
@@ -132,15 +166,15 @@ async function runActionForTurn(
   }
 
   if (name === "pr.deploy") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
+    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
+    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
+    if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
     if (prModel.state !== "merged") {
       return fail(409, "not_merged", { state: prModel.state ?? null })
     }
-    const deployRepo = typeof prModel.deployRepo === "string" && prModel.deployRepo.trim()
-      ? prModel.deployRepo.trim()
-      : typeof context.repo === "string" && context.repo.trim()
-        ? context.repo.trim()
-        : ""
+    const deployRepo = typeof prModel.deployRepo === "string" && prModel.deployRepo.trim() ? prModel.deployRepo.trim() : ""
     if (!deployRepo) return fail(400, "deploy_repo_missing")
     const run = deps.deploy !== undefined ? deps.deploy : autoDeploy()?.deployNow ?? null
     if (isDeployRepo(deployRepo) && run) {
@@ -185,6 +219,23 @@ async function runActionForTurn(
     if (emailModel.state !== "pending") {
       return fail(409, "already_decided", { state: emailModel.state ?? null })
     }
+    const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
+    if (outboundId && emailModel.dryRun !== true) {
+      if (req.surfaceId !== `outbound-${outboundId}`) return fail(403, "outbound_surface_mismatch")
+      const store = resolveOutboundStore(deps.outbound)
+      if (store) {
+        const rec = store.get(outboundId)
+        if (rec && rec.status === "sent") {
+          updateSurfaceData(req.surfaceId, "/email/state", "sent", scopedEngine)
+          return fail(409, "already_decided", { state: "sent" })
+        }
+        if (rec && rec.status === "proposed") {
+          if (!cardShowsRecord(emailModel, rec) || !store.reject(rec.id, rec.payloadHash, Date.now())) {
+            return fail(409, "stale_version")
+          }
+        }
+      }
+    }
     const patched = updateSurfaceData(req.surfaceId, "/email/state", "cancelled", scopedEngine)
     if (!patched.ok) return fail(patched.status, patched.error)
     const outBody: Record<string, unknown> = {
@@ -193,6 +244,7 @@ async function runActionForTurn(
       turnId: turn.id,
       action: "email.cancel",
       state: "cancelled",
+      ...(outboundId && emailModel.dryRun !== true ? { outboundId } : {}),
       replay: false,
     }
     rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
@@ -203,9 +255,6 @@ async function runActionForTurn(
     const emailModel = (dataModel.email && typeof dataModel.email === "object" ? dataModel.email : {}) as Record<string, unknown>
     const to = typeof emailModel.to === "string" ? emailModel.to.trim() : ""
     if (!to) return fail(400, "to_required")
-    if (emailModel.state !== "pending") {
-      return fail(409, "already_decided", { state: emailModel.state ?? null })
-    }
     const rawCc = context.enabledCc !== undefined ? context.enabledCc : emailModel.enabledCc ?? emailModel.cc ?? []
     const parsedCc = parseCcList(rawCc)
     if (!parsedCc) return fail(400, "invalid_enabled_cc")
@@ -215,6 +264,89 @@ async function runActionForTurn(
     const enabledCc = allowedCc !== null
       ? parsedCc.filter((addr) => allowedCc.has(addr))
       : []
+
+    const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
+    if (outboundId && emailModel.dryRun !== true) {
+      if (req.surfaceId !== `outbound-${outboundId}`) return fail(403, "outbound_surface_mismatch")
+      const store = resolveOutboundStore(deps.outbound)
+      if (!store) return fail(503, "outbound_unavailable")
+      const rec = store.get(outboundId)
+      if (!rec) return fail(404, "outbound_not_found")
+      if (rec.status === "sent") {
+        updateSurfaceData(req.surfaceId, "/email/state", "sent", scopedEngine)
+        return fail(409, "already_decided", { state: "sent" })
+      }
+      if (rec.status !== "proposed" || emailModel.state !== "pending") {
+        return fail(409, "already_decided", { state: rec.status !== "proposed" ? rec.status : (emailModel.state ?? null) })
+      }
+      if (!cardShowsRecord(emailModel, rec)) {
+        return fail(409, "stale_version")
+      }
+
+      let activeRec = rec
+      let activeHash = rec.payloadHash
+      if (JSON.stringify(enabledCc) !== JSON.stringify(rec.cc)) {
+        const updated = store.updateCc(rec.id, enabledCc, rec.payloadHash, Date.now())
+        if (!updated) return fail(409, "stale_version")
+        activeRec = updated
+        activeHash = updated.payloadHash
+        updateSurfaceData(req.surfaceId, "/email/payloadHash", activeHash, scopedEngine)
+      }
+
+      const refusal = policyRefusal(activeRec)
+      if (refusal) return fail(422, "refused", { reason: refusal })
+      if (!store.claim(activeRec.id, activeHash, Date.now())) {
+        return fail(409, "already_decided")
+      }
+
+      updateSurfaceData(req.surfaceId, "/email/enabledCc", enabledCc, scopedEngine)
+      updateSurfaceData(req.surfaceId, "/email/state", "sending", scopedEngine)
+
+      const sender = deps.emailSender ?? gmailSender
+      let messageId: string | null = null
+      try {
+        const sendRes = await sender(sendable(activeRec))
+        messageId = sendRes.messageId
+      } catch (err) {
+        const rawErr = (err as Error)?.message ?? String(err)
+        const errMsg = stripAngleTags(rawErr).slice(0, 300)
+        store.release(activeRec.id, errMsg, Date.now())
+        updateSurfaceData(req.surfaceId, "/email/state", "pending", scopedEngine)
+        updateSurfaceData(req.surfaceId, "/email/error", errMsg, scopedEngine)
+        return fail(502, "send_failed", { detail: errMsg })
+      }
+
+      store.markSent(activeRec.id, messageId, Date.now())
+      updateSurfaceData(req.surfaceId, "/email/state", "sent", scopedEngine)
+      updateSurfaceData(req.surfaceId, "/email/messageId", messageId, scopedEngine)
+
+      const append = scopedEngine.appendTurn ?? appendTurn
+      const emit = scopedEngine.emitTurn ?? orchEmit
+      const toDisplay = activeRec.to.join(", ")
+      const receiptText = `Sent email [${req.surfaceId}] -> ${toDisplay}${enabledCc.length ? ` (Cc: ${enabledCc.join(", ")})` : ""}: "${activeRec.subject}"`
+      const receiptTurn = append("orchestrator", receiptText, null, BRAIN_THREAD)
+      emit(receiptTurn)
+
+      const outBody: Record<string, unknown> = {
+        ok: true,
+        surfaceId: req.surfaceId,
+        turnId: turn.id,
+        action: "email.confirm",
+        state: "sent",
+        outboundId: activeRec.id,
+        messageId,
+        to: toDisplay,
+        enabledCc,
+        subject: activeRec.subject,
+        replay: false,
+      }
+      rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+      return { status: 200, body: outBody }
+    }
+
+    if (emailModel.state !== "pending") {
+      return fail(409, "already_decided", { state: emailModel.state ?? null })
+    }
 
     updateSurfaceData(req.surfaceId, "/email/enabledCc", enabledCc, scopedEngine)
     const patched = updateSurfaceData(req.surfaceId, "/email/state", "confirmed", scopedEngine)
@@ -268,9 +400,12 @@ export async function handleA2UIAction(
   const get = deps.engine?.getTurn ?? getTurn
   const find = deps.engine?.findTurn ?? findA2UITurn
   const byId = get(req.turnId)
+  const strictTurnPin = isReservedAction(req.action.name) || /^(?:outbound|pr)-/.test(req.surfaceId)
   const turn = byId && byId.card?.kind === "a2ui" && byId.card.surfaceId === req.surfaceId
     ? byId
-    : find(req.surfaceId)
+    : strictTurnPin
+      ? null
+      : find(req.surfaceId)
 
   if (!turn || turn.card?.kind !== "a2ui" || turn.card.surfaceId !== req.surfaceId) {
     return fail(404, "surface_not_found")

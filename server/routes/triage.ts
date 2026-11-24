@@ -1,3 +1,6 @@
+import { createSurfaceTurn } from "../lib/a2ui"
+import { buildEmailConfirmSurface } from "../lib/a2ui-macros"
+import { BRAIN_THREAD } from "../lib/brain"
 import { MAX_KEY_LENGTH } from "../lib/idempotency"
 import { NOTE_MAX } from "../lib/repo-rework"
 import type { TriageEngine } from "../lib/triage-engine"
@@ -120,17 +123,52 @@ async function repoDecision(req: Request, repo: string, decision: "yes" | "no", 
   return Response.json(out.body, { status: out.status, headers: out.body.result === "replay" ? { "Idempotent-Replayed": "true" } : undefined })
 }
 
-async function propose(req: Request, store: OutboundStore, engine: TriageEngine): Promise<Response> {
+async function propose(
+  req: Request,
+  store: OutboundStore,
+  engine: TriageEngine,
+  emitSurface: typeof createSurfaceTurn = createSurfaceTurn,
+): Promise<Response> {
   const body = await jsonBody(req)
   if (!body) return bad("invalid JSON")
   const out = produceOutbound(store, body, Date.now())
-  if (out.status === 201) void engine.refresh()
+  if (out.status === 201) {
+    void engine.refresh()
+    const rec = store.get(String(out.body.id ?? ""))
+    if (rec) {
+      const built = buildEmailConfirmSurface({
+        surfaceId: `outbound-${rec.id}`,
+        outboundId: rec.id,
+        payloadHash: rec.payloadHash,
+        account: rec.account,
+        to: rec.to.join(", "),
+        cc: rec.cc,
+        subject: rec.subject,
+        body: rec.body,
+        inReplyTo: rec.inReplyTo,
+        gmailThreadId: rec.threadId,
+        why: rec.why,
+        dryRun: false,
+      })
+      if (built.ok) {
+        try {
+          emitSurface({ surfaceId: built.surfaceId, text: built.text, messages: built.messages, threadId: BRAIN_THREAD })
+        } catch { /* non-fatal */ }
+      }
+    }
+  }
   return Response.json(out.body, { status: out.status })
 }
 
-export function createTriageHandler(engine: () => TriageEngine = triageEngine, runner: () => RepoRunner = repoRunner, view: () => RepoView = repoView, outbound: () => OutboundStore = outboundStore) {
+export function createTriageHandler(
+  engine: () => TriageEngine = triageEngine,
+  runner: () => RepoRunner = repoRunner,
+  view: () => RepoView = repoView,
+  outbound: () => OutboundStore = outboundStore,
+  emitSurface: typeof createSurfaceTurn = createSurfaceTurn,
+) {
   return async (req: Request, url: URL): Promise<Response | null> => {
-    if (url.pathname === OUTBOUND) return req.method === "POST" ? propose(req, outbound(), engine()) : bad("method_not_allowed", 405)
+    if (url.pathname === OUTBOUND) return req.method === "POST" ? propose(req, outbound(), engine(), emitSurface) : bad("method_not_allowed", 405)
     if (url.pathname.startsWith(`${REPOS}/`) && req.method === "GET") {
       const repo = repoViewPath(url.pathname, false)
       if (!repo) return bad("no_such_repo", 404)

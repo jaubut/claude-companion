@@ -20,9 +20,9 @@ import {
 import {
   buildEmailConfirmSurface,
   buildPrGateSurface,
-  computeReviewState,
   hydratePrGateData,
 } from "./a2ui-macros"
+import { computeReviewState } from "./a2ui-pr-state"
 import { isBrainInternalEvent } from "./brain"
 import { classifyBrainEvent } from "./brain-event-triage"
 

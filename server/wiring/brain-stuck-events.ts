@@ -1,8 +1,18 @@
+import {
+  type A2UICreateSurfaceMessage,
+  type A2UIEngineDeps,
+  createSurfaceTurn,
+  getSurfaceDataModel,
+  updateSurfaceComponents,
+  updateSurfaceData,
+} from "../lib/a2ui"
+import { buildPrGateSurface, hydratePrGateData, prSurfaceId, stripAngleTags } from "../lib/a2ui-macros"
 import { BRAIN_THREAD } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import { companionLog } from "../lib/log"
-import { appendTurn } from "../lib/orchestrator-chat"
+import { appendTurn, findA2UITurn } from "../lib/orchestrator-chat"
 import { redactSecrets } from "../lib/secret-redact"
+import { type GhFn, realGh } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
 import { dispatchWiring } from "./dispatch"
 import { orchEmit } from "./orchestrator"
@@ -49,6 +59,7 @@ export interface StuckEventsDeps {
   cooldownMs?: number
   getSeen?: () => Record<string, number>
   setSeen?: (seen: Record<string, number>) => void
+  onStuckRow?: (m: Record<string, unknown>) => Promise<void> | void
 }
 
 function parse(raw: unknown): Record<string, unknown> | null {
@@ -139,7 +150,16 @@ export function createStuckEvents(deps: StuckEventsDeps) {
       for (const r of await read(cursor)) {
         const line = r.meta?.stuck_key ? stuckLine(r.meta) : null
         if (line) {
-          if (!isDuplicate(r.meta!, now)) deps.event(line)
+          if (!isDuplicate(r.meta!, now)) {
+            deps.event(line)
+            if (deps.onStuckRow) {
+              try {
+                await deps.onStuckRow(r.meta!)
+              } catch (err) {
+                deps.log(`[stuck-events] onStuckRow failed: ${(err as Error)?.message ?? err}`)
+              }
+            }
+          }
         } else if (r.meta?.stuck_key || !r.meta) {
           if (r.meta?.kind !== "loop-round-3") deps.log(`[stuck-events] row ${r.id} skipped`)
         }
@@ -175,6 +195,73 @@ function readSeenKv(): Record<string, number> {
   }
 }
 
+const PR_GATE_CARD_KINDS = new Set(["stuck-parked", "loop-budget", "loop-stop"])
+const PARSED_PR_URL_RE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/
+
+/** Auto-emit or update an A2UI PrGateCard for green stuck/parked PRs (skipping red or tainted PRs). */
+export async function emitStuckPrGateCard(
+  m: Record<string, unknown>,
+  opts: { gh?: GhFn; engine?: A2UIEngineDeps; log?: (line: string) => void } = {},
+): Promise<void> {
+  const log = opts.log ?? companionLog
+  try {
+    const kind = String(m.kind ?? "")
+    if (!PR_GATE_CARD_KINDS.has(kind)) return
+    const rawReason = String(m.reason ?? "")
+    if (/tainted \(/i.test(rawReason)) return
+    const urlMatch = PARSED_PR_URL_RE.exec(String(m.url ?? ""))
+    if (!urlMatch) return
+    const fullRepo = urlMatch[1]!
+    const prNum = Number(urlMatch[2]!)
+    if (!Number.isInteger(prNum) || prNum <= 0) return
+    const repo = fullRepo.split("/")[1] ?? ""
+    const sanitizedReason = stripAngleTags(
+      redactSecrets(rawReason)
+        .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+        .replace(/\s+/g, " ")
+        .replace(/"/g, "'")
+        .trim()
+        .slice(0, REASON_MAX),
+    )
+    const deployRepo = repo === "claude-companion" || repo === "claude-config" ? repo : null
+    const hydrated = await hydratePrGateData(
+      { repo: fullRepo, pr: prNum, deployRepo, reason: sanitizedReason },
+      opts.gh ?? realGh,
+    )
+    if (!hydrated.ok || hydrated.pr.state !== "open" || hydrated.pr.ciState !== "green") return
+
+    const surfaceId = prSurfaceId(fullRepo, prNum)
+    const find = opts.engine?.findTurn ?? findA2UITurn
+    const existing = find(surfaceId)
+    if (existing?.card?.kind === "a2ui") {
+      const model = getSurfaceDataModel(existing.card)
+      const existingPr = (model.pr && typeof model.pr === "object" ? model.pr : null) as Record<string, unknown> | null
+      const existingState = existingPr?.state
+      if (existingPr?.repo === fullRepo && existingPr?.number === prNum && (!existingState || existingState === "open")) {
+        const createMsg = existing.card.messages?.find((msg): msg is A2UICreateSurfaceMessage => "createSurface" in msg)
+        const hasReasonComp = Boolean(createMsg?.createSurface.components.some((c) => c.id === "reason_text"))
+        if (!hasReasonComp && hydrated.pr.reason) {
+          updateSurfaceComponents(
+            surfaceId,
+            [
+              { id: "col", component: "Column", children: ["header_row", "meta_row", "url_text", "reason_text", "divider", "actions_row"] },
+              { id: "reason_text", component: "Text", text: { "@path": "/pr/reason" }, variant: "body" },
+            ],
+            opts.engine,
+          )
+        }
+        const updated = updateSurfaceData(surfaceId, "/pr", hydrated.pr, opts.engine)
+        if (updated.ok) return
+      }
+    }
+    const built = buildPrGateSurface(hydrated.pr, surfaceId)
+    if (!built.ok) return
+    createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, opts.engine)
+  } catch (err) {
+    log(`[stuck-events] pr gate card failed: ${(err as Error)?.message ?? err}`)
+  }
+}
+
 const stuckEvents = createStuckEvents({
   exec: (sql, args) => dispatchWiring.exec(sql, args),
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
@@ -183,6 +270,7 @@ const stuckEvents = createStuckEvents({
   getSeen: readSeenKv,
   setSeen: (seen) => setKv(SEEN_KEY, JSON.stringify(seen)),
   log: companionLog,
+  onStuckRow: (m) => emitStuckPrGateCard(m, { log: companionLog }),
 })
 
 export const startStuckEvents = (): void => stuckEvents.start()

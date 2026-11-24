@@ -86,13 +86,17 @@ export function fitQueued<T extends DeliveryTurn>(queued: string[], found: T[]):
   return { turns, ids: queued.filter((id) => !held.has(id)) }
 }
 
+export const BRAIN_A2UI_RULES =
+  "A2UI v1.0 card rules: (1) Non-dictated outbound emails MUST be proposed with `./bin/ui email --to <addr> [--cc <csv>] [--account personal|hello] --subject \"<subj>\" --body \"<body>\" --why \"<why>\"` (tapping Send Email on the card sends directly via gmail.py with the toggled Cc list; use --dry-run only for demos). " +
+  "(2) Green PRs needing Jeremie's merge approval (prod-schema, human-merge-path, pr:needs-human, or review-quota holds) MUST be accompanied by `./bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] --reason \"<why>\"` so Jeremie gets a 1-tap Merge/Refresh card in the feed."
+
 /** First prompt of a fresh brain: memory first, then every turn still open. */
 export function bootSeed(input: { memoryRef: string | null; open: DeliveryTurn[] }): string {
   const memory = input.memoryRef ? `Read your memory note ${input.memoryRef} first.` : `No memory note yet: create one (note_create, resources/, tag ${MEMORY_TAG}).`
   const open = input.open.length
     ? `Open turns (answer each, cite its id):\n${deliveryText(input.open)}`
     : "No open turns."
-  return `[boot] You were (re)started by the Companion supervisor. ${memory}\n${open}`
+  return `[boot] You were (re)started by the Companion supervisor. ${memory}\n${BRAIN_A2UI_RULES}\n${open}`
 }
 
 // ── Supervisor ──

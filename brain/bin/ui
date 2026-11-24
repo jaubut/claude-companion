@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # brain-v2: render or patch an A2UI 1.0 surface in the Brain thread (POST /hooks/brain/ui).
 #
-#   bin/ui email --to <addr> [--cc <csv>] --subject "<subj>" --body "<body>" [--draft-id <id>] [--gmail-thread <id>] [--surface <id>]
-#   bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] [--surface <id>]
+#   bin/ui email --to <addr> [--cc <csv>] [--account personal|hello] [--in-reply-to <msgId>] [--why "<why>"] [--dry-run] --subject "<subj>" --body "<body>" [--draft-id <id>] [--gmail-thread <id>] [--surface <id>]
+#   bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] [--reason "<why>"] [--surface <id>]
 #   bin/ui patch --surface <id> --path <json-pointer> --value <json>
 #   bin/ui custom --json <a2ui-v1-json> [--text "<summary>"]
 #
@@ -15,7 +15,8 @@ SUB="${1:-}"
 shift
 
 TO="" CC="" SUBJECT="" EMAIL_BODY="" DRAFT_ID="" GMAIL_THREAD=""
-REPO="" PR="" DEPLOY_REPO=""
+ACCOUNT="" IN_REPLY_TO="" WHY="" DRY_RUN=""
+REPO="" PR="" DEPLOY_REPO="" REASON=""
 SURFACE="" JSON_PATH="" VALUE="" CUSTOM_JSON="" TEXT_SUMMARY=""
 
 while [ $# -gt 0 ]; do
@@ -24,11 +25,16 @@ while [ $# -gt 0 ]; do
     --cc) CC="${2:-}"; shift 2 ;;
     --subject) SUBJECT="${2:-}"; shift 2 ;;
     --body) EMAIL_BODY="${2:-}"; shift 2 ;;
+    --account) ACCOUNT="${2:-}"; shift 2 ;;
+    --in-reply-to) IN_REPLY_TO="${2:-}"; shift 2 ;;
+    --why) WHY="${2:-}"; shift 2 ;;
+    --dry-run) DRY_RUN="1"; shift ;;
     --draft-id) DRAFT_ID="${2:-}"; shift 2 ;;
     --gmail-thread) GMAIL_THREAD="${2:-}"; shift 2 ;;
     --repo) REPO="${2:-}"; shift 2 ;;
     --pr) PR="${2:-}"; shift 2 ;;
     --deploy-repo) DEPLOY_REPO="${2:-}"; shift 2 ;;
+    --reason) REASON="${2:-}"; shift 2 ;;
     --surface) SURFACE="${2:-}"; shift 2 ;;
     --path) JSON_PATH="${2:-}"; shift 2 ;;
     --value) VALUE="${2:-}"; shift 2 ;;
@@ -82,7 +88,7 @@ claude_pid() {
   echo "${PPID}"
 }
 
-BODY=$(SUB="$SUB" TO="$TO" CC="$CC" SUBJECT="$SUBJECT" EMAIL_BODY="$EMAIL_BODY" DRAFT_ID="$DRAFT_ID" GMAIL_THREAD="$GMAIL_THREAD" REPO="$REPO" PR="$PR" DEPLOY_REPO="$DEPLOY_REPO" SURFACE="$SURFACE" JSON_PATH="$JSON_PATH" VALUE="$VALUE" CUSTOM_JSON="$CUSTOM_JSON" TEXT_SUMMARY="$TEXT_SUMMARY" python3 -c '
+BODY=$(SUB="$SUB" TO="$TO" CC="$CC" SUBJECT="$SUBJECT" EMAIL_BODY="$EMAIL_BODY" ACCOUNT="$ACCOUNT" IN_REPLY_TO="$IN_REPLY_TO" WHY="$WHY" DRY_RUN="$DRY_RUN" DRAFT_ID="$DRAFT_ID" GMAIL_THREAD="$GMAIL_THREAD" REPO="$REPO" PR="$PR" DEPLOY_REPO="$DEPLOY_REPO" REASON="$REASON" SURFACE="$SURFACE" JSON_PATH="$JSON_PATH" VALUE="$VALUE" CUSTOM_JSON="$CUSTOM_JSON" TEXT_SUMMARY="$TEXT_SUMMARY" python3 -c '
 import json, os, sys
 
 sub = os.environ["SUB"]
@@ -94,6 +100,14 @@ if sub == "email":
     payload["body"] = os.environ["EMAIL_BODY"]
     if os.environ["CC"]:
         payload["cc"] = [c.strip() for c in os.environ["CC"].split(",") if c.strip()]
+    if os.environ.get("ACCOUNT"):
+        payload["account"] = os.environ["ACCOUNT"]
+    if os.environ.get("IN_REPLY_TO"):
+        payload["inReplyTo"] = os.environ["IN_REPLY_TO"]
+    if os.environ.get("WHY"):
+        payload["why"] = os.environ["WHY"]
+    if os.environ.get("DRY_RUN") == "1":
+        payload["dryRun"] = True
     if os.environ["DRAFT_ID"]:
         payload["draftId"] = os.environ["DRAFT_ID"]
     if os.environ["GMAIL_THREAD"]:
@@ -109,6 +123,8 @@ elif sub == "pr":
         sys.exit(2)
     if os.environ["DEPLOY_REPO"]:
         payload["deployRepo"] = os.environ["DEPLOY_REPO"]
+    if os.environ.get("REASON"):
+        payload["reason"] = os.environ["REASON"]
     if os.environ["SURFACE"]:
         payload["surfaceId"] = os.environ["SURFACE"]
 elif sub == "patch":

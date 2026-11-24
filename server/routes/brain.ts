@@ -6,6 +6,7 @@ import { latestRows, rowsSince } from "../lib/brain-trace"
 import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
+import type { OutboundSender, OutboundStore } from "../lib/outbound"
 import { type Session, listSessions } from "../lib/sessions"
 import type { GhFn } from "../lib/triage-pr"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
@@ -85,6 +86,10 @@ export interface BrainRouteDeps {
   deliverSession?: ((text: string, key: string) => Promise<Response>) | null
   /** GitHub CLI runner for `bin/ui pr` and `pr.refresh` (default: realGh). */
   gh?: GhFn
+  /** Outbound store seam for `bin/ui email` and `email.confirm`/`email.cancel` (default: outboundStore; null = dryRun). */
+  outbound?: OutboundStore | (() => OutboundStore) | null
+  /** Email sender seam for `email.confirm` (default: gmailSender). */
+  emailSender?: OutboundSender
   /** Persistence + broadcast seam for A2UI surface tests. */
   a2uiEngine?: A2UIEngineDeps
 }
@@ -340,6 +345,8 @@ async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
     gh: deps.gh,
     prMerge: deps.prMerge,
     deploy: deps.deploy,
+    outbound: deps.outbound,
+    emailSender: deps.emailSender,
     onUserTurn: (t) => deps.wiring.enqueue(t),
     engine: deps.a2uiEngine,
   })
@@ -354,6 +361,8 @@ async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response>
     gh: deps.gh,
     prMerge: deps.prMerge,
     deploy: deps.deploy,
+    outbound: deps.outbound,
+    emailSender: deps.emailSender,
     onUserTurn: (t) => deps.wiring.enqueue(t),
     engine: deps.a2uiEngine,
     signal: req.signal,
