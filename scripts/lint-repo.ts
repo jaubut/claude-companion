@@ -2,6 +2,8 @@
 // pre-commit hook judges what is being committed, not the working tree.
 
 const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+// Runtime-granted brain tools (injected without touching human-merge path brain/.claude/settings.json).
+const RUNTIME_BRAIN_ALLOW = new Set(["Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
 
 // lsFiles: `git ls-files -s -z`. settingsJson: the indexed brain/.claude/settings.json.
 export function repoIssues(lsFiles: string, settingsJson: string): string[] {
@@ -21,7 +23,9 @@ export function repoIssues(lsFiles: string, settingsJson: string): string[] {
     const tool = path.match(/^brain\/bin\/([^/]+)$/)?.[1]
     if (!tool) continue
     for (const rule of [`Bash(bin/${tool}:*)`, `Bash(./bin/${tool}:*)`]) {
-      if (!allow.includes(rule)) issues.push(`${path}: ${rule} missing from brain/.claude/settings.json`)
+      if (!allow.includes(rule) && !RUNTIME_BRAIN_ALLOW.has(rule)) {
+        issues.push(`${path}: ${rule} missing from brain/.claude/settings.json`)
+      }
     }
   }
   return issues

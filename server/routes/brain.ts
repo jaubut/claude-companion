@@ -1,3 +1,5 @@
+import type { A2UIEngineDeps } from "../lib/a2ui"
+import { executeA2UIMacro, handleA2UIAction } from "../lib/a2ui-macros"
 import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
 import { latestRows, rowsSince } from "../lib/brain-trace"
@@ -5,6 +7,7 @@ import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
 import { type Session, listSessions } from "../lib/sessions"
+import type { GhFn } from "../lib/triage-pr"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
 import { REPO_NAME_RE } from "../lib/worker-invocation"
 import { type BrainWiring, brainWiring, getBrainDeliver } from "../wiring/brain"
@@ -80,6 +83,10 @@ export interface BrainRouteDeps {
   media?: typeof analyseLink
   /** Session message injector for `bin/sessions send` (default: wiring/brain.ts getBrainDeliver). */
   deliverSession?: ((text: string, key: string) => Promise<Response>) | null
+  /** GitHub CLI runner for `bin/ui pr` and `pr.refresh` (default: realGh). */
+  gh?: GhFn
+  /** Persistence + broadcast seam for A2UI surface tests. */
+  a2uiEngine?: A2UIEngineDeps
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -323,6 +330,39 @@ async function media(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/ui: server-side A2UI v1.0 macro expansion (`email`, `pr`, `patch`, `custom`). */
+async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const out = await executeA2UIMacro(body, {
+    gh: deps.gh,
+    prMerge: deps.prMerge,
+    deploy: deps.deploy,
+    onUserTurn: (t) => deps.wiring.enqueue(t),
+    engine: deps.a2uiEngine,
+  })
+  return Response.json(out.body, { status: out.status })
+}
+
+/** POST /api/brain/a2ui/action: deterministic bidirectional A2UI action router with actionKey idempotency. */
+async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const out = await handleA2UIAction(body, {
+    gh: deps.gh,
+    prMerge: deps.prMerge,
+    deploy: deps.deploy,
+    onUserTurn: (t) => deps.wiring.enqueue(t),
+    engine: deps.a2uiEngine,
+  })
+  return Response.json(out.body, {
+    status: out.status,
+    headers: out.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
+  })
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -386,6 +426,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return media(req, deps)
     }
+    if (p === "/hooks/brain/ui") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return ui(req, deps)
+    }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()
     if (!deps.enabled()) return fail(404, "brain_disabled")
@@ -400,6 +445,7 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       return Response.json({ ok: true, mode: s.mode, sessions: s.sessions, foreign: s.foreign })
     }
     if (req.method !== "POST") return fail(405, "method_not_allowed")
+    if (p === "/api/brain/a2ui/action") return a2uiAction(req, deps)
     if (p === "/api/brain/pause") return Response.json({ ok: true, brain: deps.wiring.pause() })
     if (p === "/api/brain/resume") return Response.json({ ok: true, brain: deps.wiring.resume() })
     if (p === "/api/brain/restart") {

@@ -212,7 +212,7 @@ export function isBrainInternalEvent(turn: {
   card?: { kind: string } | null
 }): boolean {
   if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator") return false
-  if (turn.card?.kind === "worker_blocked") return false
+  if (turn.card?.kind === "worker_blocked" || turn.card?.kind === "a2ui") return false
   if (turn.card?.kind === "dispatch") return true
   const text = turn.text.trim()
   if (turn.taskId && INTERNAL_WORKER_RECEIPT_RE.test(text)) return true
@@ -284,6 +284,7 @@ export function brainToolStep(tool: string, input: Record<string, unknown>): Bra
     if (cmd.startsWith("bin/propose")) return step("dispatching", "Dispatching", "Dispatched")
     if (cmd.startsWith("bin/lead")) return step("dispatching", "Filing a lead", "Filed a lead")
     if (cmd.startsWith("bin/thread")) return step("searching", "Searching the thread", "Searched the thread")
+    if (cmd.startsWith("bin/ui")) return step("writing", "Rendering a card", "Rendered a card")
     return step("working", "Running a command", "Ran a command")
   }
   if (tool === "mcp__turso__note_create" || tool === "mcp__turso__note_update") return step("writing", "Writing a note", "Wrote a note", d)

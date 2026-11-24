@@ -1,0 +1,16 @@
+{
+  "type": "a2ui",
+  "threadId": "brain",
+  "turnId": "7a1e4c9b-0000-4000-8000-000000000001",
+  "surfaceId": "email-confirm-01",
+  "messages": [
+    {
+      "version": "1.0",
+      "updateDataModel": {
+        "surfaceId": "email-confirm-01",
+        "path": "/email/state",
+        "value": "confirmed"
+      }
+    }
+  ]
+}

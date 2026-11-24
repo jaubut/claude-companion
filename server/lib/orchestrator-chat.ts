@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { A2UIMessage } from "./a2ui"
 import { GENERAL_CHANNEL, db } from "./orchestrator-db"
 
 // Single-thread orchestrator (PRJ-OR1T Phase 1). One always-open chat thread per
@@ -31,9 +32,9 @@ export interface Turn {
   card?: TurnCard
 }
 
-/** A brain-thread card: a dispatch receipt, a voice turn from the app, or a blocked worker's dialog. */
+/** A brain-thread card: a dispatch receipt, a voice turn from the app, a blocked worker's dialog, or an A2UI surface. */
 export interface TurnCard {
-  kind: "dispatch" | "voice" | "worker_blocked"
+  kind: "dispatch" | "voice" | "worker_blocked" | "a2ui"
   source: "app"
   taskId?: string
   audioId?: string
@@ -52,6 +53,10 @@ export interface TurnCard {
   /** Replay keys (runner's create, phone's answer): on the card so a restart keeps them. */
   postKey?: string
   answerKey?: string
+  /** a2ui only (lib/a2ui.ts). */
+  surfaceId?: string
+  messages?: A2UIMessage[]
+  actionKeys?: Record<string, Record<string, unknown>>
 }
 
 export interface Task {
@@ -180,6 +185,14 @@ export function findWorkerAlert(postKey: string): Turn | null {
 
 export function openWorkerAlertIds(): string[] {
   return (db.query("SELECT id FROM orchestrator_turns WHERE json_extract(card, '$.kind') = 'worker_blocked' AND json_extract(card, '$.state') = 'open'").all() as { id: string }[]).map((r) => r.id)
+}
+
+/** Find the latest A2UI surface turn by `surfaceId`. */
+export function findA2UITurn(surfaceId: string): Turn | null {
+  const row = db
+    .query("SELECT * FROM orchestrator_turns WHERE json_extract(card, '$.kind') = 'a2ui' AND json_extract(card, '$.surfaceId') = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
+    .get(surfaceId) as TurnRow | null
+  return row ? toTurn(row) : null
 }
 
 // The most recent `limit` turns, oldest-first.

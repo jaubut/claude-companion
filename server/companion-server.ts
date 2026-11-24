@@ -132,7 +132,7 @@ export function createCompanionServer(port: number) {
       // await_task on the Inverted MCP worker plane can long-poll up to 120 s.
       if (url.pathname === "/api/mcp/workers" || url.pathname === "/hooks/brain/workers-mcp") server.timeout(req, 150)
       // A merge: the gate's 20 s, then readiness, `gh pr merge` and its read-back at 60 s each (GH_TIMEOUT_MS).
-      if (url.pathname === "/hooks/brain/pr-merge" || /^\/api\/orchestrator\/triage\/[^/]+\/choose$/.test(url.pathname)) server.timeout(req, 200)
+      if (url.pathname === "/hooks/brain/pr-merge" || url.pathname === "/hooks/brain/ui" || url.pathname === "/api/brain/a2ui/action" || /^\/api\/orchestrator\/triage\/[^/]+\/choose$/.test(url.pathname)) server.timeout(req, 200)
       // ask-secret long-polls GET /api/vault/requests/<id>?wait=25.
       if (req.method === "GET" && /^\/api\/vault\/requests\/[^/]+$/.test(url.pathname)) server.timeout(req, 40)
       // bin/media downloads and decodes a video: up to ~120 s (lib/link-media.ts).

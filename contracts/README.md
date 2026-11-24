@@ -102,3 +102,17 @@ The brain thread's `headless:*` card carries the same object as `ref.progress`
 Not part of `contracts:sync`; the iOS decoder mirrors it by hand. `api.json` is a
 `GET /api/subscriptions` answer; the full contract is `docs/subscriptions-api.md`.
 `server/lib/subscriptions.test.ts` checks the live shape carries exactly these keys.
+
+## `a2ui/` & `brain/orchestrator.card.a2ui.json` — A2UI 1.0 surfaces (`server/lib/a2ui.ts`)
+
+Not part of `contracts:sync`; shared wire truth across the TypeScript server, iOS SwiftUI
+and web renderers. `server/lib/a2ui.test.ts` checks exact keys and strict BasicCatalog validation.
+
+- `brain/orchestrator.card.a2ui.json` — `orchestrator` WS frame / thread turn carrying
+  `card.kind = "a2ui"`, `surfaceId` and canonical A2UI v1.0 `messages` (`createSurface` /
+  `updateDataModel` / `updateComponents`), alongside a plain-text `turn.text` summary.
+- `a2ui/frame.patch.json` — live `type: "a2ui"` WS patch frame (`threadId`, `turnId`,
+  `surfaceId`, `messages`) broadcast when `updateSurfaceData` / `updateSurfaceComponents`
+  folds a JSON-pointer update into the persisted SQLite `TurnCard`.
+- `a2ui/action.request.json` — `POST /api/brain/a2ui/action` payload (`surfaceId`, `turnId`,
+  `action: {name, context}`, `actionKey`).

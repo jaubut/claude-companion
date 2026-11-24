@@ -56,7 +56,7 @@ const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|m
 const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
-interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal }
+interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal; humanApproved?: boolean }
 interface PrMergeDeps {
   gh: GhFn
   exec: ExecFn
@@ -221,7 +221,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  const humanApproved = deps.humanApproved?.(p.pr, p.repo) === true
+  const humanApproved = p.humanApproved === true || deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
   try {
     park = await parked(deps.exec, v, humanApproved)
