@@ -620,3 +620,83 @@ describe("repo on every item (needs-you-by-repo, 2026-10-15)", () => {
     expect(again("pr:jaubut/claude-companion-ios#12")).toBe("claude-companion-ios")
   })
 })
+
+describe("POST /api/orchestrator/outbound -> A2UI EmailConfirmCard emission", () => {
+  test("emits an EmailConfirmCard into BRAIN_THREAD on 201 and skips emission on 400/422", async () => {
+    const { createOutboundStore } = await import("../lib/outbound")
+    const { getSurfaceDataModel } = await import("../lib/a2ui")
+    const outStore = createOutboundStore(new Database(":memory:"))
+    const emittedCards: Array<{ surfaceId: string; text: string; messages: unknown[]; threadId?: string }> = []
+
+    const handler = triageRoute.createTriageHandler(
+      () => harness.engine,
+      undefined,
+      undefined,
+      () => outStore,
+      (input) => {
+        emittedCards.push(input)
+        return chat.appendTurn("orchestrator", input.text, null, input.threadId ?? "brain", {
+          kind: "a2ui",
+          source: "app",
+          surfaceId: input.surfaceId,
+          messages: input.messages as never,
+        })
+      },
+    )
+
+    // 400 invalid proposal does not emit a card
+    const badReq = new Request("http://localhost/api/orchestrator/outbound", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "email", account: "personal", to: ["invalid"], subject: "S", body: "B", why: "W", requestedBy: "brain" }),
+    })
+    const badRes = await handler(badReq, new URL(badReq.url))
+    expect(badRes!.status).toBe(400)
+    expect(emittedCards).toHaveLength(0)
+
+    // 201 valid proposal persists OutboundRecord AND emits A2UI EmailConfirmCard
+    const okReq = new Request("http://localhost/api/orchestrator/outbound", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "email",
+        account: "hello",
+        to: ["client@example.com"],
+        cc: ["ops@example.com"],
+        subject: "Devis #42",
+        body: "Bonjour,\n\nVoici le devis.",
+        inReplyTo: "<msg-42@example.com>",
+        threadId: "th-42",
+        why: "Send quote #42",
+        requestedBy: "agent:sales",
+      }),
+    })
+    const okRes = await handler(okReq, new URL(okReq.url))
+    expect(okRes!.status).toBe(201)
+    const body = (await okRes!.json()) as { ok: boolean; id: string; payloadHash: string }
+    expect(body.ok).toBe(true)
+    expect(emittedCards).toHaveLength(1)
+    expect(emittedCards[0]!.surfaceId).toBe(`outbound-${body.id}`)
+    expect(emittedCards[0]!.threadId).toBe("brain")
+
+    const persistedTurn = chat.findA2UITurn(`outbound-${body.id}`)!
+    expect(persistedTurn).not.toBeNull()
+    const model = getSurfaceDataModel(persistedTurn.card!)
+    expect(model.email).toMatchObject({
+      outboundId: body.id,
+      payloadHash: body.payloadHash,
+      account: "hello",
+      to: "client@example.com",
+      toList: ["client@example.com"],
+      cc: ["ops@example.com"],
+      enabledCc: ["ops@example.com"],
+      subject: "Devis #42",
+      body: "Bonjour,\n\nVoici le devis.",
+      inReplyTo: "<msg-42@example.com>",
+      gmailThreadId: "th-42",
+      why: "Send quote #42",
+      dryRun: false,
+      state: "pending",
+    })
+  })
+})

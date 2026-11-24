@@ -46,7 +46,7 @@ interface GateTools {
 }
 
 export interface GateDeps { gh: GhFn; exec: ExecFn }
-export interface GatePr { url: string }
+export interface GatePr { url: string; approved?: boolean }
 export interface GatePass { ok: true; head: string; base: string }
 export type GateResult = GatePass | { ok: false; status: number; error: string; extra: Record<string, unknown> }
 export type MergeGateFn = (deps: GateDeps, pr: GatePr) => Promise<GateResult>
@@ -77,6 +77,8 @@ function selfCheck(t: GateTools): boolean {
     const tainted = t.gateVerdict({ ...none, paths: [auth], approved: true, taint: { origin: "web", sensitive: [auth], stamped: false } })
     return human("memory/x.md") && human("skills/x.md") && t.gateVerdict({ ...none, paths: ["server/lib/a.ts"] }) === null
       && stops("hold-label", { holdLabels: ["wip"] }) && stops("prod-schema", { paths: ["db/migrations/1.sql"] })
+      && t.gateVerdict({ ...none, paths: ["db/migrations/1.sql"], approved: true }) === null
+      && stops("hold-label", { holdLabels: ["wip"], approved: true })
       && tainted?.stop === "tainted-sensitive" && /human merge/i.test(tainted.reason)
       && t.policy("unknown", "merge-sensitive") === "DENY" && t.leastTrusted([]) === "unknown" && t.isTainted("unknown")
       && t.taintedSensitive([], null, t.SENSITIVE_RE).truncated && ["memory/x.md", "src/auth.ts", "src/token.ts"].every((p) => t.SENSITIVE_RE.test(p))
@@ -132,7 +134,7 @@ async function check(deps: GateDeps, pr: GatePr, dir: string): Promise<GateResul
   if (again.base !== head.base) return { ok: false, status: 409, error: "base_moved", extra: {} }
 
   const holdLabels = again.labels.filter((l) => HOLD_LABEL.test(l))
-  const stop = tools.gateVerdict(tools.liveGateInput({ paths, holdLabels, approved: false, taint }, paths, holdLabels, tools.SENSITIVE_RE))
+  const stop = tools.gateVerdict(tools.liveGateInput({ paths, holdLabels, approved: pr.approved === true, taint }, paths, holdLabels, tools.SENSITIVE_RE))
   if (stop) return { ok: false, status: 403, error: stop.stop, extra: { action: stop.action, reason: stop.reason.slice(0, REASON_MAX), head: head.sha } }
   return { ok: true, head: head.sha, base: head.base }
 }

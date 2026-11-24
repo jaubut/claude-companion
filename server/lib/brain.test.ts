@@ -63,6 +63,8 @@ test("deliveryText / bootSeed / rolloverDue", () => {
   const turns = [{ id: "t1", text: "dispatch  the\nfix", createdAt: 1, card: { kind: "voice" } }, { id: "t2", text: "and?", createdAt: 2 }]
   expect(deliveryText(turns)).toBe("[turn t1] (voice) dispatch the fix\n[turn t2] and?")
   expect(bootSeed({ memoryRef: "RES-AAAA", open: turns })).toContain("Read your memory note RES-AAAA first.")
+  expect(bootSeed({ memoryRef: "RES-AAAA", open: turns })).toContain("./bin/ui email --to <addr>")
+  expect(bootSeed({ memoryRef: "RES-AAAA", open: turns })).toContain("./bin/ui pr --repo <owner/name> --pr <n>")
   expect(bootSeed({ memoryRef: null, open: [] })).toContain("No open turns.")
   const four = new Date(2026, 9, 28, 4, 5)
   expect(rolloverDue(four, null)).toBe(true)

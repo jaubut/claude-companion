@@ -2,8 +2,11 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
+import { Database } from "bun:sqlite"
+import { type A2UICreateSurfaceMessage, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
 import { getAuthToken } from "../lib/auth"
+import { classifyBrainEvent } from "../lib/brain-event-triage"
+import { type OutboundPayload, type OutboundSender, type OutboundStore, createOutboundStore } from "../lib/outbound"
 import type { Session } from "../lib/sessions"
 import type { GhFn } from "../lib/triage-pr"
 import { recordPeer } from "../lib/vault-guard"
@@ -61,6 +64,8 @@ function makeHarness(overrides: {
   gh?: GhFn
   prMerge?: BrainRouteDeps["prMerge"]
   deploy?: BrainRouteDeps["deploy"]
+  outbound?: OutboundStore | (() => OutboundStore) | null
+  emailSender?: OutboundSender
   enabled?: () => boolean
 } = {}) {
   const broadcasts: Record<string, unknown>[] = []
@@ -81,6 +86,8 @@ function makeHarness(overrides: {
     gh: overrides.gh,
     prMerge: overrides.prMerge,
     deploy: overrides.deploy,
+    outbound: "outbound" in overrides ? overrides.outbound : null,
+    emailSender: overrides.emailSender,
     a2uiEngine: {
       broadcast: (f) => broadcasts.push(f),
       emitTurn: (t) => emittedTurns.push(t),
@@ -644,5 +651,311 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(confirmAfterCancel.status).toBe(409)
     expect(confirmAfterCancel.json.error).toBe("already_decided")
+  })
+
+  test("real outboundStore + gmailSender: Cc subset updateCc, send error release + retry, sent receipt ($0 wake), idempotency/409, email.cancel -> reject, and dryRun:true fallback", async () => {
+    const store = createOutboundStore(new Database(":memory:"))
+    const sentPayloads: OutboundPayload[] = []
+    let shouldFailSend = true
+
+    const emailSender: OutboundSender = async (p) => {
+      if (shouldFailSend) throw new Error("gmail.py exited 1: OAuth refresh failed")
+      sentPayloads.push(p)
+      return { messageId: "18f00aabbccdd123" }
+    }
+
+    const { call, emittedTurns, enqueuedTurns } = makeHarness({
+      outbound: store,
+      emailSender,
+    })
+
+    // 1. Propose real outbound email via /hooks/brain/ui (comma-separated --to, --account hello, --in-reply-to, --why)
+    const created = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        to: "client1@example.com, client2@example.com",
+        cc: ["ops@example.com", "accounting@example.com", "archive@example.com"],
+        account: "hello",
+        inReplyTo: "<orig-99@mail.example.com>",
+        gmailThreadId: "th-hello-99",
+        why: "Send revised Q4 statement",
+        subject: "Q4 Statement",
+        body: "Bonjour,\n\nVoici l'état de compte révisé.",
+      },
+      { headers: AUTH },
+    )
+    expect(created.status).toBe(200)
+    const outboundId = String(created.json.outboundId)
+    expect(outboundId).toHaveLength(32)
+    const surfaceId = String(created.json.surfaceId)
+    expect(surfaceId).toBe(`outbound-${outboundId}`)
+    const turnId = String(created.json.turnId)
+
+    const initialRec = store.get(outboundId)!
+    expect(initialRec).not.toBeNull()
+    expect(initialRec.status).toBe("proposed")
+    expect(initialRec.account).toBe("hello")
+    expect(initialRec.to).toEqual(["client1@example.com", "client2@example.com"])
+    expect(initialRec.cc).toEqual(["ops@example.com", "accounting@example.com", "archive@example.com"])
+    expect(initialRec.inReplyTo).toBe("<orig-99@mail.example.com>")
+    expect(initialRec.why).toBe("Send revised Q4 statement")
+
+    // 2. First confirm tap with subset Cc fails in gmailSender -> releases back to 'proposed', patches state='pending' & error, does NOT cache actionKey
+    const failedConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: {
+          name: "email.confirm",
+          context: {
+            enabledCc: ["ops@example.com", "intruder@evil.example"],
+          },
+        },
+        actionKey: "send-attempt-1",
+      },
+      { headers: bearer },
+    )
+    expect(failedConfirm.status).toBe(502)
+    expect(failedConfirm.json).toEqual({
+      ok: false,
+      error: "send_failed",
+      detail: "gmail.py exited 1: OAuth refresh failed",
+    })
+
+    const releasedRec = store.get(outboundId)!
+    expect(releasedRec.status).toBe("proposed")
+    expect(releasedRec.cc).toEqual(["ops@example.com"])
+    expect(releasedRec.payloadHash).not.toBe(initialRec.payloadHash)
+    expect(releasedRec.lastError).toContain("OAuth refresh failed")
+
+    const afterFailTurn = chat.getTurn(turnId)!
+    const afterFailModel = getSurfaceDataModel(afterFailTurn.card!)
+    expect(getJsonPointer(afterFailModel, "/email/state")).toBe("pending")
+    expect(getJsonPointer(afterFailModel, "/email/error")).toContain("OAuth refresh failed")
+    expect(getJsonPointer(afterFailModel, "/email/payloadHash")).toBe(releasedRec.payloadHash)
+
+    // 3. Retry with the SAME actionKey succeeds now that sender is healthy
+    shouldFailSend = false
+    const retryConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: {
+          name: "email.confirm",
+          context: {
+            enabledCc: ["ops@example.com"],
+          },
+        },
+        actionKey: "send-attempt-1",
+      },
+      { headers: bearer },
+    )
+    expect(retryConfirm.status).toBe(200)
+    expect(retryConfirm.json).toEqual({
+      ok: true,
+      surfaceId,
+      turnId,
+      action: "email.confirm",
+      state: "sent",
+      outboundId,
+      messageId: "18f00aabbccdd123",
+      to: "client1@example.com, client2@example.com",
+      enabledCc: ["ops@example.com"],
+      subject: "Q4 Statement",
+      replay: false,
+    })
+    expect(sentPayloads).toEqual([
+      {
+        account: "hello",
+        to: ["client1@example.com", "client2@example.com"],
+        cc: ["ops@example.com"],
+        subject: "Q4 Statement",
+        body: "Bonjour,\n\nVoici l'état de compte révisé.",
+        inReplyTo: "<orig-99@mail.example.com>",
+      },
+    ])
+    expect(store.get(outboundId)!.status).toBe("sent")
+    expect(store.get(outboundId)!.messageId).toBe("18f00aabbccdd123")
+    expect(enqueuedTurns).toHaveLength(0)
+
+    const receiptTurn = emittedTurns.at(-1) as { role: string; text: string; threadId: string }
+    expect(receiptTurn.role).toBe("orchestrator")
+    expect(receiptTurn.text).toBe(
+      `Sent email [${surfaceId}] -> client1@example.com, client2@example.com (Cc: ops@example.com): "Q4 Statement"`,
+    )
+    expect(classifyBrainEvent(receiptTurn)).toBe("silent")
+
+    // 4. Replaying same actionKey returns cached 200 with replay: true; new actionKey returns 409 already_decided
+    const replayConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "email.confirm" },
+        actionKey: "send-attempt-1",
+      },
+      { headers: bearer },
+    )
+    expect(replayConfirm.status).toBe(200)
+    expect(replayConfirm.json.replay).toBe(true)
+    expect(sentPayloads).toHaveLength(1)
+
+    const secondTap = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "email.confirm" },
+        actionKey: "send-attempt-2",
+      },
+      { headers: bearer },
+    )
+    expect(secondTap.status).toBe(409)
+    expect(secondTap.json.error).toBe("already_decided")
+    expect(sentPayloads).toHaveLength(1)
+
+    // 5. email.cancel on a proposed outbound email marks the OutboundRecord as 'rejected'
+    const toCancel = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        to: "cancel-me@example.com",
+        subject: "Draft to reject",
+        body: "Never mind.",
+      },
+      { headers: AUTH },
+    )
+    expect(toCancel.status).toBe(200)
+    const cancelOutboundId = String(toCancel.json.outboundId)
+    expect(store.get(cancelOutboundId)!.status).toBe("proposed")
+
+    const cancelRes = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: String(toCancel.json.surfaceId),
+        turnId: String(toCancel.json.turnId),
+        action: { name: "email.cancel" },
+        actionKey: "cancel-real-1",
+      },
+      { headers: bearer },
+    )
+    expect(cancelRes.status).toBe(200)
+    expect(cancelRes.json.state).toBe("cancelled")
+    expect(store.get(cancelOutboundId)!.status).toBe("rejected")
+
+    // 6. dryRun: true skips outboundStore and falls back to #370 confirmed behavior
+    const dryCard = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        to: "demo@example.com",
+        subject: "Sandbox Demo",
+        body: "Testing dry-run mode.",
+        dryRun: true,
+      },
+      { headers: AUTH },
+    )
+    expect(dryCard.status).toBe(200)
+    expect(dryCard.json.outboundId).toBeUndefined()
+    const dryConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: String(dryCard.json.surfaceId),
+        turnId: String(dryCard.json.turnId),
+        action: { name: "email.confirm" },
+        actionKey: "dry-confirm-1",
+      },
+      { headers: bearer },
+    )
+    expect(dryConfirm.status).toBe(200)
+    expect(dryConfirm.json.state).toBe("confirmed")
+    expect(sentPayloads).toHaveLength(1)
+    expect(enqueuedTurns).toHaveLength(1)
+  })
+
+  test("bin/ui pr --reason renders reason_text component above divider and preserves reason across pr.refresh", async () => {
+    let headSha = "1111222233334444"
+    const gh: GhFn = async () => ({
+      code: 0,
+      stderr: "",
+      stdout: JSON.stringify({
+        state: "OPEN",
+        isDraft: false,
+        headRefName: "dispatch/abcd1234",
+        headRefOid: headSha,
+        baseRefName: "main",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+        reviewDecision: "APPROVED",
+        url: "https://github.com/jaubut/claude-companion/pull/510",
+        title: "feat(db): migration gate",
+        author: { login: "jaubut" },
+        labels: [],
+        statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS", name: "test" }],
+        comments: [],
+        files: [],
+      }),
+    })
+
+    const { call } = makeHarness({ gh })
+    const created = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 510,
+        deployRepo: "claude-companion",
+        reason: "touches db/migrations/001.sql (prod schema) — human merge only",
+      },
+      { headers: AUTH },
+    )
+    expect(created.status).toBe(200)
+    const turnId = String(created.json.turnId)
+    const surfaceId = String(created.json.surfaceId)
+    const turn = chat.getTurn(turnId)!
+    const cs = (turn.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    const col = cs.components.find((c) => c.id === "col")!
+    expect(col.children).toEqual(["header_row", "meta_row", "url_text", "reason_text", "divider", "actions_row"])
+    expect(cs.components.find((c) => c.id === "reason_text")).toEqual({
+      id: "reason_text",
+      component: "Text",
+      text: { "@path": "/pr/reason" },
+      variant: "body",
+    })
+    expect(getJsonPointer(cs.dataModel, "/pr/reason")).toBe("touches db/migrations/001.sql (prod schema) — human merge only")
+
+    // Refresh updates headSha and preserves pr.reason
+    headSha = "9999888877776666"
+    const refreshed = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "pr.refresh" },
+        actionKey: "refresh-preserve-reason-1",
+      },
+      { headers: bearer },
+    )
+    expect(refreshed.status).toBe(200)
+    expect((refreshed.json.pr as Record<string, unknown>).headSha).toBe("9999888877776666")
+    expect((refreshed.json.pr as Record<string, unknown>).reason).toBe(
+      "touches db/migrations/001.sql (prod schema) — human merge only",
+    )
+    const modelAfter = getSurfaceDataModel(chat.getTurn(turnId)!.card!)
+    expect(getJsonPointer(modelAfter, "/pr/reason")).toBe("touches db/migrations/001.sql (prod schema) — human merge only")
   })
 })

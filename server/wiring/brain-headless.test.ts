@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { listSessions, recordSession } from "../lib/sessions"
 import {
+  AGY_BOOT_PREFIX,
   BRAIN_DIR,
   BRAIN_RUNTIME_ALLOWED_TOOLS,
   HEADLESS_BRAIN_PANE,
@@ -91,5 +92,7 @@ describe("brain family and Gemini 4 resolution", () => {
     })
     expect(args.slice(0, 3)).toEqual(["--allowedTools", "Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
     expect(args.slice(-2)).toEqual(["--", "render card"])
+    expect(AGY_BOOT_PREFIX).toContain("./bin/ui email --to <addr>")
+    expect(AGY_BOOT_PREFIX).toContain("./bin/ui pr --repo <owner/name> --pr <n>")
   })
 })

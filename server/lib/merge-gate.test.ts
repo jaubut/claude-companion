@@ -73,6 +73,34 @@ describe("mergeGate: the verdict", () => {
   test("a moved head outranks a moved base: one answer, the head's", async () => {
     expect(await run(world({ heads: [SHA, "2222"], bases: ["main", "release"] }), tools)).toMatchObject({ error: "head_moved" })
   })
+  test("approved: true lifts prod-schema and human-merge-path but still stops hold-label and tainted-sensitive", async () => {
+    expect(await mergeGate(world({ files: "db/migrations/001.sql\t\n" }), { url: URL, approved: false }, { tools })).toMatchObject({
+      ok: false,
+      status: 403,
+      error: "prod-schema",
+    })
+    expect(await mergeGate(world({ files: "db/migrations/001.sql\t\n" }), { url: URL, approved: true }, { tools })).toEqual({
+      ok: true,
+      head: SHA,
+      base: "main",
+    })
+    expect(await mergeGate(world({ files: "hooks/guard.py\t\n" }), { url: URL, approved: true }, { tools })).toEqual({
+      ok: true,
+      head: SHA,
+      base: "main",
+    })
+    expect(await mergeGate(world({ files: "db/migrations/001.sql\t\n", labels: ["wip"] }), { url: URL, approved: true }, { tools })).toMatchObject({
+      ok: false,
+      status: 403,
+      error: "hold-label",
+    })
+    const diff = "diff --git a/server/lib/auth.ts b/server/lib/auth.ts\n"
+    expect(await mergeGate(world({ origin: "web", files: "server/lib/auth.ts\t\n", diff }), { url: URL, approved: true }, { tools })).toMatchObject({
+      ok: false,
+      status: 403,
+      error: "tainted-sensitive",
+    })
+  })
 })
 
 describe("mergeGate: loading", () => {

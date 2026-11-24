@@ -8,16 +8,16 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 
 ## server (bun-server, `server/`, 313 modules, cap 600)
 
-⚠ over cap: `lib/a2ui-macros.ts` (613), `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (660), `wiring/brain.ts` (669)
+⚠ over cap: `lib/agy-feed.ts` (1276), `lib/discover.ts` (608), `lib/sessions.ts` (660), `wiring/brain.ts` (669)
 
 | module | lines | kind | exports | contracts |
 |---|---|---|---|---|
 | `lib/agy-feed.ts` | 1276 ⚠ 1276 > cap 600 | lib | 37 | state: pendingToolsBySession: Map, let cachedRecentAgyConversations, offsets: Map, raisedAgyQuestions: Map, let timer, activeAgyProcs: Set |
 | `wiring/brain.ts` | 669 ⚠ 669 > cap 600 | lib | 12 | state: let deliverFn · emits: brain_trace, brain |
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
-| `lib/a2ui-macros.ts` | 613 ⚠ 613 > cap 600 | lib | 12 |  |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
+| `lib/a2ui-macros.ts` | 592 | lib | 15 |  |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
@@ -37,9 +37,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
+| `routes/brain.ts` | 470 | lib | 3 |  |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
-| `routes/brain.ts` | 461 | lib | 3 |  |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
@@ -49,6 +49,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
+| `lib/a2ui-actions.ts` | 404 | lib | 1 | state: inFlightActions: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/triage-engine.ts` | 402 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
@@ -62,21 +63,20 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/orchestrator-chat.ts` | 359 | lib | 28 | state: appendedListeners: Set |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/board-url-resolve.ts` | 351 | lib | 14 |  |
+| `lib/outbound.ts` | 348 | lib | 27 |  |
 | `lib/approval-history.ts` | 339 | lib | 32 | state: let db, listeners: Set |
 | `wiring/resolver.ts` | 339 | lib | 13 |  |
 | `lib/worker-mcp.ts` | 336 | lib | 15 |  |
-| `lib/outbound.ts` | 335 | lib | 27 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/ops-triage.ts` | 331 | lib | 19 |  |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
-| `wiring/brain-headless.ts` | 319 | lib | 10 |  |
+| `wiring/brain-headless.ts` | 321 | lib | 11 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
-| `lib/a2ui-actions.ts` | 305 | lib | 1 | state: inFlightActions: Map |
+| `lib/brain.ts` | 305 | lib | 53 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |
-| `lib/brain.ts` | 301 | lib | 52 |  |
 | `lib/triage-pr.ts` | 296 | lib | 21 |  |
 | `wiring/auto-compact.ts` | 296 | lib | 6 | state: let statsDb · emits: inject_error |
 | `lib/live-repo.ts` | 290 | lib | 27 | state: let probe |
@@ -97,6 +97,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 263 | lib | 10 | state: let shared |
+| `wiring/brain-stuck-events.ts` | 262 | lib | 5 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
 | `lib/orphan-question.ts` | 259 | lib | 13 | state: raised: Map |
 | `lib/command-offpane-launch.ts` | 255 | lib | 19 | state: versionMemo: Map |
@@ -140,6 +141,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
+| `routes/triage.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
 | `lib/dashboard-client.ts` | 202 | lib | 34 |  |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
@@ -149,7 +151,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
-| `wiring/brain-stuck-events.ts` | 189 | lib | 4 |  |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
@@ -163,12 +164,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/tool-format.ts` | 166 | lib | 6 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
-| `routes/triage.ts` | 165 | lib | 2 |  |
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
 | `lib/worker-pr-link.ts` | 159 | lib | 7 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
+| `lib/merge-gate.ts` | 155 | lib | 7 |  |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
-| `lib/merge-gate.ts` | 153 | lib | 7 |  |
 | `lib/worker-worktree.ts` | 153 | lib | 8 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |
 | `lib/resolver-prompt.ts` | 150 | lib | 7 |  |
@@ -488,8 +488,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `appendTurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts` |
 | `checked()` | `lib/json-body.ts` | `routes/api.ts#POST /api/register-token`, `routes/api.ts#DELETE /api/register-token`, `routes/api.ts#POST /api/push/broadcast`, `routes/api.ts#DELETE /api/learned`, `routes/api.ts#POST /api/super-auto`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/session/interrupt`, `routes/api.ts#* /api/feed`, `routes/command.ts#POST /api/command/suggest`, `routes/command.ts#POST /api/command/list`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/permission-request`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/hooks.ts#POST /hooks/session-end`, `routes/model.ts#POST /api/model/open`, `routes/model.ts#POST /api/model/set`, `routes/model.ts#POST /api/model/cancel`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
 | `ExecFn()` | `lib/turso.ts` | `lib/body-investigate-engine.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-pr.ts`, `lib/worker-pr-link.ts`, `routes/my-tasks.ts`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-park.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/resolver-dry-run.ts` |
+| `BRAIN_THREAD()` | `lib/brain.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `lib/brain-event-triage.ts`, `lib/brain-workers.ts`, `routes/brain.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/triage.ts`, `wiring/auto-deploy.ts`, `wiring/brain-handoff.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/worker-mcp.ts` |
 | `QueryFn()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/canvas.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/my-tasks.ts`, `lib/mytask-triage.ts`, `lib/note-media.ts`, `lib/pipeline.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-autofile.ts`, `lib/trip-dashboard.ts`, `routes/body.ts`, `routes/canvas.ts`, `routes/goals.ts`, `routes/my-tasks.ts`, `wiring/resolver.ts` |
-| `BRAIN_THREAD()` | `lib/brain.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `lib/brain-event-triage.ts`, `lib/brain-workers.ts`, `routes/brain.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#GET /api/orchestrator/thread`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-handoff.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/worker-mcp.ts` |
 | `dispatchWiring()` | `wiring/dispatch.ts` | `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/orchestrator.ts`, `wiring/auto-deploy.ts`, `wiring/body-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
 | `orchEmit()` | `wiring/orchestrator.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `routes/orchestrator.ts`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain.ts`, `wiring/front-door.ts`, `wiring/proposals.ts`, `wiring/resolver.ts`, `wiring/tasks-agent.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
 | `Row()` | `lib/turso.ts` | `lib/body-tokens.ts`, `lib/body.ts`, `lib/dispatch-poller.ts`, `lib/dispatch-stage.ts`, `lib/dispatch-tasks.ts`, `lib/merge-gate.ts`, `lib/my-tasks.ts`, `lib/pipeline.ts`, `lib/tasks-agent-row.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/tasks-agent.ts`, `lib/triage-sources.ts`, `lib/trip-dashboard.ts`, `lib/turso-test-db.test-util.ts`, `routes/goals.ts`, `wiring/auto-compact.ts`, `wiring/brain-task-cancel.ts` |
@@ -498,14 +498,14 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `TursoUnreachable()` | `lib/turso.ts` | `lib/dispatch-poller.ts`, `lib/tasks-agent-testdb.test-util.ts`, `lib/triage-engine.ts`, `lib/turso-test-db.test-util.ts`, `routes/body.ts`, `routes/goals.ts#GET /api/goals`, `routes/my-tasks.ts`, `routes/orchestrator.ts`, `routes/tasks-agent.ts`, `wiring/brain-handoff.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-todo.ts`, `wiring/orchestrator.ts`, `wiring/triage-repos.ts` |
 | `herdrPaneOf()` | `lib/herdr.ts` | `lib/command-menu.ts`, `lib/dialog-watch.ts`, `lib/ended-sessions.ts`, `lib/herdr-workspace.ts`, `lib/keyboard-inject.ts`, `lib/model-control.ts`, `lib/pane-clean.ts`, `lib/pane-mirror.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/submit-confirm.ts`, `routes/dialogs.ts#POST /api/dialog/key`, `routes/dialogs.ts#POST /api/dialog/pick`, `wiring/auto-compact.ts`, `wiring/dialogs.ts` |
 | `Herdr()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/ended-sessions.ts`, `lib/herdr-fake.test-util.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/keyboard-inject.ts`, `lib/orphan-question.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/brain-lead.ts`, `wiring/brain-restore.ts`, `wiring/brain-workers.ts`, `wiring/takeover-liveness.ts` |
+| `realGh()` | `lib/triage-pr.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `wiring/auto-compact.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts`, `wiring/github-webhook.ts`, `wiring/repo-view.ts`, `wiring/resolver-dry-run.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
 | `redactSecrets()` | `lib/secret-redact.ts` | `lib/approval-history.ts`, `lib/body-investigator.ts`, `lib/jev-route-log.ts`, `lib/quick-look.ts`, `lib/worker-blocked.ts`, `lib/worker-invocation.ts`, `lib/worker-supervisor.ts`, `wiring/auto-deploy.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/brain-task-cancel.ts` |
 | `HOST_INFO()` | `state.ts` | `companion-server.ts`, `routes/api.ts#* /api/status`, `routes/github-webhook.ts`, `wiring/body-agent.ts`, `wiring/brain.ts`, `wiring/canvas.ts`, `wiring/github-webhook.ts`, `wiring/orchestrator.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts`, `ws.ts` |
-| `realGh()` | `lib/triage-pr.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `wiring/auto-compact.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-task-cancel.ts`, `wiring/github-webhook.ts`, `wiring/repo-view.ts`, `wiring/resolver-dry-run.ts`, `wiring/triage.ts`, `wiring/worker-mcp.ts` |
+| `GhFn()` | `lib/triage-pr.ts` | `lib/a2ui-macros.ts`, `lib/merge-gate.ts`, `lib/worker-pr-link.ts`, `routes/brain.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-stuck-events.ts`, `wiring/github-webhook.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `BRAIN_AGENT()` | `lib/brain.ts` | `lib/brain-workers.ts`, `routes/brain.ts`, `routes/worker-mcp.ts`, `wiring/brain-headless.ts`, `wiring/brain-lead.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/brain-restore.ts`, `wiring/brain-task-cancel.ts`, `wiring/brain-workers.ts`, `wiring/brain.ts` |
 | `SourceItem()` | `lib/triage.ts` | `lib/mytask-triage.ts`, `lib/outbound.ts`, `lib/resolver-engine.ts`, `lib/resolver-prompt.ts`, `lib/resolver-work.ts`, `lib/resolver.ts`, `lib/triage-engine.ts`, `lib/triage-repos.ts`, `lib/triage-sources.ts`, `wiring/resolver-dry-run.ts`, `wiring/resolver.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts` |
 | `pushToAll()` | `lib/push.ts` | `lib/records-expiry.ts`, `lib/secret-requests.ts`, `routes/api.ts#POST /api/push/test`, `routes/api.ts#POST /api/push/broadcast`, `routes/hooks.ts#POST /hooks/stop`, `wiring/auto-compact.ts`, `wiring/body-investigate.ts`, `wiring/body.ts`, `wiring/brain.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/receipt-qa.ts`, `wiring/worker-blocked.ts` |
 | `brainEnabled()` | `lib/brain.ts` | `companion-server.ts`, `companion-server.ts#* /ws`, `routes/board.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/worker-mcp.ts#* /api/mcp/workers`, `wiring/brain-lead.ts`, `wiring/dispatch.ts`, `wiring/events.ts`, `wiring/worker-blocked.ts`, `wiring/worker-mcp.ts`, `ws.ts` |
-| `GhFn()` | `lib/triage-pr.ts` | `lib/a2ui-macros.ts`, `lib/merge-gate.ts`, `lib/worker-pr-link.ts`, `routes/brain.ts`, `wiring/brain-pr-close.ts`, `wiring/brain-pr-merge.ts`, `wiring/brain-pr-resolve-conflicts.ts`, `wiring/brain-pr-update-branch.ts`, `wiring/github-webhook.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `realHerdr()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/ended-sessions.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/pane-clean.ts`, `lib/session-pane.ts`, `lib/shell-sessions.ts`, `lib/spawn-session.ts`, `lib/submit-confirm.ts`, `wiring/brain-restore.ts`, `wiring/brain-workers.ts`, `wiring/dialogs.ts` |
 | `brainWiring()` | `wiring/brain.ts` | `companion-server.ts`, `routes/brain.ts`, `routes/capture.ts`, `routes/hooks.ts#POST /hooks/pre-tool-use`, `routes/hooks.ts#POST /hooks/post-tool-use`, `routes/hooks.ts#POST /hooks/user-prompt-submit`, `routes/hooks.ts#POST /hooks/stop`, `routes/hooks.ts#POST /hooks/session-start`, `routes/orchestrator.ts#POST /api/orchestrator/send`, `routes/worker-mcp.ts`, `ws.ts` |
 | `checkBearer()` | `lib/auth.ts` | `companion-server.ts#* /ws`, `lib/request-gate.ts`, `routes/board.ts#POST /api/board/resolve-url`, `routes/brain.ts`, `routes/builder-jobs.ts#POST /hooks/builder-progress`, `routes/copy-jobs.ts#POST /hooks/copy-progress`, `routes/gauge.ts#POST /hooks/gauge`, `routes/github-webhook.ts`, `routes/hooks.ts#POST /hooks/dispatch-event`, `routes/worker-mcp.ts`, `routes/worker-mcp.ts#* /api/mcp/workers` |
@@ -564,6 +564,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `createProposal()` | `lib/orchestrator-chat.ts` | `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/brain.ts`, `wiring/orchestrator.ts`, `wiring/proposals.ts`, `wiring/repo-view.ts` |
 | `WsData()` | `state.ts` | `companion-server.ts`, `wiring/board.ts`, `wiring/pane-mirror.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `getTurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `wiring/brain-handoff.ts`, `wiring/brain.ts`, `wiring/worker-blocked.ts` |
+| `OutboundStore()` | `lib/outbound.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts`, `routes/triage.ts`, `wiring/outbound.ts`, `wiring/triage.ts` |
 | `appendFeedEvent()` | `lib/feed.ts` | `lib/activity.ts`, `lib/agy-feed.ts`, `lib/codex-feed.ts`, `lib/transcript-artifacts.ts`, `lib/transcript.ts` |
 | `clampLong()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts`, `lib/codex-feed.ts`, `lib/transcript-backfill.ts`, `lib/transcript.ts` |
 | `FeedEvent()` | `lib/feed.ts` | `lib/agy-feed.ts`, `lib/codex-feed.ts`, `lib/transcript-artifacts.ts`, `lib/transcript-backfill.ts`, `wiring/events.ts` |
@@ -591,7 +592,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getDispatchTask()` | `lib/dispatch-tasks.ts` | `routes/orchestrator.ts`, `wiring/brain-workers.ts`, `wiring/orchestrator.ts`, `wiring/resolver.ts`, `wiring/triage.ts` |
 | `checkBearerHeaderOnly()` | `lib/auth.ts` | `companion-server.ts#* /ws`, `lib/vault-guard.ts`, `routes/records.ts`, `routes/vault.ts` |
 | `shellNetworkRefusal()` | `lib/terminal-bridge.ts` | `companion-server.ts#* /ws`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/shell/close` |
+| `A2UIEngineDeps()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts`, `wiring/brain-stuck-events.ts` |
 | `setTurnCard()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `wiring/brain.ts`, `wiring/worker-blocked.ts` |
+| `OutboundSender()` | `lib/outbound.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts`, `wiring/outbound.ts`, `wiring/triage.ts` |
 | `TurnCard()` | `lib/orchestrator-chat.ts` | `lib/a2ui.ts`, `lib/dispatch-poller.ts`, `lib/worker-blocked.ts`, `routes/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts` |
 | `getFeed()` | `lib/feed.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `routes/api.ts#* /api/feed`, `ws.ts` |
@@ -653,8 +656,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getTaskByDispatchId()` | `lib/orchestrator-chat.ts` | `wiring/brain-task-cancel.ts`, `wiring/brain-workers.ts`, `wiring/dispatch.ts`, `wiring/events.ts` |
 | `keyCommandGate()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed`, `routes/orchestrator.ts#POST /api/orchestrator/send` |
 | `getShellSession()` | `lib/shell-sessions.ts` | `companion-server.ts#* /ws`, `routes/command.ts#POST /api/command/list`, `wiring/shell-sessions.ts` |
-| `A2UIEngineDeps()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
+| `updateSurfaceData()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `mergeAgentPr()` | `wiring/brain-pr-merge.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
+| `findA2UITurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `wiring/brain-stuck-events.ts` |
+| `createSurfaceTurn()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/brain-stuck-events.ts` |
+| `outboundStore()` | `wiring/outbound.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/triage.ts` |
 | `readTailLines()` | `lib/transcript-cursor.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `lib/transcript.ts` |
 | `parseQuestionInput()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
 | `addQuestionRequest()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
@@ -731,7 +737,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `approveProposal()` | `wiring/proposals.ts` | `routes/orchestrator.ts`, `wiring/brain.ts`, `wiring/triage.ts` |
 | `isBrainInternalEvent()` | `lib/brain.ts` | `routes/orchestrator.ts#GET /api/orchestrator/thread`, `wiring/dispatch.ts`, `wiring/orchestrator.ts` |
 | `TriageEngine()` | `lib/triage-engine.ts` | `routes/triage.ts`, `wiring/triage-repos.ts`, `wiring/triage.ts` |
-| `OutboundStore()` | `lib/outbound.ts` | `routes/triage.ts`, `wiring/outbound.ts`, `wiring/triage.ts` |
 | `triageEngine()` | `wiring/triage.ts` | `routes/triage.ts`, `wiring/repo-view.ts`, `wiring/triage-repos.ts` |
 | `bodyFixStore()` | `wiring/body-investigate.ts` | `wiring/body-agent.ts`, `wiring/proposals.ts`, `wiring/triage.ts` |
 | `knownPaths()` | `lib/body-investigator.ts` | `wiring/body-agent.ts`, `wiring/body-investigate.ts`, `wiring/resolver.ts` |
@@ -748,11 +753,15 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `tasksChat()` | `wiring/tasks-agent.ts` | `companion-server.ts`, `wiring/front-door.ts` |
 | `originLabel()` | `lib/vault-guard.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
-| `updateSurfaceData()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
+| `getSurfaceDataModel()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `wiring/brain-stuck-events.ts` |
+| `REPO_RE()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `routes/triage.ts` |
+| `hydratePrGateData()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `wiring/brain-stuck-events.ts` |
+| `stripAngleTags()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `wiring/brain-stuck-events.ts` |
 | `deployRepo()` | `wiring/auto-deploy.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
 | `autoDeploy()` | `wiring/auto-deploy.ts` | `lib/a2ui-actions.ts`, `routes/brain.ts` |
 | `isDeployRepo()` | `wiring/auto-deploy.ts` | `lib/a2ui-actions.ts`, `routes/brain.ts` |
-| `findA2UITurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts` |
+| `payloadHash()` | `lib/outbound.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
+| `gmailSender()` | `wiring/outbound.ts` | `lib/a2ui-actions.ts`, `wiring/triage.ts` |
 | `A2UIMessage()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/orchestrator-chat.ts` |
 | `DeployResult()` | `wiring/auto-deploy.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts` |
 | `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
@@ -960,7 +969,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `Limiter()` | `lib/vault-guard.ts` | `routes/records.ts`, `routes/vault.ts` |
 | `UpstreamReply()` | `lib/vault-upstream.ts` | `routes/records.ts`, `routes/vault.ts` |
 | `MAX_KEY_LENGTH()` | `lib/idempotency.ts` | `routes/triage.ts`, `routes/worker-blocked.ts` |
-| `outboundStore()` | `wiring/outbound.ts` | `routes/triage.ts`, `wiring/triage.ts` |
 | `workerMcp()` | `wiring/worker-mcp.ts` | `routes/worker-mcp.ts`, `wiring/github-webhook.ts` |
 | `screenSnapshotFor()` | `wiring/dialogs.ts` | `wiring/auto-compact.ts`, `wiring/desk-deliver.ts` |
 | `yieldPaneForInject()` | `wiring/dialogs.ts` | `wiring/auto-compact.ts`, `wiring/desk-deliver.ts` |
@@ -985,7 +993,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clearSessionWaiting()` | `lib/sessions.ts` | `wiring/desk-deliver.ts`, `wiring/waiting.ts` |
 | `readRepoMapSource()` | `lib/live-repo.ts` | `wiring/orchestrator.ts`, `wiring/resolver.ts` |
 | `createOutboundStore()` | `lib/outbound.ts` | `wiring/outbound.ts`, `wiring/triage.ts` |
-| `OutboundSender()` | `lib/outbound.ts` | `wiring/outbound.ts`, `wiring/triage.ts` |
 | `taskSources()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
 | `proposalSource()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |
 | `bodySources()` | `lib/triage-sources.ts` | `wiring/resolver-dry-run.ts`, `wiring/triage.ts` |

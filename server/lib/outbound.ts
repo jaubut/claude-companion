@@ -167,6 +167,8 @@ export interface OutboundStore {
   listProposed(): OutboundRecord[]
   /** New body → new hash (a new card version); null when not `proposed`. */
   editBody(id: string, body: string, now: number): OutboundRecord | null
+  /** Update Cc list on a proposed action at expectedHash → new hash; null when stale, invalid, or policy refused. */
+  updateCc(id: string, cc: string[], expectedHash: string, now: number): OutboundRecord | null
   /** proposed → sending, only at this exact hash (the one approval that may send); false = stale or already taken. */
   claim(id: string, hash: string, now: number): boolean
   markSent(id: string, messageId: string | null, now: number): void
@@ -209,6 +211,17 @@ export function createOutboundStore(db: Database): OutboundStore {
       const res = db.query("UPDATE outbound_actions SET body = ?, payload_hash = ?, updated_at = ? WHERE id = ? AND status = 'proposed' AND payload_hash = ?")
         .run(body, hash, now, id, cur.payloadHash)
       return res.changes ? store.get(id) : null
+    },
+    updateCc(id, cc, expectedHash, now) {
+      const rec = store.get(id)
+      if (!rec || rec.status !== "proposed" || rec.payloadHash !== expectedHash) return null
+      const validatedCc = addresses(cc, "cc", false)
+      if (typeof validatedCc === "string") return null
+      if (policyRefusal({ to: rec.to, cc: validatedCc, body: rec.body })) return null
+      const hash = payloadHash({ ...rec, cc: validatedCc })
+      const res = db.query("UPDATE outbound_actions SET cc_json = ?, payload_hash = ?, updated_at = ? WHERE id = ? AND status = 'proposed' AND payload_hash = ?")
+        .run(JSON.stringify(validatedCc), hash, now, id, expectedHash)
+      return res.changes === 1 ? store.get(id) : null
     },
     claim(id, hash, now) {
       return db.query("UPDATE outbound_actions SET status = 'sending', updated_at = ? WHERE id = ? AND status = 'proposed' AND payload_hash = ?")

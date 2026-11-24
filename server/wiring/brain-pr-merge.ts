@@ -215,13 +215,13 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
   const v = await view(deps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
-  const g = await deps.gate(deps, { url: v.url })
+  const humanApproved = p.humanApproved === true || deps.humanApproved?.(p.pr, p.repo) === true
+  const g = await deps.gate(deps, { url: v.url, approved: humanApproved })
   if (!g.ok) return fail(g.status, g.error, g.extra)
   if (g.head !== v.headRefOid) return fail(409, "head_moved")
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  const humanApproved = p.humanApproved === true || deps.humanApproved?.(p.pr, p.repo) === true
   let park: Awaited<ReturnType<typeof parked>>
   try {
     park = await parked(deps.exec, v, humanApproved)
