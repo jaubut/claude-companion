@@ -19,17 +19,17 @@ export function outboundStore(): OutboundStore {
 const gmailPy = (): string => process.env.COMPANION_GMAIL_PY || join(homedir(), ".claude", "tools", "gmail.py")
 
 /**
- * gmail.py argv for one payload; the body goes on stdin (no size/quoting limits, never in `ps`).
+ * gmail.py argv for one payload; the body goes on stdin (no size/quoting limits, never in `ps`,
+ * read automatically when `--body-file` is omitted).
  * Kept in one place: adjust here if gmail.py's CLI differs.
  */
 export function gmailArgv(p: OutboundPayload): string[] {
   return [
     "python3", gmailPy(), "send", "--account", p.account,
-    ...p.to.flatMap((a) => ["--to", a]),
-    ...p.cc.flatMap((a) => ["--cc", a]),
+    "--to", p.to.join(", "),
+    ...(p.cc.length > 0 ? ["--cc", p.cc.join(", ")] : []),
     "--subject", p.subject,
-    ...(p.inReplyTo ? ["--in-reply-to", p.inReplyTo] : []),
-    "--body-stdin",
+    ...(p.inReplyTo ? ["--reply-to", p.inReplyTo] : []),
   ]
 }
 

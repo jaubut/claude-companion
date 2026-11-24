@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   BODY_MAX_BYTES, type OutboundPayload, type OutboundProposal, type OutboundStore,
   canonicalJson, createOutboundStore, currentOutbound, executeOutbound, outboundSource, parseMessageId, payloadHash, produceOutbound,
 } from "./outbound"
+import { gmailArgv } from "../wiring/outbound"
 import { createTriageEngine } from "./triage-engine"
 import { createTriageStore } from "./triage-store"
 
@@ -283,9 +287,165 @@ describe("updateCc", () => {
 })
 
 describe("parseMessageId", () => {
-  test("JSON or an id line", () => {
+  test("JSON, gmail.py real `sent: <id> thread <tid> | to: ...` output, or an id line", () => {
+    expect(parseMessageId("sent: 1a20ecd3c5eb013e thread 1a20ecd3c5eb013e | to: client@example.com | subject: Suivi\n")).toBe("1a20ecd3c5eb013e")
     expect(parseMessageId('{"id":"18c2f0a1b2c3d4e5","threadId":"x"}')).toBe("18c2f0a1b2c3d4e5")
     expect(parseMessageId("Sent.\nMessage ID: 18c2f0a1b2c3d4e5\n")).toBe("18c2f0a1b2c3d4e5")
     expect(parseMessageId("ok")).toBeNull()
+  })
+})
+
+const GMAIL_PY_FALLBACK = `#!/usr/bin/env python3
+import argparse, sys
+def cmd_auth(a): pass
+def cmd_search(a): pass
+def cmd_read(a): pass
+def cmd_draft(a): pass
+def cmd_send(a): pass
+def cmd_selftest(a): pass
+def main():
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+    def acc(sp): sp.add_argument("--account", default="hello")
+    s = sub.add_parser("auth"); acc(s); s.add_argument("--url"); s.set_defaults(fn=cmd_auth)
+    s = sub.add_parser("search"); acc(s); s.add_argument("query"); s.add_argument("--max", type=int, default=20); s.set_defaults(fn=cmd_search)
+    s = sub.add_parser("read"); acc(s); s.add_argument("id"); s.add_argument("--thread", action="store_true"); s.set_defaults(fn=cmd_read)
+    for name, fn in (("draft", cmd_draft), ("send", cmd_send)):
+        s = sub.add_parser(name); acc(s)
+        s.add_argument("--to", required=True); s.add_argument("--cc"); s.add_argument("--subject", required=True)
+        s.add_argument("--body-file")
+        s.add_argument("--html-file")
+        s.add_argument("--from", dest="sender")
+        s.add_argument("--reply-to")
+        s.add_argument("--attach", action="append")
+        s.set_defaults(fn=fn)
+    s = sub.add_parser("selftest"); s.set_defaults(fn=cmd_selftest)
+    a = p.parse_args(); a.fn(a)
+`
+
+describe("gmailArgv", () => {
+  test("formats comma-joined --to and --cc, maps inReplyTo to --reply-to, omits empty --cc and --body-stdin", () => {
+    const full = gmailArgv({
+      account: "hello",
+      to: ["a@example.com", "b@example.com"],
+      cc: ["c@example.com", "d@example.com"],
+      subject: "Facture Q4",
+      body: "Bonjour",
+      inReplyTo: "18f00aabbccdd123",
+    })
+    expect(full.slice(2)).toEqual([
+      "send", "--account", "hello",
+      "--to", "a@example.com, b@example.com",
+      "--cc", "c@example.com, d@example.com",
+      "--subject", "Facture Q4",
+      "--reply-to", "18f00aabbccdd123",
+    ])
+    expect(full).not.toContain("--body-stdin")
+    expect(full).not.toContain("--in-reply-to")
+
+    const minimal = gmailArgv({
+      account: "personal",
+      to: ["solo@example.com"],
+      cc: [],
+      subject: "Quick note",
+      body: "Salut",
+      inReplyTo: null,
+    })
+    expect(minimal.slice(2)).toEqual([
+      "send", "--account", "personal",
+      "--to", "solo@example.com",
+      "--subject", "Quick note",
+    ])
+    expect(minimal).not.toContain("--cc")
+    expect(minimal).not.toContain("--reply-to")
+    expect(minimal).not.toContain("--body-stdin")
+  })
+
+  test("parses cleanly against ~/.claude/tools/gmail.py real argparse parser without network access", async () => {
+    const realPath = join(homedir(), ".claude", "tools", "gmail.py")
+    let tempDir: string | null = null
+    const prevEnv = process.env.COMPANION_GMAIL_PY
+    if (!existsSync(realPath) && !prevEnv) {
+      tempDir = mkdtempSync(join(tmpdir(), "cc-gmail-py-"))
+      const fallbackPath = join(tempDir, "gmail.py")
+      writeFileSync(fallbackPath, GMAIL_PY_FALLBACK)
+      process.env.COMPANION_GMAIL_PY = fallbackPath
+    }
+    const harness = [
+      "import importlib.util, json, sys",
+      "script = sys.argv[1]",
+      "sys.argv = sys.argv[1:]",
+      "spec = importlib.util.spec_from_file_location('gmail_cli', script)",
+      "mod = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(mod)",
+      "def forbid(*a, **k): raise RuntimeError('network/credential access forbidden')",
+      "mod._http = forbid",
+      "mod._account = forbid",
+      "captured = {}",
+      "def stub_send(ns): captured.update({k: v for k, v in vars(ns).items() if k != 'fn'})",
+      "mod.cmd_send = stub_send",
+      "mod.main()",
+      "print(json.dumps(captured))",
+    ].join("\n")
+
+    async function parseWithGmailPy(payload: OutboundPayload): Promise<Record<string, unknown>> {
+      const argv = gmailArgv(payload)
+      const proc = Bun.spawn(["python3", "-c", harness, ...argv.slice(1)], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      proc.stdin.write(payload.body)
+      await proc.stdin.end()
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      if (code !== 0) throw new Error(`gmail.py argparse failed (${code}): ${stderr}`)
+      return JSON.parse(stdout.trim()) as Record<string, unknown>
+    }
+
+    try {
+      const fullParsed = await parseWithGmailPy({
+        account: "hello",
+        to: ["client1@example.com", "client2@example.com"],
+        cc: ["ops@example.com", "accounting@example.com"],
+        subject: "Q4 Statement",
+        body: "Bonjour,\n\nVoici l'état de compte.",
+        inReplyTo: "1a20ecd3c5eb013e",
+      })
+      expect(fullParsed).toMatchObject({
+        cmd: "send",
+        account: "hello",
+        to: "client1@example.com, client2@example.com",
+        cc: "ops@example.com, accounting@example.com",
+        subject: "Q4 Statement",
+        reply_to: "1a20ecd3c5eb013e",
+        body_file: null,
+      })
+
+      const minimalParsed = await parseWithGmailPy({
+        account: "personal",
+        to: ["jeremie@example.com"],
+        cc: [],
+        subject: "Ping",
+        body: "Body on stdin",
+        inReplyTo: null,
+      })
+      expect(minimalParsed).toMatchObject({
+        cmd: "send",
+        account: "personal",
+        to: "jeremie@example.com",
+        cc: null,
+        subject: "Ping",
+        reply_to: null,
+        body_file: null,
+      })
+    } finally {
+      if (prevEnv === undefined) delete process.env.COMPANION_GMAIL_PY
+      else process.env.COMPANION_GMAIL_PY = prevEnv
+      if (tempDir) rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
