@@ -1354,14 +1354,20 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(patchIntoPr.status).toBe(403)
     expect(patchIntoPr.json.error).toBe("pr_surface_readonly")
 
-    // 3) pr.merge when stored title/url mismatches live GitHub PR -> 409 pr_metadata_stale
+    // 3) pr.merge when stored title/url mismatches live GitHub PR -> 409 pr_metadata_stale (checked in a single gh pr view via mergeAgentPr)
+    let ghViewCount = 0
+    const countingGh: GhFn = async (args) => {
+      if (args[0] === "pr" && args[1] === "view") ghViewCount++
+      return gh(args)
+    }
+    const { call: callWithCountingGh } = makeHarness({ gh: countingGh })
     const prRow = chat.getTurn(turnId)!
     const tamperedPrCard = structuredClone(prRow.card!)
     const prCreate = (tamperedPrCard.messages![0] as A2UICreateSurfaceMessage).createSurface
     ;(prCreate.dataModel.pr as Record<string, unknown>).title = "harmless typo fix"
     chat.setTurnCard(prRow.id, { messages: tamperedPrCard.messages })
 
-    const staleMetaMerge = await call(
+    const staleMetaMerge = await callWithCountingGh(
       "POST",
       "/api/brain/a2ui/action",
       { surfaceId, turnId, action: { name: "pr.merge" }, actionKey: "stale-meta-merge-1" },
@@ -1369,6 +1375,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(staleMetaMerge.status).toBe(409)
     expect(staleMetaMerge.json.error).toBe("pr_metadata_stale")
+    expect(ghViewCount).toBe(1)
 
     // 4) macro: "pr" with a mismatched pr-* customSurfaceId (attempting to shadow another PR card) -> 403 pr_surface_readonly
     const shadowAnotherPr = await call(

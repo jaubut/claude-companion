@@ -41,10 +41,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
+| `lib/a2ui-actions.ts` | 449 | lib | 1 | state: inFlightActions: Map |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
-| `lib/a2ui-actions.ts` | 440 | lib | 1 | state: inFlightActions: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
@@ -69,6 +69,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-mcp.ts` | 336 | lib | 15 |  |
 | `lib/command-offpane-home.ts` | 334 | lib | 18 | state: let baseMemo, PROC_ANSWERS: Set |
 | `lib/ops-triage.ts` | 331 | lib | 19 |  |
+| `wiring/brain-pr-merge.ts` | 328 | lib | 4 |  |
 | `lib/tmux-pane.ts` | 327 | lib | 25 |  |
 | `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-headless.ts` | 321 | lib | 11 |  |
@@ -84,7 +85,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/ended-sessions.ts` | 287 | lib | 17 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `routes/notes.ts` | 283 | lib | 1 | state: NOTE_IMAGE_MIMES: Set |
-| `wiring/brain-pr-merge.ts` | 280 | lib | 4 |  |
 | `lib/orchestrator-brain.ts` | 278 | lib | 8 |  |
 | `wiring/brain-stuck-events.ts` | 277 | lib | 5 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
@@ -140,6 +140,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/front-door.ts` | 205 | lib | 9 |  |
 | `lib/receipt-jev.ts` | 205 | lib | 14 | state: let chartCache |
 | `lib/resolver-store.ts` | 205 | lib | 8 |  |
+| `lib/merge-gate.ts` | 204 | lib | 8 |  |
 | `lib/pty-manager.ts` | 204 | lib | 15 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, let defaultExpiryMs |
 | `routes/triage.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
@@ -167,7 +168,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
 | `lib/worker-pr-link.ts` | 159 | lib | 7 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
-| `lib/merge-gate.ts` | 155 | lib | 7 |  |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
 | `lib/worker-worktree.ts` | 153 | lib | 8 |  |
 | `lib/artifacts.ts` | 151 | lib | 5 | state: BARE_STOP: Set |

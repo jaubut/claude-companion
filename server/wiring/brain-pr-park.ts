@@ -15,18 +15,18 @@ export async function parked(
   cardApproved = false,
 ): Promise<{ reasons: string[]; taskIds: string[]; clientOrigin: boolean }> {
   const reasons: string[] = []
-  // Tasks linked by the PR url (a branch-name match is guessable): park rows and the digest row key on them.
-  const { rows } = await exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url])
+  // Tasks linked by the PR url (a branch-name match is guessable) and the newest shepherd park / hold / unpark
+  // rows for this PR or its linked tasks, queried in parallel so cold-start Turso latency doesn't double up.
+  const [{ rows }, last] = await Promise.all([
+    exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url]),
+    exec(
+      "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND (target_id = ? OR target_id IN (SELECT id FROM tasks WHERE dispatch_pr_url = ?)) ORDER BY id DESC LIMIT 20",
+      [v.url, v.url],
+    ),
+  ])
   const taskIds = rows.map((r) => String(r.id))
   // The PR read doesn't carry origin: tasks.origin is the authority, the label is advisory (forgeable, so it can only tighten).
   const clientOrigin = rows.some((r) => r.origin === "client") || v.labels.some((l) => l.name === "client-origin")
-  // The newest shepherd park / hold / unpark for this PR: a live one refuses unless it is a retired human-review park,
-  // a chat-approved non-human-merge review park (humanApproved), or a pinned PrGateCard tap (cardApproved, which lifts
-  // non-tainted prod-schema / human-merge-path parks, while never lifting pr:hold or tainted human-merge hard stops).
-  const last = await exec(
-    "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND target_id IN (" + [v.url, ...taskIds].map(() => "?").join(", ") + ") ORDER BY id DESC LIMIT 20",
-    [v.url, ...taskIds],
-  )
   for (const row of last.rows) {
     let meta: Record<string, unknown> = {}
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }

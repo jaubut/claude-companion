@@ -101,6 +101,47 @@ describe("mergeGate: the verdict", () => {
       error: "tainted-sensitive",
     })
   })
+  test("known head fast-path skips initial readHead, runs files + origin in parallel, and still enforces post-files head/base check", async () => {
+    const viewCalls: string[][] = []
+    let activeInFlight = 0
+    let maxConcurrentInFlight = 0
+    const baseWorld = world({ files: "server/lib/a.ts\t\n" })
+    const deps: GateDeps = {
+      gh: async (args) => {
+        if (args[1] === "view") viewCalls.push(args)
+        activeInFlight++
+        maxConcurrentInFlight = Math.max(maxConcurrentInFlight, activeInFlight)
+        await Bun.sleep(5)
+        activeInFlight--
+        return baseWorld.gh(args)
+      },
+      exec: async (sql, args) => {
+        activeInFlight++
+        maxConcurrentInFlight = Math.max(maxConcurrentInFlight, activeInFlight)
+        await Bun.sleep(5)
+        activeInFlight--
+        return baseWorld.exec(sql, args)
+      },
+    }
+    const knownHead = { url: URL, sha: SHA, base: "main", labels: [] }
+    expect(await mergeGate(deps, { url: URL, head: knownHead }, { tools })).toEqual({
+      ok: true,
+      head: SHA,
+      base: "main",
+    })
+    // Only the post-files readHead view call should be made when head is pre-supplied
+    expect(viewCalls).toHaveLength(1)
+    // files (gh api) and task origin (exec) ran concurrently
+    expect(maxConcurrentInFlight).toBeGreaterThanOrEqual(2)
+
+    // Still catches head_moved and base_moved on the post-files readHead
+    expect(
+      await mergeGate(world({ heads: ["2222"] }), { url: URL, head: knownHead }, { tools }),
+    ).toEqual({ ok: false, status: 409, error: "head_moved", extra: {} })
+    expect(
+      await mergeGate(world({ bases: ["release"] }), { url: URL, head: knownHead }, { tools }),
+    ).toEqual({ ok: false, status: 409, error: "base_moved", extra: {} })
+  })
 })
 
 describe("mergeGate: loading", () => {

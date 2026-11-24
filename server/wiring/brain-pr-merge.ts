@@ -57,7 +57,17 @@ const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|m
 const LOW_FILE_LIMIT = 100
 const reviewedSha = (sha: string) => `<!-- reviewed-sha: ${sha} -->`
 
-interface PrMergeInput { repo: string; pr: number; reason: string; signal?: AbortSignal; humanApproved?: boolean }
+interface PrMergeInput {
+  repo: string
+  pr: number
+  reason: string
+  signal?: AbortSignal
+  humanApproved?: boolean
+  expectedHeadSha?: string
+  expectedTitle?: string | null
+  expectedUrl?: string | null
+  gh?: GhFn
+}
 interface PrMergeDeps {
   gh: GhFn
   exec: ExecFn
@@ -214,24 +224,59 @@ function notApproved(v: PrView, claudeNormal = false, clientOrigin = false): str
 }
 
 export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps): Promise<Out> {
-  const v = await view(deps.gh, p)
+  const gh = p.gh ?? deps.gh
+  const v = await view(gh, p)
   if ("status" in v) return v
+  if (p.expectedHeadSha !== undefined && v.headRefOid !== p.expectedHeadSha) {
+    return fail(409, "head_moved", { expected: p.expectedHeadSha, actual: v.headRefOid })
+  }
+  if (p.expectedTitle !== undefined || p.expectedUrl !== undefined) {
+    const actualTitle = (v.title || `${p.repo}#${p.pr}`).trim().replace(/</g, "‹").replace(/>/g, "›")
+    const actualUrl = v.url || `https://github.com/${p.repo}/pull/${p.pr}`
+    if (
+      (p.expectedTitle !== undefined && p.expectedTitle !== actualTitle) ||
+      (p.expectedUrl !== undefined && p.expectedUrl !== actualUrl)
+    ) {
+      return fail(409, "pr_metadata_stale", {
+        expectedTitle: p.expectedTitle ?? null,
+        actualTitle,
+        expectedUrl: p.expectedUrl ?? null,
+        actualUrl,
+      })
+    }
+  }
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   const cardApproved = p.humanApproved === true
   const humanApproved = cardApproved || deps.humanApproved?.(p.pr, p.repo) === true
-  const g = await deps.gate(deps, { url: v.url, approved: cardApproved })
+  const gateDeps = p.gh ? { ...deps, gh } : deps
+  const canCheckPark = !v.isDraft && /^dispatch\/[\w.-]+$/.test(v.headRefName)
+  const parkPromise = canCheckPark
+    ? parked(deps.exec, v, humanApproved, cardApproved).then(
+        (ok) => ({ ok: true as const, value: ok }),
+        (err: unknown) => ({ ok: false as const, err }),
+      )
+    : null
+  const [g, parkRes] = await Promise.all([
+    deps.gate(gateDeps, {
+      url: v.url,
+      approved: cardApproved,
+      ...(cardApproved
+        ? { head: { url: v.url, sha: v.headRefOid, base: v.baseRefName, labels: v.labels.map((l) => String(l.name ?? "")) } }
+        : {}),
+    }),
+    parkPromise,
+  ])
   if (!g.ok) return fail(g.status, g.error, g.extra)
   if (g.head !== v.headRefOid) return fail(409, "head_moved")
   if (g.base !== v.baseRefName) return fail(409, "base_moved")
   if (v.isDraft) return fail(409, "draft")
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
-  let park: Awaited<ReturnType<typeof parked>>
-  try {
-    park = await parked(deps.exec, v, humanApproved, cardApproved)
-  } catch (err) {
+  if (!parkRes!.ok) {
+    const err = parkRes!.err
     companionLog(`[brain] pr-merge: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
   }
+  const park = parkRes!.value
   if (park.reasons.length) return fail(403, "parked", { reasons: park.reasons })
   const red = notGreen(v)
   if (red.length) return fail(409, "not_green", { reasons: red })
@@ -242,18 +287,21 @@ export async function mergeAgentPr(p: PrMergeInput, deps: PrMergeDeps = realDeps
     if (unapproved.length) return fail(409, "not_approved", { reasons: unapproved, head: v.headRefOid })
   }
   // The head has --match-head-commit behind it. The base has only this read, so no answer means no merge.
-  const last = await prReadiness(deps.gh, v.url).catch(() => null)
-  if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
-  if (last.base !== g.base) return fail(409, "base_moved")
+  // When cardApproved is true, mergeGate ran in parallel with parked() and its post-files readHead just verified g.base.
+  if (!cardApproved) {
+    const last = await prReadiness(gh, v.url).catch(() => null)
+    if (!last?.base) return fail(409, "gate_unavailable", { detail: "couldn't read the PR base" })
+    if (last.base !== g.base) return fail(409, "base_moved")
+  }
   if (p.signal?.aborted) return fail(409, "client_gone")
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>
   try {
-    run = await deps.gh(["pr", "merge", String(p.pr), "--repo", p.repo, "--squash", "--delete-branch", "--match-head-commit", v.headRefOid])
+    run = await gh(["pr", "merge", String(p.pr), "--repo", p.repo, "--squash", "--delete-branch", "--match-head-commit", v.headRefOid])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
-  const after = await prState(deps.gh, v.url).catch(() => "unknown")
+  const after = await prState(gh, v.url).catch(() => "unknown")
   if (after !== "MERGED") return fail(502, "merge_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
   const taskId = park.taskIds[0] ?? null
   try {
