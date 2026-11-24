@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# brain-v2: render or patch an A2UI 1.0 surface in the Brain thread (POST /hooks/brain/ui).
+#
+#   bin/ui email --to <addr> [--cc <csv>] --subject "<subj>" --body "<body>" [--draft-id <id>] [--gmail-thread <id>] [--surface <id>]
+#   bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] [--surface <id>]
+#   bin/ui patch --surface <id> --path <json-pointer> --value <json>
+#   bin/ui custom --json <a2ui-v1-json> [--text "<summary>"]
+#
+# Auth is the caller's identity: loopback only, X-Companion-Task-Id: brain and
+# the pid of the calling claude/codex/gemini process (walked up the parent chain).
+set -euo pipefail
+
+SUB="${1:-}"
+[ -n "$SUB" ] || { echo "ui: usage: bin/ui <email|pr|patch|custom> [flags]" >&2; exit 2; }
+shift
+
+TO="" CC="" SUBJECT="" EMAIL_BODY="" DRAFT_ID="" GMAIL_THREAD=""
+REPO="" PR="" DEPLOY_REPO=""
+SURFACE="" JSON_PATH="" VALUE="" CUSTOM_JSON="" TEXT_SUMMARY=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to) TO="${2:-}"; shift 2 ;;
+    --cc) CC="${2:-}"; shift 2 ;;
+    --subject) SUBJECT="${2:-}"; shift 2 ;;
+    --body) EMAIL_BODY="${2:-}"; shift 2 ;;
+    --draft-id) DRAFT_ID="${2:-}"; shift 2 ;;
+    --gmail-thread) GMAIL_THREAD="${2:-}"; shift 2 ;;
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --pr) PR="${2:-}"; shift 2 ;;
+    --deploy-repo) DEPLOY_REPO="${2:-}"; shift 2 ;;
+    --surface) SURFACE="${2:-}"; shift 2 ;;
+    --path) JSON_PATH="${2:-}"; shift 2 ;;
+    --value) VALUE="${2:-}"; shift 2 ;;
+    --json) CUSTOM_JSON="${2:-}"; shift 2 ;;
+    --text) TEXT_SUMMARY="${2:-}"; shift 2 ;;
+    *) echo "ui: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$SUB" in
+  email)
+    if [ -z "$TO" ] || [ -z "$SUBJECT" ] || [ -z "$EMAIL_BODY" ]; then
+      echo "ui email: --to, --subject and --body are required" >&2
+      exit 2
+    fi
+    ;;
+  pr)
+    if [ -z "$REPO" ] || [ -z "$PR" ]; then
+      echo "ui pr: --repo and --pr are required" >&2
+      exit 2
+    fi
+    ;;
+  patch)
+    if [ -z "$SURFACE" ] || [ -z "$JSON_PATH" ] || [ -z "$VALUE" ]; then
+      echo "ui patch: --surface, --path and --value are required" >&2
+      exit 2
+    fi
+    ;;
+  custom)
+    if [ -z "$CUSTOM_JSON" ]; then
+      echo "ui custom: --json is required" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "ui: unknown subcommand $SUB (expected email, pr, patch, or custom)" >&2
+    exit 2
+    ;;
+esac
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*|*codex*|*gemini*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(SUB="$SUB" TO="$TO" CC="$CC" SUBJECT="$SUBJECT" EMAIL_BODY="$EMAIL_BODY" DRAFT_ID="$DRAFT_ID" GMAIL_THREAD="$GMAIL_THREAD" REPO="$REPO" PR="$PR" DEPLOY_REPO="$DEPLOY_REPO" SURFACE="$SURFACE" JSON_PATH="$JSON_PATH" VALUE="$VALUE" CUSTOM_JSON="$CUSTOM_JSON" TEXT_SUMMARY="$TEXT_SUMMARY" python3 -c '
+import json, os, sys
+
+sub = os.environ["SUB"]
+payload = {"macro": sub}
+
+if sub == "email":
+    payload["to"] = os.environ["TO"]
+    payload["subject"] = os.environ["SUBJECT"]
+    payload["body"] = os.environ["EMAIL_BODY"]
+    if os.environ["CC"]:
+        payload["cc"] = [c.strip() for c in os.environ["CC"].split(",") if c.strip()]
+    if os.environ["DRAFT_ID"]:
+        payload["draftId"] = os.environ["DRAFT_ID"]
+    if os.environ["GMAIL_THREAD"]:
+        payload["gmailThreadId"] = os.environ["GMAIL_THREAD"]
+    if os.environ["SURFACE"]:
+        payload["surfaceId"] = os.environ["SURFACE"]
+elif sub == "pr":
+    payload["repo"] = os.environ["REPO"]
+    try:
+        payload["pr"] = int(os.environ["PR"])
+    except ValueError:
+        sys.stderr.write("ui pr: --pr must be an integer\n")
+        sys.exit(2)
+    if os.environ["DEPLOY_REPO"]:
+        payload["deployRepo"] = os.environ["DEPLOY_REPO"]
+    if os.environ["SURFACE"]:
+        payload["surfaceId"] = os.environ["SURFACE"]
+elif sub == "patch":
+    payload["surfaceId"] = os.environ["SURFACE"]
+    payload["path"] = os.environ["JSON_PATH"]
+    raw_val = os.environ["VALUE"]
+    try:
+        payload["value"] = json.loads(raw_val)
+    except Exception:
+        payload["value"] = raw_val
+elif sub == "custom":
+    raw_json = os.environ["CUSTOM_JSON"]
+    try:
+        payload["json"] = json.loads(raw_json)
+    except Exception as e:
+        sys.stderr.write(f"ui custom: invalid --json: {e}\n")
+        sys.exit(2)
+    if os.environ["TEXT_SUMMARY"]:
+        payload["text"] = os.environ["TEXT_SUMMARY"]
+
+print(json.dumps(payload))
+')
+
+CALLER_TASK="${COMPANION_TASK_ID:-brain}"
+CURL_SANDBOX_ARGS=()
+if [ "${SANDBOX_RUNTIME:-}" = "1" ]; then
+  CURL_SANDBOX_ARGS=(--noproxy "" -H "X-Companion-Sandbox: 1")
+fi
+
+curl -sS --max-time 60 "${CURL_SANDBOX_ARGS[@]}" -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/ui" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: ${CALLER_TASK}" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

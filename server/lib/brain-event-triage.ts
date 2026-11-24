@@ -46,6 +46,7 @@ const IMMEDIATE_EVENT_RE = /^blocked \[/i
 export function classifyBrainEvent(turn: BrainEventCandidate): BrainEventDisposition {
   if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator") return "silent"
   if (turn.card?.kind === "worker_blocked") return "immediate"
+  if (turn.card?.kind === "a2ui") return "silent"
 
   const text = turn.text.trim()
   if (!text) return "silent"

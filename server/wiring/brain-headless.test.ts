@@ -4,7 +4,16 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { listSessions, recordSession } from "../lib/sessions"
-import { BRAIN_DIR, HEADLESS_BRAIN_PANE, brainFamilyForModel, createHeadlessBrainRunner, resolveBrainSessionModel, writeBrainMcpConfig } from "./brain-headless"
+import {
+  BRAIN_DIR,
+  BRAIN_RUNTIME_ALLOWED_TOOLS,
+  HEADLESS_BRAIN_PANE,
+  brainFamilyForModel,
+  buildBrainClaudeArgs,
+  createHeadlessBrainRunner,
+  resolveBrainSessionModel,
+  writeBrainMcpConfig,
+} from "./brain-headless"
 
 // The brain's --mcp-config (canvas-board-sync A1): only `board`, loopback, 0600, no token.
 
@@ -69,5 +78,18 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_DEFAULT_MODEL: "gemini-4-argon-medium" })).toBe("gemini-4-argon-medium")
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-carbon-high")
     expect(resolveBrainSessionModel("auto", {})).toBe("claude-opus-5-5")
+  })
+
+  test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and ./bin/ui before -- prompt", () => {
+    expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual(["Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+    const args = buildBrainClaudeArgs({
+      prompt: "render card",
+      sessionId: "sid-123",
+      resume: false,
+      mode: "auto",
+      model: "claude-opus-5-5",
+    })
+    expect(args.slice(0, 3)).toEqual(["--allowedTools", "Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+    expect(args.slice(-2)).toEqual(["--", "render card"])
   })
 })

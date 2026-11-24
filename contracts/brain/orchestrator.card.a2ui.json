@@ -1,0 +1,93 @@
+{
+  "type": "orchestrator",
+  "turn": {
+    "id": "7a1e4c9b-0000-4000-8000-000000000001",
+    "threadId": "brain",
+    "role": "orchestrator",
+    "text": "Email confirm: \"Q4 Tax Invoice\" → client@example.com (Cc: ops@example.com, billing@example.com)\nPlease find the Q4 tax invoice attached.",
+    "taskId": null,
+    "createdAt": 1793146800000,
+    "card": {
+      "kind": "a2ui",
+      "source": "app",
+      "surfaceId": "email-confirm-01",
+      "messages": [
+        {
+          "version": "1.0",
+          "createSurface": {
+            "surfaceId": "email-confirm-01",
+            "catalogId": "basic_catalog_1_0",
+            "components": [
+              { "id": "root", "component": "Card", "children": ["col"] },
+              {
+                "id": "col",
+                "component": "Column",
+                "children": [
+                  "header_row",
+                  "to_text",
+                  "cc_picker",
+                  "cc_check_0",
+                  "cc_check_1",
+                  "divider",
+                  "body_text",
+                  "actions_row"
+                ]
+              },
+              { "id": "header_row", "component": "Row", "children": ["subject_text", "state_badge"] },
+              { "id": "subject_text", "component": "Text", "text": { "@path": "/email/subject" }, "variant": "title" },
+              { "id": "state_badge", "component": "Badge", "text": { "@path": "/email/state" } },
+              { "id": "to_text", "component": "Text", "text": "To: client@example.com", "variant": "caption" },
+              {
+                "id": "cc_picker",
+                "component": "ChoicePicker",
+                "label": "Cc",
+                "multiple": true,
+                "options": [
+                  { "value": "ops@example.com", "label": "ops@example.com" },
+                  { "value": "billing@example.com", "label": "billing@example.com" }
+                ],
+                "value": { "@path": "/email/enabledCc" }
+              },
+              { "id": "cc_check_0", "component": "CheckBox", "label": "ops@example.com", "value": "ops@example.com", "checked": true },
+              { "id": "cc_check_1", "component": "CheckBox", "label": "billing@example.com", "value": "billing@example.com", "checked": true },
+              { "id": "divider", "component": "Divider" },
+              { "id": "body_text", "component": "Text", "text": { "@path": "/email/body" }, "variant": "body" },
+              { "id": "actions_row", "component": "Row", "children": ["confirm_btn", "cancel_btn"] },
+              {
+                "id": "confirm_btn",
+                "component": "Button",
+                "label": "Send Email",
+                "variant": "primary",
+                "action": {
+                  "name": "email.confirm",
+                  "context": {
+                    "enabledCc": { "@path": "/email/enabledCc" }
+                  }
+                }
+              },
+              {
+                "id": "cancel_btn",
+                "component": "Button",
+                "label": "Cancel",
+                "variant": "secondary",
+                "action": { "name": "email.cancel" }
+              }
+            ],
+            "dataModel": {
+              "email": {
+                "to": "client@example.com",
+                "cc": ["ops@example.com", "billing@example.com"],
+                "enabledCc": ["ops@example.com", "billing@example.com"],
+                "subject": "Q4 Tax Invoice",
+                "body": "Please find the Q4 tax invoice attached.",
+                "draftId": "r-8841209",
+                "gmailThreadId": "192b8e0a11c4",
+                "state": "pending"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

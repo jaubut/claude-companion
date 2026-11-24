@@ -1,0 +1,11 @@
+{
+  "surfaceId": "email-confirm-01",
+  "turnId": "7a1e4c9b-0000-4000-8000-000000000001",
+  "action": {
+    "name": "email.confirm",
+    "context": {
+      "enabledCc": ["ops@example.com"]
+    }
+  },
+  "actionKey": "act-0192b8e0-0001"
+}

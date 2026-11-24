@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { BRAIN_RUNTIME_ALLOWED_TOOLS } from "../server/wiring/brain-headless"
 import { repoIssues } from "./lint-repo"
 
 const entry = (path: string, sha = "a".repeat(40)) => `100644 ${sha} 0\t${path}\0`
@@ -27,5 +28,13 @@ describe("repoIssues", () => {
 
   test("reports unreadable settings instead of throwing", () => {
     expect(repoIssues("", "{")).toEqual(["brain/.claude/settings.json: not valid JSON"])
+  })
+
+  test("honors real BRAIN_RUNTIME_ALLOWED_TOOLS from brain-headless.ts and flags brain/bin/ui if runtimeAllow is omitted", () => {
+    expect(repoIssues(entry("brain/bin/ui"), allowed)).toEqual([
+      "brain/bin/ui: Bash(bin/ui:*) missing from brain/.claude/settings.json",
+      "brain/bin/ui: Bash(./bin/ui:*) missing from brain/.claude/settings.json",
+    ])
+    expect(repoIssues(entry("brain/bin/ui"), allowed, BRAIN_RUNTIME_ALLOWED_TOOLS)).toEqual([])
   })
 })

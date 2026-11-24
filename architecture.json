@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-23",
+  "generatedAt": "2026-11-24",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -53,6 +53,16 @@
             {
               "method": "*",
               "path": "/hooks/brain/pr-merge",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/ui",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/api/brain/a2ui/action",
               "prefix": false
             },
             {
@@ -129,6 +139,128 @@
             "lib/brain.ts",
             "wiring/auto-deploy.ts",
             "wiring/worker-mcp.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/a2ui-actions.ts",
+          "lines": 305,
+          "kind": "lib",
+          "exports": [
+            "handleA2UIAction"
+          ],
+          "state": [
+            "inFlightActions: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/a2ui.ts",
+            "lib/a2ui-macros.ts",
+            "lib/brain.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/triage-pr.ts",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/orchestrator.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/a2ui-macros.ts",
+          "lines": 613,
+          "kind": "lib",
+          "exports": [
+            "REPO_RE",
+            "EmailMacroInput",
+            "PrMacroInput",
+            "HydratedPrData",
+            "MacroOutcome",
+            "parseCcList",
+            "buildEmailConfirmSurface",
+            "computeReviewState",
+            "hydratePrGateData",
+            "buildPrGateSurface",
+            "A2UIRouteDeps",
+            "executeA2UIMacro"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/a2ui.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/triage-pr.ts",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-pr-merge.ts",
+            "lib/a2ui-actions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/a2ui.ts",
+          "lines": 535,
+          "kind": "lib",
+          "exports": [
+            "A2UI_VERSION",
+            "A2UI_BASIC_CATALOG_ID",
+            "A2UI_BASIC_COMPONENTS",
+            "A2UIComponentType",
+            "A2UIPathBinding",
+            "A2UIActionSpec",
+            "A2UIComponent",
+            "A2UICreateSurfacePayload",
+            "A2UIUpdateDataModelPayload",
+            "A2UIUpdateComponentsPayload",
+            "A2UICreateSurfaceMessage",
+            "A2UIUpdateDataModelMessage",
+            "A2UIUpdateComponentsMessage",
+            "A2UIMessage",
+            "A2UIFrame",
+            "A2UIActionRequest",
+            "SURFACE_ID_RE",
+            "ACTION_NAME_RE",
+            "ACTION_KEY_RE",
+            "containsHtmlOrScript",
+            "parseJsonPointer",
+            "isValidJsonPointer",
+            "getJsonPointer",
+            "setJsonPointer",
+            "isPathBinding",
+            "resolveA2UIContext",
+            "validateA2UIComponent",
+            "validateA2UIMessage",
+            "validateA2UIMessages",
+            "validateA2UIActionRequest",
+            "A2UIEngineDeps",
+            "getSurfaceDataModel",
+            "createSurfaceTurn",
+            "updateSurfaceData",
+            "updateSurfaceComponents"
+          ],
+          "state": [
+            "ALLOWED_COMPONENTS: Set",
+            "DANGEROUS_KEYS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/orchestrator-chat.ts",
+            "state.ts",
+            "wiring/orchestrator.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1286,7 +1418,7 @@
         },
         {
           "path": "lib/brain-event-triage.ts",
-          "lines": 67,
+          "lines": 68,
           "kind": "lib",
           "exports": [
             "BrainEventDisposition",
@@ -1413,7 +1545,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 300,
+          "lines": 301,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -3938,7 +4070,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 346,
+          "lines": 359,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -3954,6 +4086,7 @@
             "setTurnCard",
             "findWorkerAlert",
             "openWorkerAlertIds",
+            "findA2UITurn",
             "getThread",
             "searchThread",
             "createTask",
@@ -3977,6 +4110,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/a2ui.ts",
             "lib/orchestrator-db.ts"
           ],
           "listeners": [],
@@ -7913,7 +8047,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 414,
+          "lines": 461,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -7926,6 +8060,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/a2ui.ts",
+            "lib/a2ui-macros.ts",
             "lib/auth.ts",
             "lib/brain.ts",
             "lib/brain-trace.ts",
@@ -7933,6 +8069,7 @@
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
             "lib/sessions.ts",
+            "lib/triage-pr.ts",
             "lib/vault-guard.ts",
             "lib/worker-invocation.ts",
             "wiring/brain.ts",
@@ -9142,11 +9279,13 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 306,
+          "lines": 319,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
+            "BRAIN_RUNTIME_ALLOWED_TOOLS",
+            "buildBrainClaudeArgs",
             "writeBrainMcpConfig",
             "getBrainModel",
             "BrainFamily",
@@ -10676,6 +10815,7 @@
           "module": "state.ts",
           "callers": [
             "companion-server.ts",
+            "lib/a2ui.ts",
             "lib/secret-requests.ts",
             "routes/api.ts#POST /api/push/broadcast",
             "routes/api.ts#POST /api/super-auto",
@@ -11308,6 +11448,346 @@
           "module": "ws.ts",
           "callers": [
             "companion-server.ts#* /"
+          ]
+        },
+        "A2UIActionRequest": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "A2UIEngineDeps": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "getSurfaceDataModel": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "resolveA2UIContext": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "updateSurfaceData": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "validateA2UIActionRequest": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "A2UIRouteDeps": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "MacroOutcome": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "REPO_RE": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "hydratePrGateData": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "parseCcList": {
+          "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "getTurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts",
+            "wiring/brain-handoff.ts",
+            "wiring/brain.ts",
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "setTurnCard": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts",
+            "wiring/brain.ts",
+            "wiring/worker-blocked.ts"
+          ]
+        },
+        "Turn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "lib/a2ui.ts",
+            "lib/dispatch-poller.ts",
+            "lib/front-door.ts",
+            "lib/orchestrator-brain.ts",
+            "lib/worker-blocked.ts",
+            "wiring/body.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "deployRepo": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "realGh": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "wiring/auto-compact.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/github-webhook.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver-dry-run.ts",
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "mergeAgentPr": {
+          "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "autoDeploy": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "isDeployRepo": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "appendTurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts",
+            "routes/orchestrator.ts",
+            "wiring/auto-deploy.ts",
+            "wiring/body-investigate.ts",
+            "wiring/body.ts",
+            "wiring/brain-lead.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain.ts",
+            "wiring/dispatch.ts",
+            "wiring/front-door.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts",
+            "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/worker-blocked.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "orchEmit": {
+          "module": "wiring/orchestrator.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain.ts",
+            "wiring/front-door.ts",
+            "wiring/proposals.ts",
+            "wiring/resolver.ts",
+            "wiring/tasks-agent.ts",
+            "wiring/triage.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "BRAIN_THREAD": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts",
+            "lib/brain-event-triage.ts",
+            "lib/brain-workers.ts",
+            "routes/brain.ts",
+            "routes/orchestrator.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "routes/orchestrator.ts#POST /api/orchestrator/send",
+            "wiring/auto-deploy.ts",
+            "wiring/brain-handoff.ts",
+            "wiring/brain-lead.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-stuck-events.ts",
+            "wiring/brain-task-cancel.ts",
+            "wiring/brain.ts",
+            "wiring/orchestrator.ts",
+            "wiring/worker-mcp.ts"
+          ]
+        },
+        "findA2UITurn": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui.ts"
+          ]
+        },
+        "A2UI_BASIC_CATALOG_ID": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "A2UI_VERSION": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "A2UIComponent": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "A2UICreateSurfaceMessage": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "A2UIMessage": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "lib/orchestrator-chat.ts"
+          ]
+        },
+        "SURFACE_ID_RE": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "containsHtmlOrScript": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "createSurfaceTurn": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "isValidJsonPointer": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "setJsonPointer": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "updateSurfaceComponents": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "validateA2UIMessages": {
+          "module": "lib/a2ui.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "GhFn": {
+          "module": "lib/triage-pr.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "lib/merge-gate.ts",
+            "lib/worker-pr-link.ts",
+            "routes/brain.ts",
+            "wiring/brain-pr-close.ts",
+            "wiring/brain-pr-merge.ts",
+            "wiring/brain-pr-resolve-conflicts.ts",
+            "wiring/brain-pr-update-branch.ts",
+            "wiring/github-webhook.ts",
+            "wiring/repo-view.ts",
+            "wiring/resolver.ts",
+            "wiring/triage.ts"
+          ]
+        },
+        "DeployResult": {
+          "module": "wiring/auto-deploy.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "TurnCard": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui.ts",
+            "lib/dispatch-poller.ts",
+            "lib/worker-blocked.ts",
+            "routes/orchestrator.ts"
           ]
         },
         "PathState": {
@@ -12672,29 +13152,6 @@
             "lib/body-tokens.ts"
           ]
         },
-        "BRAIN_THREAD": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "lib/brain-event-triage.ts",
-            "lib/brain-workers.ts",
-            "routes/brain.ts",
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/auto-deploy.ts",
-            "wiring/brain-handoff.ts",
-            "wiring/brain-lead.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-resolve-conflicts.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain-task-cancel.ts",
-            "wiring/brain.ts",
-            "wiring/orchestrator.ts",
-            "wiring/worker-mcp.ts"
-          ]
-        },
         "isRoutineLeadAck": {
           "module": "lib/brain.ts",
           "callers": [
@@ -13566,27 +14023,6 @@
             "wiring/body.ts"
           ]
         },
-        "Turn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/dispatch-poller.ts",
-            "lib/front-door.ts",
-            "lib/orchestrator-brain.ts",
-            "lib/worker-blocked.ts",
-            "wiring/body.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain.ts",
-            "wiring/orchestrator.ts"
-          ]
-        },
-        "TurnCard": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "lib/dispatch-poller.ts",
-            "lib/worker-blocked.ts",
-            "routes/orchestrator.ts"
-          ]
-        },
         "DIGEST_MAX": {
           "module": "lib/body.ts",
           "callers": [
@@ -14259,21 +14695,6 @@
             "lib/merge-gate.test-util.ts",
             "lib/triage-pr.ts",
             "wiring/brain-pr-merge.ts",
-            "wiring/triage.ts"
-          ]
-        },
-        "GhFn": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "lib/merge-gate.ts",
-            "lib/worker-pr-link.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-resolve-conflicts.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/github-webhook.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver.ts",
             "wiring/triage.ts"
           ]
         },
@@ -17745,12 +18166,6 @@
             "routes/brain.ts"
           ]
         },
-        "mergeAgentPr": {
-          "module": "wiring/brain-pr-merge.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
         "updateAgentPr": {
           "module": "wiring/brain-pr-update-branch.ts",
           "callers": [
@@ -17765,12 +18180,6 @@
         },
         "cancelAgentTask": {
           "module": "wiring/brain-task-cancel.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "DeployResult": {
-          "module": "wiring/auto-deploy.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -17857,20 +18266,14 @@
             "routes/brain.ts"
           ]
         },
-        "isDeployRepo": {
-          "module": "wiring/auto-deploy.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
         "run": {
           "module": "lib/link-media.ts",
           "callers": [
             "routes/brain.ts"
           ]
         },
-        "autoDeploy": {
-          "module": "wiring/auto-deploy.ts",
+        "executeA2UIMacro": {
+          "module": "lib/a2ui-macros.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -18646,27 +19049,6 @@
             "wiring/proposals.ts"
           ]
         },
-        "orchEmit": {
-          "module": "wiring/orchestrator.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "routes/orchestrator.ts#POST /api/orchestrator/send",
-            "wiring/auto-deploy.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-resolve-conflicts.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain-task-cancel.ts",
-            "wiring/brain.ts",
-            "wiring/front-door.ts",
-            "wiring/proposals.ts",
-            "wiring/resolver.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts",
-            "wiring/worker-mcp.ts"
-          ]
-        },
         "writeCtx": {
           "module": "wiring/orchestrator.ts",
           "callers": [
@@ -18674,32 +19056,6 @@
             "wiring/brain-handoff.ts",
             "wiring/proposals.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "appendTurn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "routes/orchestrator.ts",
-            "wiring/auto-deploy.ts",
-            "wiring/body-investigate.ts",
-            "wiring/body.ts",
-            "wiring/brain-lead.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-resolve-conflicts.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-stuck-events.ts",
-            "wiring/brain-task-cancel.ts",
-            "wiring/brain.ts",
-            "wiring/dispatch.ts",
-            "wiring/front-door.ts",
-            "wiring/orchestrator.ts",
-            "wiring/proposals.ts",
-            "wiring/resolver.ts",
-            "wiring/tasks-agent.ts",
-            "wiring/triage.ts",
-            "wiring/worker-blocked.ts",
-            "wiring/worker-mcp.ts"
           ]
         },
         "getTask": {
@@ -19383,22 +19739,6 @@
             "wiring/brain-task-cancel.ts"
           ]
         },
-        "realGh": {
-          "module": "lib/triage-pr.ts",
-          "callers": [
-            "wiring/auto-compact.ts",
-            "wiring/brain-pr-close.ts",
-            "wiring/brain-pr-merge.ts",
-            "wiring/brain-pr-resolve-conflicts.ts",
-            "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-task-cancel.ts",
-            "wiring/github-webhook.ts",
-            "wiring/repo-view.ts",
-            "wiring/resolver-dry-run.ts",
-            "wiring/triage.ts",
-            "wiring/worker-mcp.ts"
-          ]
-        },
         "KeepNote": {
           "module": "lib/auto-compact-keep.ts",
           "callers": [
@@ -19687,14 +20027,6 @@
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain-activity.ts"
-          ]
-        },
-        "getTurn": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/brain-handoff.ts",
-            "wiring/brain.ts",
-            "wiring/worker-blocked.ts"
           ]
         },
         "openDeliveries": {
@@ -20147,13 +20479,6 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/brain.ts"
-          ]
-        },
-        "setTurnCard": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/brain.ts",
-            "wiring/worker-blocked.ts"
           ]
         },
         "createHeadlessBrainRunner": {
