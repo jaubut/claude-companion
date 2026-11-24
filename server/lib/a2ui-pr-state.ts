@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { type A2UIComponent, type A2UIEngineDeps, getSurfaceDataModel } from "./a2ui"
+import { findA2UITurn } from "./orchestrator-chat"
 
-// PR Gate card state: CI rollup and shepherd review verdicts from `gh pr view` JSON.
+// PR Gate card state (CI rollup and shepherd review verdicts from `gh pr view` JSON)
+// plus anti-forgery / readonly surface guards for outbound email and PR gate surfaces.
 
 const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
 const GEMINI_HEADING = /^♊️? \*\*Gemini review\*\* \(agy\b/u
@@ -73,4 +76,57 @@ export function computeReviewState(
   if (!normalGeminiOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
   if (!normalClaudeOnly && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
   return "approved"
+}
+
+const RESERVED_OUTBOUND_ACTIONS = new Set(["email.confirm", "email.cancel"])
+const RESERVED_PR_ACTIONS = new Set(["pr.merge", "pr.deploy", "pr.refresh"])
+
+export const backsOutbound = (model: Record<string, unknown>): boolean => {
+  const email = model.email
+  return !!email && typeof email === "object" && (email as Record<string, unknown>).outboundId != null
+}
+
+export const backsPrGate = (model: Record<string, unknown>): boolean =>
+  model.pr !== undefined && model.pr !== null
+
+/** Outbound-backed email cards are server-written only: the Brain may not patch, restyle or shadow one. */
+export function isOutboundSurface(surfaceId: string, engine: A2UIEngineDeps = {}): boolean {
+  if (/^outbound-/.test(surfaceId)) return true
+  const turn = (engine.findTurn ?? findA2UITurn)(surfaceId)
+  return turn?.card?.kind === "a2ui" && backsOutbound(getSurfaceDataModel(turn.card))
+}
+
+/** PR gate cards are server-hydrated only: the Brain may not patch, restyle or shadow one. */
+export function isPrGateSurface(surfaceId: string, engine: A2UIEngineDeps = {}): boolean {
+  if (/^pr-/.test(surfaceId)) return true
+  const turn = (engine.findTurn ?? findA2UITurn)(surfaceId)
+  return turn?.card?.kind === "a2ui" && backsPrGate(getSurfaceDataModel(turn.card))
+}
+
+export function checkSurfaceWriteGuard(
+  surfaceId: string,
+  engine: A2UIEngineDeps = {},
+): "outbound_surface_readonly" | "pr_surface_readonly" | null {
+  if (isOutboundSurface(surfaceId, engine)) return "outbound_surface_readonly"
+  if (isPrGateSurface(surfaceId, engine)) return "pr_surface_readonly"
+  return null
+}
+
+export function checkDataModelGuard(
+  model: Record<string, unknown>,
+): "outbound_surface_readonly" | "pr_surface_readonly" | null {
+  if (backsOutbound(model)) return "outbound_surface_readonly"
+  if (backsPrGate(model)) return "pr_surface_readonly"
+  return null
+}
+
+export function checkComponentActionsGuard(
+  components: A2UIComponent[],
+): "outbound_surface_readonly" | "pr_surface_readonly" | null {
+  for (const c of components) {
+    const act = c.action?.name
+    if (act && RESERVED_OUTBOUND_ACTIONS.has(act)) return "outbound_surface_readonly"
+    if (act && RESERVED_PR_ACTIONS.has(act)) return "pr_surface_readonly"
+  }
+  return null
 }

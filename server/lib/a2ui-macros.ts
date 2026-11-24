@@ -24,13 +24,26 @@ import {
   parseProposal,
   policyRefusal,
 } from "./outbound"
-import { type GhCheck, type GhComment, computeCiState, computeReviewState } from "./a2ui-pr-state"
+import {
+  type GhCheck,
+  type GhComment,
+  backsOutbound,
+  backsPrGate,
+  checkComponentActionsGuard,
+  checkDataModelGuard,
+  checkSurfaceWriteGuard,
+  computeCiState,
+  computeReviewState,
+  isOutboundSurface,
+  isPrGateSurface,
+} from "./a2ui-pr-state"
 import { type GhFn, realGh } from "./triage-pr"
 import type { DeployResult } from "../wiring/auto-deploy"
 import type { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { outboundStore } from "../wiring/outbound"
 
 export { handleA2UIAction } from "./a2ui-actions"
+export { backsOutbound, backsPrGate, isOutboundSurface, isPrGateSurface } from "./a2ui-pr-state"
 
 // Server-side A2UI v1.0 macro expansion (`EmailConfirmCard`, `PrGateCard`, `patch`, `custom`).
 
@@ -87,18 +100,6 @@ const fail = (status: number, error: string, extra: Record<string, unknown> = {}
   status,
   body: { ok: false, error, ...extra },
 })
-
-const backsOutbound = (model: Record<string, unknown>): boolean => {
-  const email = model.email
-  return !!email && typeof email === "object" && (email as Record<string, unknown>).outboundId != null
-}
-
-/** Outbound-backed email cards are server-written only: the Brain may not patch, restyle or shadow one. */
-function isOutboundSurface(surfaceId: string, engine: A2UIEngineDeps = {}): boolean {
-  if (surfaceId.startsWith("outbound-")) return true
-  const turn = (engine.findTurn ?? findA2UITurn)(surfaceId)
-  return turn?.card?.kind === "a2ui" && backsOutbound(getSurfaceDataModel(turn.card))
-}
 
 export function resolveOutboundStore(
   outbound: OutboundStore | (() => OutboundStore) | null | undefined,
@@ -294,7 +295,7 @@ export function buildPrGateSurface(
 ): { ok: true; surfaceId: string; text: string; messages: A2UIMessage[]; dataModel: Record<string, unknown> } | { ok: false; error: string } {
   const defaultId = `pr-${pr.repo.replace(/[^A-Za-z0-9_.-]/g, "-")}-${pr.number}`
   const surfaceId = typeof customSurfaceId === "string" && customSurfaceId.trim() ? customSurfaceId.trim() : defaultId
-  if (!SURFACE_ID_RE.test(surfaceId)) return { ok: false, error: "invalid_surface_id" }
+  if (!SURFACE_ID_RE.test(surfaceId) || !/^pr-/.test(surfaceId)) return { ok: false, error: "invalid_surface_id" }
 
   const rawReason = typeof pr.reason === "string" && pr.reason.trim() ? pr.reason.trim() : null
   if (rawReason && containsHtmlOrScript(rawReason)) return { ok: false, error: "html_not_allowed" }
@@ -409,6 +410,7 @@ export async function executeA2UIMacro(
     let recHash: string | null = null
 
     if (!isDryRun && store) {
+      if (customSurfaceId) return fail(403, "outbound_surface_readonly")
       const parsed = parseProposal({
         kind: "email", account, to: toList, cc, subject, body: emailBody,
         inReplyTo, threadId: gmailThreadId, why, requestedBy: "brain",
@@ -419,12 +421,15 @@ export async function executeA2UIMacro(
       const rec = store.propose(parsed.proposal, Date.now())
       outboundId = rec.id
       recHash = rec.payloadHash
+    } else if (customSurfaceId) {
+      const guardErr = checkSurfaceWriteGuard(customSurfaceId, deps.engine)
+      if (guardErr) return fail(403, guardErr)
     }
 
     const built = buildEmailConfirmSurface({
       to: toList, cc, subject, body: emailBody, account, inReplyTo, why, dryRun: isDryRun,
       outboundId, payloadHash: recHash, draftId, gmailThreadId,
-      surfaceId: customSurfaceId ?? (outboundId ? `outbound-${outboundId}` : null),
+      surfaceId: outboundId ? `outbound-${outboundId}` : customSurfaceId,
     })
     if (!built.ok) return fail(400, built.error)
     const turn = createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, deps.engine)
@@ -438,6 +443,11 @@ export async function executeA2UIMacro(
   }
 
   if (macro === "pr") {
+    const customSurfaceId = typeof body.surfaceId === "string" && body.surfaceId.trim() ? body.surfaceId.trim() : null
+    if (customSurfaceId) {
+      if (isOutboundSurface(customSurfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
+      if (!SURFACE_ID_RE.test(customSurfaceId) || !/^pr-/.test(customSurfaceId)) return fail(400, "invalid_surface_id")
+    }
     const prNum = typeof body.pr === "number" ? body.pr : typeof body.pr === "string" && /^\d+$/.test(body.pr.trim()) ? Number(body.pr.trim()) : 0
     const hydrated = await hydratePrGateData(
       {
@@ -445,12 +455,12 @@ export async function executeA2UIMacro(
         pr: prNum,
         deployRepo: typeof body.deployRepo === "string" ? body.deployRepo : null,
         ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
-        surfaceId: typeof body.surfaceId === "string" ? body.surfaceId : null,
+        surfaceId: customSurfaceId,
       },
       deps.gh ?? realGh,
     )
     if (!hydrated.ok) return { status: hydrated.status, body: hydrated.body }
-    const built = buildPrGateSurface(hydrated.pr, typeof body.surfaceId === "string" ? body.surfaceId : null)
+    const built = buildPrGateSurface(hydrated.pr, customSurfaceId)
     if (!built.ok) return fail(400, built.error)
     const turn = createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, deps.engine)
     return {
@@ -465,7 +475,14 @@ export async function executeA2UIMacro(
     const path = typeof body.path === "string" ? body.path : ""
     if (!isValidJsonPointer(path)) return fail(400, "invalid_json_pointer")
     if (!("value" in body)) return fail(400, "value_required")
-    if (isOutboundSurface(surfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
+    const preGuard = checkSurfaceWriteGuard(surfaceId, deps.engine)
+    if (preGuard) return fail(403, preGuard)
+    const existing = (deps.engine?.findTurn ?? findA2UITurn)(surfaceId)
+    const baseModel = existing?.card?.kind === "a2ui" ? getSurfaceDataModel(existing.card) : {}
+    try {
+      const postGuard = checkDataModelGuard(setJsonPointer(baseModel, path, body.value))
+      if (postGuard) return fail(403, postGuard)
+    } catch { /* invalid pointer target handled by updateSurfaceData */ }
     const res = updateSurfaceData(surfaceId, path, body.value, deps.engine)
     if (!res.ok) return fail(res.status, res.error)
     return {
@@ -489,7 +506,15 @@ export async function executeA2UIMacro(
     const validated = validateA2UIMessages(rawPayload)
     if (!validated.ok) return fail(400, validated.error)
     const { messages, surfaceId } = validated
-    if (isOutboundSurface(surfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
+    const preGuard = checkSurfaceWriteGuard(surfaceId, deps.engine)
+    if (preGuard) return fail(403, preGuard)
+    for (const msg of messages) {
+      const comps = "createSurface" in msg ? msg.createSurface.components : "updateComponents" in msg ? msg.updateComponents.components : null
+      if (comps) {
+        const actGuard = checkComponentActionsGuard(comps)
+        if (actGuard) return fail(403, actGuard)
+      }
+    }
     const first = messages[0]!
     if ("createSurface" in first) {
       const summary = typeof body.text === "string" && body.text.trim() ? body.text.trim() : `A2UI surface [${surfaceId}]`
@@ -515,11 +540,25 @@ export async function executeA2UIMacro(
           }
         }
       }
-      if (backsOutbound(foldedCreate.createSurface.dataModel)) return fail(403, "outbound_surface_readonly")
+      const modelGuard = checkDataModelGuard(foldedCreate.createSurface.dataModel)
+      if (modelGuard) return fail(403, modelGuard)
       const turn = createSurfaceTurn({ surfaceId, text: summary, messages: [foldedCreate] }, deps.engine)
       return { status: 200, body: { ok: true, macro: "custom", turnId: turn.id, surfaceId, turn } }
     }
 
+    const existing = (deps.engine?.findTurn ?? findA2UITurn)(surfaceId)
+    let simModel = existing?.card?.kind === "a2ui" ? getSurfaceDataModel(existing.card) : {}
+    for (const msg of messages) {
+      if ("updateDataModel" in msg) {
+        try {
+          simModel = setJsonPointer(simModel, msg.updateDataModel.path, msg.updateDataModel.value)
+        } catch {
+          return fail(400, "invalid_json_pointer_target")
+        }
+        const postGuard = checkDataModelGuard(simModel)
+        if (postGuard) return fail(403, postGuard)
+      }
+    }
     let lastTurn: Turn | null = null
     for (const msg of messages) {
       if ("updateDataModel" in msg) {

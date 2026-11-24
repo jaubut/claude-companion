@@ -80,6 +80,7 @@ async function runActionForTurn(
   const name = req.action.name
 
   if (name === "pr.refresh") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
     const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim())
       ? prModel.repo.trim()
@@ -117,6 +118,7 @@ async function runActionForTurn(
   }
 
   if (name === "pr.merge") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
     // Pin repo and prNum strictly to the surface's hydrated prModel so context cannot redirect a merge.
     const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
@@ -124,11 +126,19 @@ async function runActionForTurn(
     const expectedSha = typeof prModel.headSha === "string" ? prModel.headSha.trim() : ""
     if (!repo || !prNum || !expectedSha) return fail(400, "pr_target_missing")
 
-    // Verify live GitHub PR head SHA matches the card's hydrated headSha before calling mergeAgentPr.
+    // Verify live GitHub PR head SHA and displayed metadata match the card before calling mergeAgentPr.
     const live = await hydratePrGateData({ repo, pr: prNum }, deps.gh ?? realGh)
     if (!live.ok) return { status: live.status, body: live.body }
     if (live.pr.headSha !== expectedSha) {
       return fail(409, "head_moved", { expected: expectedSha, actual: live.pr.headSha })
+    }
+    if (prModel.title !== live.pr.title || prModel.url !== live.pr.url) {
+      return fail(409, "pr_metadata_stale", {
+        expectedTitle: prModel.title ?? null,
+        actualTitle: live.pr.title,
+        expectedUrl: prModel.url ?? null,
+        actualUrl: live.pr.url,
+      })
     }
 
     const mergeFn = deps.prMerge ?? mergeAgentPr
@@ -160,6 +170,7 @@ async function runActionForTurn(
   }
 
   if (name === "pr.deploy") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
     if (prModel.state !== "merged") {
       return fail(409, "not_merged", { state: prModel.state ?? null })
@@ -215,6 +226,7 @@ async function runActionForTurn(
     }
     const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
     if (outboundId && emailModel.dryRun !== true) {
+      if (req.surfaceId !== `outbound-${outboundId}`) return fail(403, "outbound_surface_mismatch")
       const store = resolveOutboundStore(deps.outbound)
       if (store) {
         const rec = store.get(outboundId)
@@ -260,6 +272,7 @@ async function runActionForTurn(
 
     const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
     if (outboundId && emailModel.dryRun !== true) {
+      if (req.surfaceId !== `outbound-${outboundId}`) return fail(403, "outbound_surface_mismatch")
       const store = resolveOutboundStore(deps.outbound)
       if (!store) return fail(503, "outbound_unavailable")
       const rec = store.get(outboundId)

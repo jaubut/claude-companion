@@ -1040,6 +1040,138 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(paddedConfirm.status).toBe(200)
     expect(sentPayloads.at(-1)!.body).toBe("Body with trailing newline\n")
+
+    // 11. Two-step decoy attack & shadowing bypass guards on outbound email surfaces
+    // (a) custom createSurface with harmless text + email.confirm button -> rejected 403 outbound_surface_readonly
+    const decoyWithBtn = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "decoy-btn-1",
+            catalogId: "basic_catalog_1_0",
+            components: [
+              { id: "root", component: "Card", children: ["t1", "b1"] },
+              { id: "t1", component: "Text", text: "Harmless notification" },
+              { id: "b1", component: "Button", label: "Acknowledge", action: { name: "email.confirm" } },
+            ],
+            dataModel: { email: { to: "victim@example.com", state: "pending" } },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(decoyWithBtn.status).toBe(403)
+    expect(decoyWithBtn.json.error).toBe("outbound_surface_readonly")
+
+    // (b) two-step decoy: custom createSurface without reserved button/outboundId, then patch /email/outboundId or /email -> rejected 403
+    const decoyStep1 = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "decoy-step-1",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Text", text: "Harmless preview" }],
+            dataModel: { email: { to: "victim@example.com", state: "pending" } },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(decoyStep1.status).toBe(200)
+
+    const decoyPatchId = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "patch", surfaceId: "decoy-step-1", path: "/email/outboundId", value: targetId },
+      { headers: AUTH },
+    )
+    expect(decoyPatchId.status).toBe(403)
+    expect(decoyPatchId.json.error).toBe("outbound_surface_readonly")
+
+    const decoyPatchEmailObj = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "patch",
+        surfaceId: "decoy-step-1",
+        path: "/email",
+        value: { to: "victim@example.com", outboundId: targetId, state: "pending" },
+      },
+      { headers: AUTH },
+    )
+    expect(decoyPatchEmailObj.status).toBe(403)
+    expect(decoyPatchEmailObj.json.error).toBe("outbound_surface_readonly")
+
+    const decoyCustomUpdateModel = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{ version: "1.0", updateDataModel: { surfaceId: "decoy-step-1", path: "/email/outboundId", value: targetId } }],
+      },
+      { headers: AUTH },
+    )
+    expect(decoyCustomUpdateModel.status).toBe(403)
+    expect(decoyCustomUpdateModel.json.error).toBe("outbound_surface_readonly")
+
+    // (c) shadowing attempt: dryRun email on an outbound-* or pr-* surfaceId, or real email with custom surfaceId -> 403
+    const shadowOutbound = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "email", to: "a@example.com", subject: "S", body: "B", dryRun: true, surfaceId: targetSurface },
+      { headers: AUTH },
+    )
+    expect(shadowOutbound.status).toBe(403)
+    expect(shadowOutbound.json.error).toBe("outbound_surface_readonly")
+
+    const shadowPr = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "email", to: "a@example.com", subject: "S", body: "B", dryRun: true, surfaceId: "pr-shadow-1" },
+      { headers: AUTH },
+    )
+    expect(shadowPr.status).toBe(403)
+    expect(shadowPr.json.error).toBe("pr_surface_readonly")
+
+    const customSurfaceRealEmail = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "email", to: "a@example.com", subject: "S", body: "B", surfaceId: "custom-email-id" },
+      { headers: AUTH },
+    )
+    expect(customSurfaceRealEmail.status).toBe(403)
+    expect(customSurfaceRealEmail.json.error).toBe("outbound_surface_readonly")
+
+    // (d) confirm on a surface whose surfaceId !== `outbound-${outboundId}` -> 403 outbound_surface_mismatch
+    const mismatchBuilt = buildEmailConfirmSurface({
+      to: ["pad@example.com"],
+      subject: "Pad",
+      body: "Body with trailing newline\n",
+      outboundId: targetId,
+      payloadHash: String(target.json.payloadHash),
+      surfaceId: "mismatch-surface-1",
+    })
+    if (!mismatchBuilt.ok) throw new Error(mismatchBuilt.error)
+    const mismatchTurn = createSurfaceTurn(
+      { surfaceId: mismatchBuilt.surfaceId, text: mismatchBuilt.text, messages: mismatchBuilt.messages },
+      { emitTurn: () => {} },
+    )
+    const mismatchConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId: "mismatch-surface-1", turnId: mismatchTurn.id, action: { name: "email.confirm" }, actionKey: "mismatch-1" },
+      { headers: bearer },
+    )
+    expect(mismatchConfirm.status).toBe(403)
+    expect(mismatchConfirm.json.error).toBe("outbound_surface_mismatch")
   })
 
   test("bin/ui pr --reason renders reason_text component above divider and preserves reason across pr.refresh", async () => {
@@ -1114,5 +1246,109 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     const modelAfter = getSurfaceDataModel(chat.getTurn(turnId)!.card!)
     expect(getJsonPointer(modelAfter, "/pr/reason")).toBe("touches db/migrations/001.sql (prod schema) — human merge only")
+
+    // PR gate surface tampering & anti-forgery guards:
+    // 1) patch /pr/repo or /pr/headSha on pr-* surface -> 403 pr_surface_readonly
+    const patchPrRepo = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "patch", surfaceId, path: "/pr/repo", value: "jaubut/evil-repo" },
+      { headers: AUTH },
+    )
+    expect(patchPrRepo.status).toBe(403)
+    expect(patchPrRepo.json.error).toBe("pr_surface_readonly")
+
+    const patchPrSha = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "patch", surfaceId, path: "/pr/headSha", value: "deadbeef0000" },
+      { headers: AUTH },
+    )
+    expect(patchPrSha.status).toBe(403)
+    expect(patchPrSha.json.error).toBe("pr_surface_readonly")
+
+    // 2) custom surface with pr.merge button or /pr dataModel (or two-step patch into /pr) -> 403 pr_surface_readonly
+    const customPrBtn = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "forged-pr-btn",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Button", label: "Looks benign", action: { name: "pr.merge" } }],
+            dataModel: { note: "hi" },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(customPrBtn.status).toBe(403)
+    expect(customPrBtn.json.error).toBe("pr_surface_readonly")
+
+    const customPrData = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "forged-pr-data",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Text", text: "Benign" }],
+            dataModel: { pr: { repo: "jaubut/claude-companion", number: 510, headSha } },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(customPrData.status).toBe(403)
+    expect(customPrData.json.error).toBe("pr_surface_readonly")
+
+    const benignSurf = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "benign-surf-1",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Text", text: "Benign" }],
+            dataModel: { info: "ok" },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(benignSurf.status).toBe(200)
+    const patchIntoPr = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "patch", surfaceId: "benign-surf-1", path: "/pr/repo", value: "jaubut/claude-companion" },
+      { headers: AUTH },
+    )
+    expect(patchIntoPr.status).toBe(403)
+    expect(patchIntoPr.json.error).toBe("pr_surface_readonly")
+
+    // 3) pr.merge when stored title/url mismatches live GitHub PR -> 409 pr_metadata_stale
+    const prRow = chat.getTurn(turnId)!
+    const tamperedPrCard = structuredClone(prRow.card!)
+    const prCreate = (tamperedPrCard.messages![0] as A2UICreateSurfaceMessage).createSurface
+    ;(prCreate.dataModel.pr as Record<string, unknown>).title = "harmless typo fix"
+    chat.setTurnCard(prRow.id, { messages: tamperedPrCard.messages })
+
+    const staleMetaMerge = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId, turnId, action: { name: "pr.merge" }, actionKey: "stale-meta-merge-1" },
+      { headers: bearer },
+    )
+    expect(staleMetaMerge.status).toBe(409)
+    expect(staleMetaMerge.json.error).toBe("pr_metadata_stale")
   })
 })
