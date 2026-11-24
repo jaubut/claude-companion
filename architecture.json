@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 442,
+          "lines": 440,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -161,6 +161,7 @@
           "imports": [
             "lib/a2ui.ts",
             "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
             "lib/brain.ts",
             "lib/orchestrator-chat.ts",
             "lib/outbound.ts",
@@ -176,7 +177,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 582,
+          "lines": 597,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -216,13 +217,15 @@
         },
         {
           "path": "lib/a2ui-pr-state.ts",
-          "lines": 133,
+          "lines": 139,
           "kind": "lib",
           "exports": [
             "GhCheck",
             "GhComment",
             "computeCiState",
             "computeReviewState",
+            "prSurfaceId",
+            "isReservedAction",
             "backsOutbound",
             "backsPrGate",
             "isOutboundSurface",
@@ -9434,7 +9437,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 278,
+          "lines": 280,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9465,7 +9468,7 @@
         },
         {
           "path": "wiring/brain-pr-park.ts",
-          "lines": 39,
+          "lines": 48,
           "kind": "lib",
           "exports": [
             "hardStopPark",
@@ -9578,7 +9581,7 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 262,
+          "lines": 277,
           "kind": "lib",
           "exports": [
             "StuckEventsDeps",
@@ -11579,6 +11582,13 @@
             "lib/a2ui-actions.ts"
           ]
         },
+        "prSurfaceId": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
+          ]
+        },
         "resolveOutboundStore": {
           "module": "lib/a2ui-macros.ts",
           "callers": [
@@ -11802,6 +11812,12 @@
             "wiring/brain-stuck-events.ts"
           ]
         },
+        "isReservedAction": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
         "A2UI_BASIC_CATALOG_ID": {
           "module": "lib/a2ui.ts",
           "callers": [
@@ -11824,7 +11840,8 @@
         "A2UICreateSurfaceMessage": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "A2UIMessage": {
@@ -11869,7 +11886,8 @@
         "updateSurfaceComponents": {
           "module": "lib/a2ui.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "validateA2UIMessages": {

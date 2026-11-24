@@ -36,6 +36,7 @@ import {
   computeReviewState,
   isOutboundSurface,
   isPrGateSurface,
+  prSurfaceId,
 } from "./a2ui-pr-state"
 import { type GhFn, realGh } from "./triage-pr"
 import type { DeployResult } from "../wiring/auto-deploy"
@@ -43,7 +44,7 @@ import type { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { outboundStore } from "../wiring/outbound"
 
 export { handleA2UIAction } from "./a2ui-actions"
-export { backsOutbound, backsPrGate, isOutboundSurface, isPrGateSurface } from "./a2ui-pr-state"
+export { backsOutbound, backsPrGate, isOutboundSurface, isPrGateSurface, prSurfaceId } from "./a2ui-pr-state"
 
 // Server-side A2UI v1.0 macro expansion (`EmailConfirmCard`, `PrGateCard`, `patch`, `custom`).
 
@@ -293,9 +294,9 @@ export function buildPrGateSurface(
   pr: HydratedPrData,
   customSurfaceId?: string | null,
 ): { ok: true; surfaceId: string; text: string; messages: A2UIMessage[]; dataModel: Record<string, unknown> } | { ok: false; error: string } {
-  const defaultId = `pr-${pr.repo.replace(/[^A-Za-z0-9_.-]/g, "-")}-${pr.number}`
-  const surfaceId = typeof customSurfaceId === "string" && customSurfaceId.trim() ? customSurfaceId.trim() : defaultId
-  if (!SURFACE_ID_RE.test(surfaceId) || !/^pr-/.test(surfaceId)) return { ok: false, error: "invalid_surface_id" }
+  const expectedId = prSurfaceId(pr.repo, pr.number)
+  const surfaceId = typeof customSurfaceId === "string" && customSurfaceId.trim() ? customSurfaceId.trim() : expectedId
+  if (!SURFACE_ID_RE.test(surfaceId) || surfaceId !== expectedId) return { ok: false, error: "invalid_surface_id" }
 
   const rawReason = typeof pr.reason === "string" && pr.reason.trim() ? pr.reason.trim() : null
   if (rawReason && containsHtmlOrScript(rawReason)) return { ok: false, error: "html_not_allowed" }
@@ -446,7 +447,7 @@ export async function executeA2UIMacro(
     const customSurfaceId = typeof body.surfaceId === "string" && body.surfaceId.trim() ? body.surfaceId.trim() : null
     if (customSurfaceId) {
       if (isOutboundSurface(customSurfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
-      if (!SURFACE_ID_RE.test(customSurfaceId) || !/^pr-/.test(customSurfaceId)) return fail(400, "invalid_surface_id")
+      if (!SURFACE_ID_RE.test(customSurfaceId)) return fail(400, "invalid_surface_id")
     }
     const prNum = typeof body.pr === "number" ? body.pr : typeof body.pr === "string" && /^\d+$/.test(body.pr.trim()) ? Number(body.pr.trim()) : 0
     const hydrated = await hydratePrGateData(
@@ -460,7 +461,21 @@ export async function executeA2UIMacro(
       deps.gh ?? realGh,
     )
     if (!hydrated.ok) return { status: hydrated.status, body: hydrated.body }
-    const built = buildPrGateSurface(hydrated.pr, customSurfaceId)
+    const expectedId = prSurfaceId(hydrated.pr.repo, hydrated.pr.number)
+    if (customSurfaceId && customSurfaceId !== expectedId) {
+      if (/^pr-/.test(customSurfaceId) || isPrGateSurface(customSurfaceId, deps.engine)) {
+        return fail(403, "pr_surface_readonly")
+      }
+      return fail(400, "invalid_surface_id")
+    }
+    const existingPrTurn = (deps.engine?.findTurn ?? findA2UITurn)(expectedId)
+    if (existingPrTurn?.card?.kind === "a2ui") {
+      const existingPr = getSurfaceDataModel(existingPrTurn.card).pr as Record<string, unknown> | undefined
+      if (existingPr && (existingPr.repo !== hydrated.pr.repo || existingPr.number !== hydrated.pr.number)) {
+        return fail(403, "pr_surface_readonly")
+      }
+    }
+    const built = buildPrGateSurface(hydrated.pr, expectedId)
     if (!built.ok) return fail(400, built.error)
     const turn = createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, deps.engine)
     return {

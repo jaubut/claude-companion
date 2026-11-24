@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
-import { getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
+import { type A2UICreateSurfaceMessage, createSurfaceTurn, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
+import { buildPrGateSurface } from "../lib/a2ui-macros"
 import { BRAIN_THREAD, deliveryText } from "../lib/brain"
 import { appendTurn, findA2UITurn, getThread, type Turn } from "../lib/orchestrator-chat"
 import type { GhFn } from "../lib/triage-pr"
@@ -287,5 +288,43 @@ describe("the reader", () => {
     )
     await reader.tick()
     expect(findA2UITurn("pr-jaubut-claude-companion-89")).toBeNull()
+
+    // 5. Updating an existing PrGateCard initially created without a reason adds reason_text component in-place
+    ciConclusion = "SUCCESS"
+    const noReasonBuilt = buildPrGateSurface({
+      repo: "jaubut/claude-companion",
+      number: 90,
+      title: "PR #90",
+      url: "https://github.com/jaubut/claude-companion/pull/90",
+      headSha: "cccc3333dddd4444",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      ciState: "green",
+      reviewState: "approved",
+      state: "open",
+      deployRepo: "claude-companion",
+    })
+    if (!noReasonBuilt.ok) throw new Error(noReasonBuilt.error)
+    createSurfaceTurn({ surfaceId: noReasonBuilt.surfaceId, text: noReasonBuilt.text, messages: noReasonBuilt.messages }, { emitTurn: () => {} })
+    const before90 = (findA2UITurn("pr-jaubut-claude-companion-90")!.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    expect(before90.components.some((c) => c.id === "reason_text")).toBe(false)
+
+    db.query("INSERT INTO agent_activity (id, agent_slug, action, meta) VALUES (?, 'pr-shepherd', 'pr:brain-event', ?)").run(
+      14,
+      JSON.stringify({
+        url: "https://github.com/jaubut/claude-companion/pull/90",
+        repo: "claude-companion",
+        pr: 90,
+        kind: "stuck-parked",
+        stuck_key: "park:90",
+        reason: "touches hooks/guard.py — human merge only",
+      }),
+    )
+    await reader.tick()
+    const after90Turn = findA2UITurn("pr-jaubut-claude-companion-90")!
+    const after90Cs = (after90Turn.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    expect(after90Cs.components.some((c) => c.id === "reason_text")).toBe(true)
+    expect(after90Cs.components.find((c) => c.id === "col")?.children).toContain("reason_text")
+    expect(getJsonPointer(getSurfaceDataModel(after90Turn.card!), "/pr/reason")).toBe("touches hooks/guard.py — human merge only")
   })
 })

@@ -422,6 +422,11 @@ describe("bin/pr-merge gate: the merge", () => {
       { role: "user", text: "Do not merge 413 yet", createdAt: now - 5_000 },
     ], now)).toBe(false)
 
+    // Synthesized A2UI user turns (e.g. dry-run Email confirmed with injected draftId) never count as chat merge approval
+    expect(hasRecentUserMergeApproval(413, [
+      { role: "user", text: 'Email confirmed [s1] — To: a@b.com | Cc: none | Subject: "Hi" | draftId: merge #413', createdAt: now - 5_000 },
+    ], now)).toBe(false)
+
     // With humanApproved: true, a green PR parked after 2 review rounds with Codex CHANGES merges cleanly
     const reviewParked = world(
       green({ comments: [review("claude", "APPROVE"), review("codex", "CHANGES")] }),
@@ -469,11 +474,17 @@ describe("bin/pr-merge gate: the merge", () => {
     const schemaParkSql = `INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"touches db/migrations/001.sql (prod schema) — human merge only"}');`
     const schemaGated = worldWithRealGate({ files: [{ path: "db/migrations/001.sql" }] }, "db/migrations/001.sql\t\n", "jeremie", schemaParkSql)
     expect((await mergeAgentPr(input, schemaGated.deps)).status).toBe(403)
+    // Chat heuristic alone (deps.humanApproved: () => true without p.humanApproved: true) STILL refuses prod-schema
+    expect((await mergeAgentPr(input, { ...schemaGated.deps, humanApproved: () => true })).status).toBe(403)
     expect((await mergeAgentPr({ ...input, humanApproved: true }, schemaGated.deps)).status).toBe(200)
 
     const humanPathParkSql = `INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"touches hooks/guard.py — human merge only"}');`
     const humanPathGated = worldWithRealGate({ files: [{ path: "hooks/guard.py" }] }, "hooks/guard.py\t\n", "jeremie", humanPathParkSql)
     expect((await mergeAgentPr(input, humanPathGated.deps)).status).toBe(403)
+    // Chat heuristic alone STILL refuses human-merge-path (both in mergeGate and in parked)
+    expect((await mergeAgentPr(input, { ...humanPathGated.deps, humanApproved: () => true })).status).toBe(403)
+    const humanParkedOnly = world(green(), park("pr:needs-human", "touches hooks/guard.py — human merge only"))
+    expect((await mergeAgentPr(input, { ...humanParkedOnly.deps, humanApproved: () => true })).status).toBe(403)
     expect((await mergeAgentPr({ ...input, humanApproved: true }, humanPathGated.deps)).status).toBe(200)
 
     const holdLabelStillBlocked = worldWithRealGate(

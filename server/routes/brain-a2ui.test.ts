@@ -352,6 +352,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       },
     })
 
+    const pr501Surface = "pr-jaubut-claude-companion-501"
     const created = await call(
       "POST",
       "/hooks/brain/ui",
@@ -360,7 +361,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         repo: "jaubut/claude-companion",
         pr: 501,
         deployRepo: "claude-companion",
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
       },
       { headers: AUTH },
     )
@@ -372,7 +373,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.deploy", context: { repo: "claude-companion" } },
         actionKey: "early-deploy-key",
@@ -388,7 +389,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.merge", context: { repo: "evil/other-repo", pr: 999 } },
         actionKey: "stale-merge-key",
@@ -410,7 +411,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.refresh" },
         actionKey: "refresh-key-1",
@@ -429,7 +430,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.merge", context: { repo: "spoofed/repo", pr: 999 } },
         actionKey: "merge-key-1",
@@ -440,7 +441,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.merge", context: { repo: "spoofed/repo", pr: 999 } },
         actionKey: "merge-key-1",
@@ -460,7 +461,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       "POST",
       "/api/brain/a2ui/action",
       {
-        surfaceId: "pr-501",
+        surfaceId: pr501Surface,
         turnId,
         action: { name: "pr.deploy", context: { repo: "claude-companion" } },
         actionKey: "deploy-key-1",
@@ -1350,5 +1351,43 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(staleMetaMerge.status).toBe(409)
     expect(staleMetaMerge.json.error).toBe("pr_metadata_stale")
+
+    // 4) macro: "pr" with a mismatched pr-* customSurfaceId (attempting to shadow another PR card) -> 403 pr_surface_readonly
+    const shadowAnotherPr = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 510,
+        surfaceId: "pr-jaubut-claude-companion-999",
+      },
+      { headers: AUTH },
+    )
+    expect(shadowAnotherPr.status).toBe(403)
+    expect(shadowAnotherPr.json.error).toBe("pr_surface_readonly")
+
+    // 5) pr.merge / pr.refresh / pr.deploy with a mismatched turnId refuses to fall back to findA2UITurn -> 404 surface_not_found
+    const wrongTurnMerge = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId, turnId: "wrong-turn-id-999", action: { name: "pr.merge" }, actionKey: "wrong-turn-merge-1" },
+      { headers: bearer },
+    )
+    expect(wrongTurnMerge.status).toBe(404)
+    expect(wrongTurnMerge.json.error).toBe("surface_not_found")
+
+    // 6) pr.refresh / pr.merge / pr.deploy when stored repo/number does not match prSurfaceId(repo, number) -> 403 pr_surface_mismatch
+    ;(prCreate.dataModel.pr as Record<string, unknown>).title = "feat(db): migration gate"
+    ;(prCreate.dataModel.pr as Record<string, unknown>).number = 999
+    chat.setTurnCard(prRow.id, { messages: tamperedPrCard.messages })
+    const mismatchedPrNum = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId, turnId, action: { name: "pr.merge" }, actionKey: "mismatch-pr-num-1" },
+      { headers: bearer },
+    )
+    expect(mismatchedPrNum.status).toBe(403)
+    expect(mismatchedPrNum.json.error).toBe("pr_surface_mismatch")
   })
 })

@@ -17,9 +17,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
+| `lib/a2ui-macros.ts` | 597 | lib | 14 |  |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/a2ui-macros.ts` | 582 | lib | 14 |  |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/worker-invocation.ts` | 570 | lib | 40 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -43,8 +43,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-list.ts` | 459 | lib | 21 |  |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
-| `lib/a2ui-actions.ts` | 442 | lib | 1 | state: inFlightActions: Map |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
+| `lib/a2ui-actions.ts` | 440 | lib | 1 | state: inFlightActions: Map |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
@@ -84,8 +84,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/ended-sessions.ts` | 287 | lib | 17 |  |
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `routes/notes.ts` | 283 | lib | 1 | state: NOTE_IMAGE_MIMES: Set |
+| `wiring/brain-pr-merge.ts` | 280 | lib | 4 |  |
 | `lib/orchestrator-brain.ts` | 278 | lib | 8 |  |
-| `wiring/brain-pr-merge.ts` | 278 | lib | 4 |  |
+| `wiring/brain-stuck-events.ts` | 277 | lib | 5 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
@@ -97,7 +98,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/inject-verified.ts` | 268 | lib | 19 |  |
 | `lib/records-store.ts` | 266 | lib | 22 | state: DATE_FIELDS: Set, let lock |
 | `lib/link-media-guard.ts` | 263 | lib | 10 | state: let shared |
-| `wiring/brain-stuck-events.ts` | 262 | lib | 5 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
 | `lib/orphan-question.ts` | 259 | lib | 13 | state: raised: Map |
 | `lib/command-offpane-launch.ts` | 255 | lib | 19 | state: versionMemo: Map |
@@ -185,12 +185,12 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
+| `lib/a2ui-pr-state.ts` | 139 | lib | 13 | state: RESERVED_OUTBOUND_ACTIONS: Set, RESERVED_PR_ACTIONS: Set |
 | `lib/board-mcp.ts` | 139 | lib | 4 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `wiring/brain-task-cancel.ts` | 137 | lib | 5 |  |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
-| `lib/a2ui-pr-state.ts` | 133 | lib | 11 | state: RESERVED_OUTBOUND_ACTIONS: Set, RESERVED_PR_ACTIONS: Set |
 | `routes/board.ts` | 132 | route-host | 5 | state: ALLOWED_ORIGINS: Set · routes: 2 |
 | `lib/transcript-artifacts.ts` | 131 | lib | 3 |  |
 | `lib/transcript-backfill.ts` | 131 | lib | 6 |  |
@@ -283,6 +283,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-mirror.ts` | 49 | lib | 5 |  |
 | `lib/worker-turn-watch.ts` | 49 | lib | 3 |  |
 | `lib/log.ts` | 48 | lib | 5 |  |
+| `wiring/brain-pr-park.ts` | 48 | lib | 3 |  |
 | `wiring/receipt-qa.ts` | 48 | lib | 4 | emits: receipt_qa |
 | `lib/worker-pid.ts` | 47 | lib | 4 |  |
 | `lib/auto-compact-gate.ts` | 46 | lib | 5 |  |
@@ -295,7 +296,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
 | `lib/field-guide.ts` | 39 | lib | 4 |  |
 | `wiring/board.ts` | 39 | lib | 3 |  |
-| `wiring/brain-pr-park.ts` | 39 | lib | 3 |  |
 | `lib/agent-pid.ts` | 38 | lib | 2 |  |
 | `lib/claude-mcp-trust.ts` | 37 | lib | 2 |  |
 | `routes/gauge.ts` | 37 | route-host | 1 | routes: 3 |
@@ -757,6 +757,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `clientInfo()` | `state.ts` | `companion-server.ts#* /ws`, `routes/api.ts#* /api/feed` |
 | `REPO_RE()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `routes/triage.ts` |
 | `hydratePrGateData()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `wiring/brain-stuck-events.ts` |
+| `prSurfaceId()` | `lib/a2ui-pr-state.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
 | `stripAngleTags()` | `lib/a2ui-macros.ts` | `lib/a2ui-actions.ts`, `wiring/brain-stuck-events.ts` |
 | `OutboundPayload()` | `lib/outbound.ts` | `lib/a2ui-actions.ts`, `wiring/outbound.ts` |
 | `payloadHash()` | `lib/outbound.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
@@ -766,7 +767,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `policyRefusal()` | `lib/outbound.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts` |
 | `gmailSender()` | `wiring/outbound.ts` | `lib/a2ui-actions.ts`, `wiring/triage.ts` |
 | `A2UIComponent()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts` |
+| `A2UICreateSurfaceMessage()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `A2UIMessage()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/orchestrator-chat.ts` |
+| `updateSurfaceComponents()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `DeployResult()` | `wiring/auto-deploy.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts` |
 | `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `extractToolResult()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |

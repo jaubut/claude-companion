@@ -12,9 +12,11 @@ import {
   REPO_RE,
   hydratePrGateData,
   parseCcList,
+  prSurfaceId,
   resolveOutboundStore,
   stripAngleTags,
 } from "./a2ui-macros"
+import { isReservedAction } from "./a2ui-pr-state"
 import { BRAIN_THREAD } from "./brain"
 import { type Turn, appendTurn, findA2UITurn, getTurn, setTurnCard } from "./orchestrator-chat"
 import { type OutboundPayload, type OutboundRecord, payloadHash, policyRefusal, sendable } from "./outbound"
@@ -82,16 +84,9 @@ async function runActionForTurn(
   if (name === "pr.refresh") {
     if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
-    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim())
-      ? prModel.repo.trim()
-      : typeof context.repo === "string" && REPO_RE.test(context.repo.trim())
-        ? context.repo.trim()
-        : ""
-    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0
-      ? prModel.number
-      : typeof context.pr === "number" && Number.isInteger(context.pr) && context.pr > 0
-        ? context.pr
-        : 0
+    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
+    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
+    if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
     const deployRepo = typeof prModel.deployRepo === "string" ? prModel.deployRepo : null
     const existingReason = typeof prModel.reason === "string" && prModel.reason.trim() ? prModel.reason.trim() : null
     const hydrated = await hydratePrGateData(
@@ -125,6 +120,7 @@ async function runActionForTurn(
     const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
     const expectedSha = typeof prModel.headSha === "string" ? prModel.headSha.trim() : ""
     if (!repo || !prNum || !expectedSha) return fail(400, "pr_target_missing")
+    if (req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
 
     // Verify live GitHub PR head SHA and displayed metadata match the card before calling mergeAgentPr.
     const live = await hydratePrGateData({ repo, pr: prNum }, deps.gh ?? realGh)
@@ -172,14 +168,13 @@ async function runActionForTurn(
   if (name === "pr.deploy") {
     if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
     const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
+    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
+    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
+    if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
     if (prModel.state !== "merged") {
       return fail(409, "not_merged", { state: prModel.state ?? null })
     }
-    const deployRepo = typeof prModel.deployRepo === "string" && prModel.deployRepo.trim()
-      ? prModel.deployRepo.trim()
-      : typeof context.repo === "string" && context.repo.trim()
-        ? context.repo.trim()
-        : ""
+    const deployRepo = typeof prModel.deployRepo === "string" && prModel.deployRepo.trim() ? prModel.deployRepo.trim() : ""
     if (!deployRepo) return fail(400, "deploy_repo_missing")
     const run = deps.deploy !== undefined ? deps.deploy : autoDeploy()?.deployNow ?? null
     if (isDeployRepo(deployRepo) && run) {
@@ -405,9 +400,12 @@ export async function handleA2UIAction(
   const get = deps.engine?.getTurn ?? getTurn
   const find = deps.engine?.findTurn ?? findA2UITurn
   const byId = get(req.turnId)
+  const strictTurnPin = isReservedAction(req.action.name) || /^(?:outbound|pr)-/.test(req.surfaceId)
   const turn = byId && byId.card?.kind === "a2ui" && byId.card.surfaceId === req.surfaceId
     ? byId
-    : find(req.surfaceId)
+    : strictTurnPin
+      ? null
+      : find(req.surfaceId)
 
   if (!turn || turn.card?.kind !== "a2ui" || turn.card.surfaceId !== req.surfaceId) {
     return fail(404, "surface_not_found")

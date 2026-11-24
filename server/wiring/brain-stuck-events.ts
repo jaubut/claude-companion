@@ -1,10 +1,12 @@
 import {
+  type A2UICreateSurfaceMessage,
   type A2UIEngineDeps,
   createSurfaceTurn,
   getSurfaceDataModel,
+  updateSurfaceComponents,
   updateSurfaceData,
 } from "../lib/a2ui"
-import { buildPrGateSurface, hydratePrGateData, stripAngleTags } from "../lib/a2ui-macros"
+import { buildPrGateSurface, hydratePrGateData, prSurfaceId, stripAngleTags } from "../lib/a2ui-macros"
 import { BRAIN_THREAD } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import { companionLog } from "../lib/log"
@@ -228,13 +230,26 @@ export async function emitStuckPrGateCard(
     )
     if (!hydrated.ok || hydrated.pr.state !== "open" || hydrated.pr.ciState !== "green") return
 
-    const surfaceId = `pr-${fullRepo.replace(/[^A-Za-z0-9_.-]/g, "-")}-${prNum}`
+    const surfaceId = prSurfaceId(fullRepo, prNum)
     const find = opts.engine?.findTurn ?? findA2UITurn
     const existing = find(surfaceId)
     if (existing?.card?.kind === "a2ui") {
       const model = getSurfaceDataModel(existing.card)
-      const existingState = (model.pr as Record<string, unknown> | undefined)?.state
-      if (!existingState || existingState === "open") {
+      const existingPr = (model.pr && typeof model.pr === "object" ? model.pr : null) as Record<string, unknown> | null
+      const existingState = existingPr?.state
+      if (existingPr?.repo === fullRepo && existingPr?.number === prNum && (!existingState || existingState === "open")) {
+        const createMsg = existing.card.messages?.find((msg): msg is A2UICreateSurfaceMessage => "createSurface" in msg)
+        const hasReasonComp = Boolean(createMsg?.createSurface.components.some((c) => c.id === "reason_text"))
+        if (!hasReasonComp && hydrated.pr.reason) {
+          updateSurfaceComponents(
+            surfaceId,
+            [
+              { id: "col", component: "Column", children: ["header_row", "meta_row", "url_text", "reason_text", "divider", "actions_row"] },
+              { id: "reason_text", component: "Text", text: { "@path": "/pr/reason" }, variant: "body" },
+            ],
+            opts.engine,
+          )
+        }
         const updated = updateSurfaceData(surfaceId, "/pr", hydrated.pr, opts.engine)
         if (updated.ok) return
       }

@@ -81,6 +81,12 @@ export function computeReviewState(
 const RESERVED_OUTBOUND_ACTIONS = new Set(["email.confirm", "email.cancel"])
 const RESERVED_PR_ACTIONS = new Set(["pr.merge", "pr.deploy", "pr.refresh"])
 
+export const prSurfaceId = (repo: string, pr: number): string =>
+  `pr-${repo.replace(/[^A-Za-z0-9_.-]/g, "-")}-${pr}`
+
+export const isReservedAction = (name: string): boolean =>
+  RESERVED_OUTBOUND_ACTIONS.has(name) || RESERVED_PR_ACTIONS.has(name)
+
 export const backsOutbound = (model: Record<string, unknown>): boolean => {
   const email = model.email
   return !!email && typeof email === "object" && (email as Record<string, unknown>).outboundId != null
