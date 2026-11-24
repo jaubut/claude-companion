@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
-import { type A2UICreateSurfaceMessage, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
+import { type A2UICreateSurfaceMessage, createSurfaceTurn, getJsonPointer, getSurfaceDataModel } from "../lib/a2ui"
 import { getAuthToken } from "../lib/auth"
 import { classifyBrainEvent } from "../lib/brain-event-triage"
 import { type OutboundPayload, type OutboundSender, type OutboundStore, createOutboundStore } from "../lib/outbound"
@@ -957,6 +957,89 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(gmailReplyCard.status).toBe(200)
     expect(store.get(String(gmailReplyCard.json.outboundId))!.inReplyTo).toBe("<msg-123@mail.gmail.com>")
+
+    // 8. The Brain cannot rewrite, restyle or forge an outbound card: patch/custom on it are refused
+    const target = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "email", to: "victim@example.com", subject: "Real", body: "Real body that would send." },
+      { headers: AUTH },
+    )
+    const targetId = String(target.json.outboundId)
+    const targetSurface = String(target.json.surfaceId)
+    const patchBody = await call(
+      "POST",
+      "/hooks/brain/ui",
+      { macro: "patch", surfaceId: targetSurface, path: "/email/body", value: "Harmless text." },
+      { headers: AUTH },
+    )
+    expect(patchBody.status).toBe(403)
+    expect(patchBody.json.error).toBe("outbound_surface_readonly")
+
+    const restyle = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{ version: "1.0", updateComponents: { surfaceId: targetSurface, components: [{ id: "body_text", component: "Text", text: "Harmless." }] } }],
+      },
+      { headers: AUTH },
+    )
+    expect(restyle.status).toBe(403)
+
+    const forged = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "fake-card-1",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Button", label: "OK", action: { name: "email.confirm" } }],
+            dataModel: { email: { to: "x@example.com", outboundId: targetId, payloadHash: String(target.json.payloadHash), state: "pending", body: "Harmless." } },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(forged.status).toBe(403)
+    expect(store.get(targetId)!.status).toBe("proposed")
+
+    // 9. A card whose displayed body differs from the record (even with the record's hash) never sends
+    const turnRow = chat.getTurn(String(target.json.turnId))!
+    const tampered = structuredClone(turnRow.card!)
+    const cs = (tampered.messages![0] as A2UICreateSurfaceMessage).createSurface
+    ;(cs.dataModel.email as Record<string, unknown>).body = "Harmless text."
+    chat.setTurnCard(turnRow.id, { messages: tampered.messages })
+    const tamperedConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId: targetSurface, turnId: turnRow.id, action: { name: "email.confirm" }, actionKey: "tampered-1" },
+      { headers: bearer },
+    )
+    expect(tamperedConfirm.status).toBe(409)
+    expect(tamperedConfirm.json.error).toBe("stale_version")
+    expect(sentPayloads).toHaveLength(1)
+
+    // 10. Untrimmed bodies (triage-route proposals keep them as-is) still match the card
+    const padded = store.propose(
+      { kind: "email", account: "personal", to: ["pad@example.com"], cc: [], subject: "Pad", body: "Body with trailing newline\n", inReplyTo: null, threadId: null, why: "w", requestedBy: "t" },
+      Date.now(),
+    )
+    const { buildEmailConfirmSurface } = await import("../lib/a2ui-macros")
+    const built = buildEmailConfirmSurface({ to: padded.to, subject: padded.subject, body: padded.body, outboundId: padded.id, payloadHash: padded.payloadHash })
+    if (!built.ok) throw new Error(built.error)
+    const paddedTurn = createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, { emitTurn: () => {} })
+    const paddedConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      { surfaceId: built.surfaceId, turnId: paddedTurn.id, action: { name: "email.confirm" }, actionKey: "padded-1" },
+      { headers: bearer },
+    )
+    expect(paddedConfirm.status).toBe(200)
+    expect(sentPayloads.at(-1)!.body).toBe("Body with trailing newline\n")
   })
 
   test("bin/ui pr --reason renders reason_text component above divider and preserves reason across pr.refresh", async () => {

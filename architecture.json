@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 414,
+          "lines": 429,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -176,7 +176,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 598,
+          "lines": 543,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -188,7 +188,6 @@
             "parseToList",
             "parseCcList",
             "buildEmailConfirmSurface",
-            "computeReviewState",
             "stripAngleTags",
             "hydratePrGateData",
             "buildPrGateSurface",
@@ -204,12 +203,33 @@
             "lib/a2ui.ts",
             "lib/orchestrator-chat.ts",
             "lib/outbound.ts",
+            "lib/a2ui-pr-state.ts",
             "lib/triage-pr.ts",
             "wiring/auto-deploy.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/outbound.ts",
             "lib/a2ui-actions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/a2ui-pr-state.ts",
+          "lines": 77,
+          "kind": "lib",
+          "exports": [
+            "GhCheck",
+            "GhComment",
+            "computeCiState",
+            "computeReviewState"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -11488,6 +11508,7 @@
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
             "wiring/brain-stuck-events.ts"
           ]
         },
@@ -11554,6 +11575,26 @@
           "callers": [
             "lib/a2ui-actions.ts",
             "wiring/brain-stuck-events.ts"
+          ]
+        },
+        "OutboundRecord": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
+        "OutboundPayload": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "wiring/outbound.ts"
+          ]
+        },
+        "payloadHash": {
+          "module": "lib/outbound.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts"
           ]
         },
         "getTurn": {
@@ -11716,7 +11757,7 @@
             "wiring/worker-mcp.ts"
           ]
         },
-        "payloadHash": {
+        "policyRefusal": {
           "module": "lib/outbound.ts",
           "callers": [
             "lib/a2ui-actions.ts",
@@ -11740,6 +11781,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
             "wiring/brain-stuck-events.ts"
           ]
@@ -11850,12 +11892,6 @@
             "lib/a2ui-macros.ts"
           ]
         },
-        "policyRefusal": {
-          "module": "lib/outbound.ts",
-          "callers": [
-            "lib/a2ui-macros.ts"
-          ]
-        },
         "outboundStore": {
           "module": "wiring/outbound.ts",
           "callers": [
@@ -11880,6 +11916,30 @@
             "wiring/repo-view.ts",
             "wiring/resolver.ts",
             "wiring/triage.ts"
+          ]
+        },
+        "GhCheck": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "GhComment": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "computeCiState": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
+          ]
+        },
+        "computeReviewState": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-macros.ts"
           ]
         },
         "DeployResult": {
@@ -21235,12 +21295,6 @@
           "callers": [
             "wiring/outbound.ts",
             "wiring/triage.ts"
-          ]
-        },
-        "OutboundPayload": {
-          "module": "lib/outbound.ts",
-          "callers": [
-            "wiring/outbound.ts"
           ]
         },
         "parseMessageId": {

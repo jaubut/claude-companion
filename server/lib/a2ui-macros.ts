@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { existsSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import {
   A2UI_BASIC_CATALOG_ID,
   A2UI_VERSION,
@@ -12,13 +9,14 @@ import {
   SURFACE_ID_RE,
   containsHtmlOrScript,
   createSurfaceTurn,
+  getSurfaceDataModel,
   isValidJsonPointer,
   setJsonPointer,
   updateSurfaceComponents,
   updateSurfaceData,
   validateA2UIMessages,
 } from "./a2ui"
-import type { Turn } from "./orchestrator-chat"
+import { type Turn, findA2UITurn } from "./orchestrator-chat"
 import {
   type OutboundAccount,
   type OutboundSender,
@@ -26,6 +24,7 @@ import {
   parseProposal,
   policyRefusal,
 } from "./outbound"
+import { type GhCheck, type GhComment, computeCiState, computeReviewState } from "./a2ui-pr-state"
 import { type GhFn, realGh } from "./triage-pr"
 import type { DeployResult } from "../wiring/auto-deploy"
 import type { mergeAgentPr } from "../wiring/brain-pr-merge"
@@ -37,13 +36,6 @@ export { handleA2UIAction } from "./a2ui-actions"
 
 export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 const EMAIL_ADDRESS_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/
-const CLAUDE_HEADING = /^\s*🤖 \*\*Auto-review\*\*/u
-const GEMINI_HEADING = /^♊️? \*\*Gemini review\*\* \(agy\b/u
-const CODEX_HEADING = /^\s*🧠 \*\*Codex review\*\*/u
-const LOW_FILE = /^docs\/.+\.md$|^README\.md$|\.test\.ts$|^architecture\.(json|md)$/
-const LOW_FILE_LIMIT = 100
-const CLAUDE_PAUSED_FLAG = join(homedir(), ".claude", "state", "claude-review-paused")
-const CLAUDE_NORMAL_FLAG = join(homedir(), ".claude", "state", "claude-review-normal")
 const PR_VIEW_FIELDS =
   "state,isDraft,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,url,title,author,labels,statusCheckRollup,comments,files"
 
@@ -96,6 +88,18 @@ const fail = (status: number, error: string, extra: Record<string, unknown> = {}
   body: { ok: false, error, ...extra },
 })
 
+const backsOutbound = (model: Record<string, unknown>): boolean => {
+  const email = model.email
+  return !!email && typeof email === "object" && (email as Record<string, unknown>).outboundId != null
+}
+
+/** Outbound-backed email cards are server-written only: the Brain may not patch, restyle or shadow one. */
+function isOutboundSurface(surfaceId: string, engine: A2UIEngineDeps = {}): boolean {
+  if (surfaceId.startsWith("outbound-")) return true
+  const turn = (engine.findTurn ?? findA2UITurn)(surfaceId)
+  return turn?.card?.kind === "a2ui" && backsOutbound(getSurfaceDataModel(turn.card))
+}
+
 export function resolveOutboundStore(
   outbound: OutboundStore | (() => OutboundStore) | null | undefined,
 ): OutboundStore | null {
@@ -142,8 +146,9 @@ export function buildEmailConfirmSurface(input: EmailMacroInput): {
   const to = toList.join(", ")
   const subject = typeof input.subject === "string" ? input.subject.trim() : ""
   if (!subject) return { ok: false, error: "subject_required" }
-  const body = typeof input.body === "string" ? input.body.trim() : ""
-  if (!body) return { ok: false, error: "body_required" }
+  // Untrimmed: the card body must equal the stored outbound record (parseProposal keeps it as-is).
+  const body = typeof input.body === "string" ? input.body : ""
+  if (!body.trim()) return { ok: false, error: "body_required" }
   const cc = parseCcList(input.cc)
   if (!cc) return { ok: false, error: "invalid_cc" }
   const rawAccount = input.account === undefined || input.account === null || input.account === "" ? "personal" : input.account
@@ -210,69 +215,6 @@ export function buildEmailConfirmSurface(input: EmailMacroInput): {
   ]
   const text = `Email confirm: "${subject}" → ${to}${cc.length ? ` (Cc: ${cc.join(", ")})` : ""}\n${body}`
   return { ok: true, surfaceId, text, messages, dataModel }
-}
-
-interface GhCheck { __typename?: string; name?: string; context?: string; status?: string; conclusion?: string; state?: string }
-interface GhComment { body?: string; author?: { login?: string } | null }
-
-function checkPassed(c: GhCheck): boolean {
-  if (c.__typename === "StatusContext" || (c.state !== undefined && c.conclusion === undefined)) {
-    return c.state === "SUCCESS"
-  }
-  return c.status === "COMPLETED" && ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(String(c.conclusion))
-}
-
-function checkFailed(c: GhCheck): boolean {
-  if (c.__typename === "StatusContext" || (c.state !== undefined && c.conclusion === undefined)) {
-    return ["FAILURE", "ERROR"].includes(String(c.state))
-  }
-  return (
-    c.status === "COMPLETED" &&
-    ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(String(c.conclusion))
-  )
-}
-
-function computeCiState(checks: GhCheck[], mergeable: string, mergeStateStatus: string): "green" | "pending" | "failed" {
-  if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") return "failed"
-  if (checks.some(checkFailed)) return "failed"
-  if (checks.length === 0) return "pending"
-  if (checks.every(checkPassed) && checks.some((c) => c.conclusion === "SUCCESS" || c.state === "SUCCESS")) {
-    return "green"
-  }
-  return "pending"
-}
-
-export function computeReviewState(
-  comments: GhComment[],
-  headSha: string,
-  reviewDecision: string,
-  authorLogin = "",
-  files: Array<{ path?: string }> = [],
-  opts: { claudeNormal?: boolean; clientOrigin?: boolean } = {},
-): "approved" | "changes_requested" | "pending" {
-  if (reviewDecision === "CHANGES_REQUESTED") return "changes_requested"
-  if (!authorLogin || !headSha) return "pending"
-  const stamp = `<!-- reviewed-sha: ${headSha} -->`
-  const authorComments = comments.filter((c) => c.author?.login === authorLogin)
-  const head = authorComments.filter((c) => String(c.body ?? "").includes(stamp)).map((c) => String(c.body))
-  const claude = head.filter((b) => CLAUDE_HEADING.test(b))
-  const second = head.filter((b) => GEMINI_HEADING.test(b) || CODEX_HEADING.test(b))
-  if ([...claude, ...second].some((b) => /VERDICT:\s*CHANGES/i.test(b))) return "changes_requested"
-
-  const tier = authorComments.map((c) => /<!-- review-tier: (\w+) -->/.exec(String(c.body))?.[1]).filter(Boolean).at(-1)
-  if (tier === "low" && files.length > 0 && files.length < LOW_FILE_LIMIT && files.every((f) => LOW_FILE.test(String(f.path)))) {
-    return "approved"
-  }
-
-  const claudePaused = existsSync(CLAUDE_PAUSED_FLAG)
-  const claudeNormal = opts.claudeNormal ?? (!claudePaused && existsSync(CLAUDE_NORMAL_FLAG))
-  const clientOrigin = opts.clientOrigin ?? false
-  const normalClaudeOnly = claudeNormal && tier === "normal" && !clientOrigin
-  const normalGeminiOnly = !claudeNormal && tier === "normal" && !clientOrigin
-
-  if (!normalGeminiOnly && !claude.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
-  if (!normalClaudeOnly && !second.some((b) => /VERDICT:\s*APPROVE/i.test(b))) return "pending"
-  return "approved"
 }
 
 export function stripAngleTags(s: string): string {
@@ -523,6 +465,7 @@ export async function executeA2UIMacro(
     const path = typeof body.path === "string" ? body.path : ""
     if (!isValidJsonPointer(path)) return fail(400, "invalid_json_pointer")
     if (!("value" in body)) return fail(400, "value_required")
+    if (isOutboundSurface(surfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
     const res = updateSurfaceData(surfaceId, path, body.value, deps.engine)
     if (!res.ok) return fail(res.status, res.error)
     return {
@@ -546,6 +489,7 @@ export async function executeA2UIMacro(
     const validated = validateA2UIMessages(rawPayload)
     if (!validated.ok) return fail(400, validated.error)
     const { messages, surfaceId } = validated
+    if (isOutboundSurface(surfaceId, deps.engine)) return fail(403, "outbound_surface_readonly")
     const first = messages[0]!
     if ("createSurface" in first) {
       const summary = typeof body.text === "string" && body.text.trim() ? body.text.trim() : `A2UI surface [${surfaceId}]`
@@ -571,6 +515,7 @@ export async function executeA2UIMacro(
           }
         }
       }
+      if (backsOutbound(foldedCreate.createSurface.dataModel)) return fail(403, "outbound_surface_readonly")
       const turn = createSurfaceTurn({ surfaceId, text: summary, messages: [foldedCreate] }, deps.engine)
       return { status: 200, body: { ok: true, macro: "custom", turnId: turn.id, surfaceId, turn } }
     }
