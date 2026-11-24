@@ -447,12 +447,14 @@ describe("bin/pr-merge gate: the merge", () => {
     const taintedParked = world(green(), park("pr:needs-human", "tainted (web) PR touches server/lib/auth.ts — human merge only"))
     expect((await mergeAgentPr(input, { ...taintedParked.deps, humanApproved: () => true })).status).toBe(403)
 
-    // With real mergeGate + stub tools: humanApproved: true passes approved: true into mergeGate, lifting prod-schema and human-merge-path while blocking hold-label and tainted-sensitive
+    // With real mergeGate + stub tools AND seeded shepherd pr:needs-human rows:
+    // humanApproved: true passes approved: true into mergeGate AND lifts non-tainted prod-schema / human-merge-path parks,
+    // while blocking hold-label, pr:hold, and tainted human-merge hard stops.
     const tools = writeStubTools()
-    function worldWithRealGate(prOver: Record<string, unknown>, tsvFiles: string, origin = "jeremie") {
+    function worldWithRealGate(prOver: Record<string, unknown>, tsvFiles: string, origin = "jeremie", extraSeed = "") {
       const w = world(
         green(prOver),
-        `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', '${origin}', '${URL}');`,
+        `INSERT INTO tasks (id, origin, dispatch_pr_url) VALUES ('abcd1234-0000', '${origin}', '${URL}'); ${extraSeed}`,
       )
       const baseGh = w.deps.gh
       const ghWithFiles: GhFn = async (args) => {
@@ -464,16 +466,21 @@ describe("bin/pr-merge gate: the merge", () => {
       return { ...w, deps: { ...w.deps, gh: ghWithFiles, gate } }
     }
 
-    const schemaBlocked = worldWithRealGate({ files: [{ path: "db/migrations/001.sql" }] }, "db/migrations/001.sql\t\n")
-    expect((await mergeAgentPr(input, schemaBlocked.deps)).status).toBe(403)
-    expect((await mergeAgentPr({ ...input, humanApproved: true }, schemaBlocked.deps)).status).toBe(200)
+    const schemaParkSql = `INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"touches db/migrations/001.sql (prod schema) — human merge only"}');`
+    const schemaGated = worldWithRealGate({ files: [{ path: "db/migrations/001.sql" }] }, "db/migrations/001.sql\t\n", "jeremie", schemaParkSql)
+    expect((await mergeAgentPr(input, schemaGated.deps)).status).toBe(403)
+    expect((await mergeAgentPr({ ...input, humanApproved: true }, schemaGated.deps)).status).toBe(200)
 
-    const humanPathApproved = worldWithRealGate({ files: [{ path: "hooks/guard.py" }] }, "hooks/guard.py\t\n")
-    expect((await mergeAgentPr({ ...input, humanApproved: true }, humanPathApproved.deps)).status).toBe(200)
+    const humanPathParkSql = `INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"touches hooks/guard.py — human merge only"}');`
+    const humanPathGated = worldWithRealGate({ files: [{ path: "hooks/guard.py" }] }, "hooks/guard.py\t\n", "jeremie", humanPathParkSql)
+    expect((await mergeAgentPr(input, humanPathGated.deps)).status).toBe(403)
+    expect((await mergeAgentPr({ ...input, humanApproved: true }, humanPathGated.deps)).status).toBe(200)
 
     const holdLabelStillBlocked = worldWithRealGate(
       { files: [{ path: "db/migrations/001.sql" }], labels: [{ name: "do-not-merge" }] },
       "db/migrations/001.sql\t\n",
+      "jeremie",
+      schemaParkSql,
     )
     const holdOut = await mergeAgentPr({ ...input, humanApproved: true }, holdLabelStillBlocked.deps)
     expect([holdOut.status, holdOut.body.error]).toEqual([403, "hold-label"])
@@ -482,8 +489,15 @@ describe("bin/pr-merge gate: the merge", () => {
       { files: [{ path: "server/lib/auth.ts" }] },
       "server/lib/auth.ts\t\n",
       "web",
+      `INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, meta) VALUES ('pr-shepherd', 'pr:needs-human', 'task', 'abcd1234-0000', '{"url":"${URL}","reason":"tainted (web) PR touches server/lib/auth.ts — human merge only"}');`,
     )
     const taintOut = await mergeAgentPr({ ...input, humanApproved: true }, taintedStillBlocked.deps)
     expect([taintOut.status, taintOut.body.error]).toEqual([403, "tainted-sensitive"])
+
+    const taintedTruncatedPark = world(
+      green(),
+      park("pr:needs-human", "tainted (web) PR: file list may be truncated — human merge"),
+    )
+    expect((await mergeAgentPr({ ...input, humanApproved: true }, taintedTruncatedPark.deps)).status).toBe(403)
   })
 })

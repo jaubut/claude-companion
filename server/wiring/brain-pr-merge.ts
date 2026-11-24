@@ -24,8 +24,9 @@ export { retiredPark } from "./brain-pr-park"
 //   parked (403): no live shepherd park or hold, except the client-origin /
 //     sensitive-path review park (the MFA human-review policy, retired
 //     2026-10-31: money, origin and paths alone no longer gate a green,
-//     twice-approved agent PR). A tainted park or one that says `human merge`
-//     is never retired, including with a client-origin prefix.
+//     twice-approved agent PR) or non-tainted pr:needs-human parks when
+//     humanApproved is true. A tainted park that says `human merge` or a
+//     `pr:hold` row is never retired or lifted, including with a client-origin prefix.
 //   not_green (409): MERGEABLE + mergeStateStatus CLEAN + every check passed (≥ 1)
 //   not_approved (409):
 //     - low tier (allowlisted low files): 0 reviews required (any CHANGES still blocks)

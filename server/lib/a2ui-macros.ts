@@ -152,6 +152,9 @@ export function buildEmailConfirmSurface(input: EmailMacroInput): {
   }
   const account: OutboundAccount = rawAccount
   const inReplyTo = typeof input.inReplyTo === "string" && input.inReplyTo.trim() ? input.inReplyTo.trim() : null
+  if (inReplyTo && (/[\r\n]/.test(inReplyTo) || inReplyTo.length > 1000)) {
+    return { ok: false, error: "inReplyTo must be a one-line string" }
+  }
   const why = typeof input.why === "string" && input.why.trim() ? input.why.trim() : "Outbound email confirmation"
   const outboundId = typeof input.outboundId === "string" && input.outboundId.trim() ? input.outboundId.trim() : null
   const payloadHash = typeof input.payloadHash === "string" && input.payloadHash.trim() ? input.payloadHash.trim() : null
@@ -161,7 +164,7 @@ export function buildEmailConfirmSurface(input: EmailMacroInput): {
   const defaultSurfaceId = outboundId ? `outbound-${outboundId}` : `email-${randomUUID().slice(0, 8)}`
   const surfaceId = typeof input.surfaceId === "string" && input.surfaceId.trim() ? input.surfaceId.trim() : defaultSurfaceId
   if (!SURFACE_ID_RE.test(surfaceId)) return { ok: false, error: "invalid_surface_id" }
-  if (containsHtmlOrScript({ to, toList, cc, subject, body, account, inReplyTo, why, draftId, gmailThreadId })) {
+  if (containsHtmlOrScript({ to, toList, cc, subject, body, account, why, draftId, gmailThreadId })) {
     return { ok: false, error: "html_not_allowed" }
   }
 
@@ -446,12 +449,15 @@ export async function executeA2UIMacro(
     const account = body.account === undefined || body.account === null || body.account === "" ? "personal" : body.account
     if (account !== "personal" && account !== "hello") return fail(400, 'account must be "personal" or "hello"')
     const inReplyTo = typeof body.inReplyTo === "string" && body.inReplyTo.trim() ? body.inReplyTo.trim() : null
+    if (inReplyTo && (/[\r\n]/.test(inReplyTo) || inReplyTo.length > 1000)) {
+      return fail(400, "inReplyTo must be a one-line string")
+    }
     const why = typeof body.why === "string" && body.why.trim() ? body.why.trim() : "Outbound email confirmation"
     const draftId = typeof body.draftId === "string" && body.draftId.trim() ? body.draftId.trim() : null
     const gmailThreadId = typeof body.gmailThreadId === "string" && body.gmailThreadId.trim() ? body.gmailThreadId.trim() : null
     const customSurfaceId = typeof body.surfaceId === "string" && body.surfaceId.trim() ? body.surfaceId.trim() : null
     if (customSurfaceId && !SURFACE_ID_RE.test(customSurfaceId)) return fail(400, "invalid_surface_id")
-    if (containsHtmlOrScript({ toList, cc, subject, emailBody, account, inReplyTo, why, draftId, gmailThreadId })) {
+    if (containsHtmlOrScript({ toList, cc, subject, emailBody, account, why, draftId, gmailThreadId })) {
       return fail(400, "html_not_allowed")
     }
 

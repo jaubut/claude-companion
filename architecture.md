@@ -17,7 +17,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/a2ui-macros.ts` | 592 | lib | 15 |  |
+| `lib/a2ui-macros.ts` | 598 | lib | 15 |  |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
@@ -47,9 +47,9 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
+| `lib/a2ui-actions.ts` | 414 | lib | 1 | state: inFlightActions: Map |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
 | `routes/capture.ts` | 411 | lib | 7 |  |
-| `lib/a2ui-actions.ts` | 404 | lib | 1 | state: inFlightActions: Map |
 | `lib/command-scrape.ts` | 404 | lib | 16 | state: flows: Map, releasedAt: Map, dirty: Map, let markSeq |
 | `lib/body-investigate.ts` | 402 | lib | 33 |  |
 | `lib/triage-engine.ts` | 402 | lib | 9 | state: EXPIRES: Set · emits: orchestrator_triage |
@@ -85,7 +85,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/apns.ts` | 285 | lib | 9 | state: let keyPromise, let cachedJwt, sessions: Map |
 | `routes/notes.ts` | 283 | lib | 1 | state: NOTE_IMAGE_MIMES: Set |
 | `lib/orchestrator-brain.ts` | 278 | lib | 8 |  |
-| `wiring/brain-pr-merge.ts` | 277 | lib | 4 |  |
+| `wiring/brain-pr-merge.ts` | 278 | lib | 4 |  |
 | `lib/tasks-agent-rules.ts` | 276 | lib | 29 | state: let ruleCache |
 | `lib/my-tasks.ts` | 275 | lib | 26 |  |
 | `lib/command-menu.ts` | 273 | lib | 12 |  |
@@ -294,10 +294,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `wiring/brain-todo.ts` | 40 | lib | 2 |  |
 | `lib/field-guide.ts` | 39 | lib | 4 |  |
 | `wiring/board.ts` | 39 | lib | 3 |  |
+| `wiring/brain-pr-park.ts` | 39 | lib | 3 |  |
 | `lib/agent-pid.ts` | 38 | lib | 2 |  |
 | `lib/claude-mcp-trust.ts` | 37 | lib | 2 |  |
 | `routes/gauge.ts` | 37 | route-host | 1 | routes: 3 |
-| `wiring/brain-pr-park.ts` | 37 | lib | 3 |  |
 | `wiring/media.ts` | 37 | lib | 2 | state: let timer |
 | `routes/files.ts` | 36 | lib | 1 |  |
 | `routes/media.ts` | 36 | route-host | 1 | route: GET /api/media/ |

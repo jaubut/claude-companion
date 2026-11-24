@@ -16,7 +16,8 @@ export async function parked(exec: ExecFn, v: { url: string; labels: Array<{ nam
   // The PR read doesn't carry origin: tasks.origin is the authority, the label is advisory (forgeable, so it can only tighten).
   const clientOrigin = rows.some((r) => r.origin === "client") || v.labels.some((l) => l.name === "client-origin")
   // The newest shepherd park / hold / unpark for this PR: a live one refuses unless it is a retired human-review park
-  // or Jeremie explicitly ordered the merge in the Brain thread (never lifting pr:hold or tainted/human-merge hard stops).
+  // or Jeremie explicitly approved the merge (which lifts non-tainted prod-schema / human-merge-path / review parks,
+  // but never lifts pr:hold or tainted human-merge hard stops).
   const last = await exec(
     "SELECT action, meta FROM agent_activity WHERE action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') AND target_id IN (" + [v.url, ...taskIds].map(() => "?").join(", ") + ") ORDER BY id DESC LIMIT 20",
     [v.url, ...taskIds],
@@ -26,7 +27,8 @@ export async function parked(exec: ExecFn, v: { url: string; labels: Array<{ nam
     try { meta = JSON.parse(String(row.meta ?? "{}")) as Record<string, unknown> } catch { /* unreadable → counts */ }
     if (meta.url !== undefined && meta.url !== v.url) continue
     const why = typeof meta.reason === "string" ? meta.reason : ""
-    const liftedByHuman = humanApproved && row.action === "pr:needs-human" && why.length > 0 && !/human merge/i.test(why)
+    const taintedHumanMerge = /tainted \(/i.test(why) && /human merge/i.test(why)
+    const liftedByHuman = humanApproved && row.action === "pr:needs-human" && why.length > 0 && !taintedHumanMerge
     if (row.action === "pr:hold" || (row.action === "pr:needs-human" && !retiredPark(why) && !liftedByHuman)) {
       reasons.push(`${row.action === "pr:hold" ? "held" : "parked"} by the shepherd${why ? `: ${why.slice(0, 120)}` : ""}`)
     }

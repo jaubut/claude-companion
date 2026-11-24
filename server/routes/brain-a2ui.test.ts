@@ -862,12 +862,15 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
         to: "demo@example.com",
         subject: "Sandbox Demo",
         body: "Testing dry-run mode.",
+        inReplyTo: "<msg-123>",
         dryRun: true,
       },
       { headers: AUTH },
     )
     expect(dryCard.status).toBe(200)
     expect(dryCard.json.outboundId).toBeUndefined()
+    const dryTurn = chat.getTurn(String(dryCard.json.turnId))!
+    expect(getJsonPointer(getSurfaceDataModel(dryTurn.card!), "/email/inReplyTo")).toBe("<msg-123>")
     const dryConfirm = await call(
       "POST",
       "/api/brain/a2ui/action",
@@ -883,6 +886,77 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(dryConfirm.json.state).toBe("confirmed")
     expect(sentPayloads).toHaveLength(1)
     expect(enqueuedTurns).toHaveLength(1)
+
+    // 7. Outbound payloadHash staleness check: concurrent store.editBody invalidates stale card on both email.confirm and email.cancel
+    // Also exercises angle-bracket RFC 5322 In-Reply-To ids ("<msg-123>" and "<msg-123@mail.gmail.com>")
+    const staleCard = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        to: "stale@example.com",
+        cc: ["cc1@example.com"],
+        inReplyTo: "<msg-123>",
+        subject: "Stale Test",
+        body: "Original body shown on card.",
+      },
+      { headers: AUTH },
+    )
+    expect(staleCard.status).toBe(200)
+    const staleOutboundId = String(staleCard.json.outboundId)
+    const staleSurfaceId = String(staleCard.json.surfaceId)
+    const staleTurnId = String(staleCard.json.turnId)
+    expect(store.get(staleOutboundId)!.inReplyTo).toBe("<msg-123>")
+
+    const edited = store.editBody(staleOutboundId, "Concurrently edited body via triage.", Date.now() + 10)
+    expect(edited).not.toBeNull()
+    expect(edited!.payloadHash).not.toBe(String(staleCard.json.payloadHash))
+
+    const staleConfirm = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: staleSurfaceId,
+        turnId: staleTurnId,
+        action: { name: "email.confirm" },
+        actionKey: "stale-confirm-1",
+      },
+      { headers: bearer },
+    )
+    expect(staleConfirm.status).toBe(409)
+    expect(staleConfirm.json.error).toBe("stale_version")
+    expect(sentPayloads).toHaveLength(1)
+    expect(store.get(staleOutboundId)!.status).toBe("proposed")
+
+    const staleCancel = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: staleSurfaceId,
+        turnId: staleTurnId,
+        action: { name: "email.cancel" },
+        actionKey: "stale-cancel-1",
+      },
+      { headers: bearer },
+    )
+    expect(staleCancel.status).toBe(409)
+    expect(staleCancel.json.error).toBe("stale_version")
+    expect(store.get(staleOutboundId)!.status).toBe("proposed")
+
+    const gmailReplyCard = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "email",
+        to: "reply@example.com",
+        inReplyTo: "<msg-123@mail.gmail.com>",
+        subject: "Re: Hello",
+        body: "Replying with standard Gmail Message-ID.",
+      },
+      { headers: AUTH },
+    )
+    expect(gmailReplyCard.status).toBe(200)
+    expect(store.get(String(gmailReplyCard.json.outboundId))!.inReplyTo).toBe("<msg-123@mail.gmail.com>")
   })
 
   test("bin/ui pr --reason renders reason_text component above divider and preserves reason across pr.refresh", async () => {

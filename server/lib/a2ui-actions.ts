@@ -199,6 +199,7 @@ async function runActionForTurn(
     }
     const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
     if (outboundId && emailModel.dryRun !== true) {
+      const cardHash = typeof emailModel.payloadHash === "string" ? emailModel.payloadHash.trim() : ""
       const store = resolveOutboundStore(deps.outbound)
       if (store) {
         const rec = store.get(outboundId)
@@ -206,8 +207,11 @@ async function runActionForTurn(
           updateSurfaceData(req.surfaceId, "/email/state", "sent", scopedEngine)
           return fail(409, "already_decided", { state: "sent" })
         }
+        if (rec && cardHash && rec.payloadHash !== cardHash) {
+          return fail(409, "stale_version")
+        }
         if (rec && rec.status === "proposed") {
-          store.reject(rec.id, rec.payloadHash, Date.now())
+          store.reject(rec.id, cardHash || rec.payloadHash, Date.now())
         }
       }
     }
@@ -242,6 +246,7 @@ async function runActionForTurn(
 
     const outboundId = typeof emailModel.outboundId === "string" && emailModel.outboundId.trim() ? emailModel.outboundId.trim() : null
     if (outboundId && emailModel.dryRun !== true) {
+      const cardHash = typeof emailModel.payloadHash === "string" ? emailModel.payloadHash.trim() : ""
       const store = resolveOutboundStore(deps.outbound)
       if (!store) return fail(503, "outbound_unavailable")
       const rec = store.get(outboundId)
@@ -253,16 +258,21 @@ async function runActionForTurn(
       if (rec.status !== "proposed" || emailModel.state !== "pending") {
         return fail(409, "already_decided", { state: rec.status !== "proposed" ? rec.status : (emailModel.state ?? null) })
       }
-
-      let activeRec = rec
-      if (JSON.stringify(enabledCc) !== JSON.stringify(rec.cc)) {
-        const updated = store.updateCc(rec.id, enabledCc, rec.payloadHash, Date.now())
-        if (!updated) return fail(409, "stale_version")
-        activeRec = updated
-        updateSurfaceData(req.surfaceId, "/email/payloadHash", activeRec.payloadHash, scopedEngine)
+      if (!cardHash || rec.payloadHash !== cardHash) {
+        return fail(409, "stale_version")
       }
 
-      if (!store.claim(activeRec.id, activeRec.payloadHash, Date.now())) {
+      let activeRec = rec
+      let activeHash = cardHash
+      if (JSON.stringify(enabledCc) !== JSON.stringify(rec.cc)) {
+        const updated = store.updateCc(rec.id, enabledCc, cardHash, Date.now())
+        if (!updated) return fail(409, "stale_version")
+        activeRec = updated
+        activeHash = updated.payloadHash
+        updateSurfaceData(req.surfaceId, "/email/payloadHash", activeHash, scopedEngine)
+      }
+
+      if (!store.claim(activeRec.id, activeHash, Date.now())) {
         return fail(409, "already_decided")
       }
 

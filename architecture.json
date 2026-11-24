@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 404,
+          "lines": 414,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -176,7 +176,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 592,
+          "lines": 598,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -9401,7 +9401,7 @@
         },
         {
           "path": "wiring/brain-pr-merge.ts",
-          "lines": 277,
+          "lines": 278,
           "kind": "lib",
           "exports": [
             "PR_MERGE_ACTION",
@@ -9432,7 +9432,7 @@
         },
         {
           "path": "wiring/brain-pr-park.ts",
-          "lines": 37,
+          "lines": 39,
           "kind": "lib",
           "exports": [
             "hardStopPark",
