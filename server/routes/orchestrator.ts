@@ -42,7 +42,7 @@ import { checked, jsonObject } from "../lib/json-body"
 // queue (orchestrator-one-queue): channel ↔ note link, task detail, projects
 // (P1); approve files to the notes DB, cancel / requeue / unblock through the guarded
 // writes in lib/dispatch-tasks.ts, #Body vitals header (P2/P3). Contract:
-// docs/orchestrator-dispatch-api.md. Returns null for any other path. Notes DB
+// docs/orchestrator-dispatch-api.md. Returns null for any other path. Notes DB (GCP tls-sqld)
 // failures → 503 {ok:false, error:"turso_unreachable"}.
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/

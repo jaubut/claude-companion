@@ -407,7 +407,7 @@ export async function contextPrompt(node: CanvasNode, query: QueryFn): Promise<C
 // A note linked to an agent or the brain is a live, read-only reference, resolved at READ time
 // from its owner — nothing is copied at link time, so an edit is seen on the next read:
 //   turso_note, or note with a ref → the note (id or ref_code), read by the agent with its
-//                                    own `turso` note tool; never inlined (it can be huge)
+//                                    own `tls` note tool; never inlined (it can be huge)
 //   note without a ref (a sticky)  → the node's own data.text, inlined (local and short),
 //                                    addressed as `canvas:<nodeId>`
 // Both are untrusted data: quoted, never instructions.
@@ -434,7 +434,7 @@ export function referenceContext(nodes: CanvasNode[]): string {
   if (nodes.length === 0) return ""
   const lines = nodes.map((n) => {
     const title = oneLine(str(n.data.title)).slice(0, TITLE_MAX)
-    if (n.ref) return `- Note ${n.ref}${title ? ` "${title}"` : ""}: read its current content with your note tool (mcp__turso__note, by ref) before relying on it.`
+    if (n.ref) return `- Note ${n.ref}${title ? ` "${title}"` : ""}: read its current content with your note tool (mcp__tls__note, by ref) before relying on it.`
     const text = oneLine(str(n.data.text))
     return `- Canvas sticky ${referenceRef(n)}: ${text ? quoted(clip(text, STICKY_MAX)) : "(empty)"}`
   })

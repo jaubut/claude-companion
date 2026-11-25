@@ -9,7 +9,7 @@ import { TursoUnreachable } from "../lib/turso"
 //   POST /api/tasks/agent/proposals/:id {action:"accept"|"dismiss", due?, subtasks?, parentVersion?, rowVersions?}
 //   POST /api/tasks/agent/chat/:planId {confirm} → apply / drop a held chat move
 // Device = `X-Companion-Device` (the digest baseline is per device). Every
-// write pushes `tasks_changed`. Notes DB failures → 503 turso_unreachable.
+// write pushes `tasks_changed`. Notes DB (GCP tls-sqld) failures → 503 turso_unreachable.
 
 const PROPOSAL = /^\/api\/tasks\/agent\/proposals\/([^/]+)$/
 const CHAT = /^\/api\/tasks\/agent\/chat\/([A-Za-z0-9]{8,64})$/

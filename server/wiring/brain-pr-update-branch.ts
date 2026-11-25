@@ -15,7 +15,7 @@ import { orchEmit } from "./orchestrator"
 // check is made here from GitHub and the notes DB, never from the brain's word:
 //   open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
 //   no client origin (403 client_origin), live shepherd park or hold (403 parked) ·
-//   notes DB must answer (503 turso_unreachable) ·
+//   notes DB (GCP tls-sqld) must answer (503 turso_unreachable) ·
 //   no conflict with the base (409 conflict, before or from the update).
 // A failed update answers 502 update_failed, whatever the head does after.
 // `gh pr update-branch` without --rebase: a merge commit on the PR branch, never

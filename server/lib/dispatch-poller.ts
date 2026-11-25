@@ -46,7 +46,7 @@ export interface Mirror {
 
 export interface DispatchWiringDeps {
   query: QueryFn
-  /** Guarded writes (P2). Absent → every write fails as turso_unreachable. */
+  /** Guarded writes (P2). Absent → every write fails as turso_unreachable (GCP tls-sqld). */
   exec?: ExecFn
   broadcast: (frame: Record<string, unknown>) => void
   appendTurn: (text: string, taskId: string | null, channelId: string, card?: TurnCard) => Turn

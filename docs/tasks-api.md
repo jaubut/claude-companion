@@ -43,7 +43,7 @@ Grouping rules:
 - `count` includes subtasks.
 - The dashboard's `''` for "no date" / "no parent" maps to `null`.
 
-Errors: `503 {"error":"turso_unreachable"}`.
+Errors: `503 {"error":"turso_unreachable"}` (GCP `tls-sqld` unreachable).
 
 ## POST /api/tasks/:id/done
 
@@ -57,7 +57,7 @@ Errors for both writes:
 
 - `400`: `bad_id`, `bad_json`, `done_must_be_boolean`, `due_must_be_yyyy_mm_dd_or_null`
 - `404`: `no_such_task`, which also covers a task that isn't mine
-- `503`: `turso_unreachable`
+- `503`: `turso_unreachable` (GCP `tls-sqld` unreachable)
 
 Each real change writes one `agent_activity` row: `agent_slug='companion'`, action `status_changed` or `due_changed`, `target_kind='task'`. Its meta carries `{from, to}` (`"open"`/`"done"` for status, dates or null for due), which makes it undoable through the Tasks agent ([tasks-agent-api.md](tasks-agent-api.md)). A no-op (same value) writes none.
 

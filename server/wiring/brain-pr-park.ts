@@ -16,7 +16,7 @@ export async function parked(
 ): Promise<{ reasons: string[]; taskIds: string[]; clientOrigin: boolean }> {
   const reasons: string[] = []
   // Tasks linked by the PR url (a branch-name match is guessable) and the newest shepherd park / hold / unpark
-  // rows for this PR or its linked tasks, queried in parallel so cold-start Turso latency doesn't double up.
+  // rows for this PR or its linked tasks, queried in parallel so cold-start GCP tls-sqld latency doesn't double up.
   const [{ rows }, last] = await Promise.all([
     exec("SELECT id, origin FROM tasks WHERE dispatch_pr_url = ?", [v.url]),
     exec(
