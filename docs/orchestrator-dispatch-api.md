@@ -139,7 +139,7 @@ never re-announces. Blocked / PR transitions push (category `dispatch_task`,
 | `GET /api/orchestrator/pipeline` | `{items:[PipelineItem], generatedAt}` (epoch ms), see [Pipeline list](#pipeline-list) |
 | `POST /hooks/dispatch-event` `{taskId?}` | 202 `{ok:true, polled:bool}`; a nudge inside 2 s arms one trailing poll. Loopback peer (dispatch.sh → 127.0.0.1) needs no header; any other peer needs the bearer, else 403 |
 
-Errors: any notes DB failure → 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
+Errors: any notes DB (GCP `tls-sqld`) failure → 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 ## Pipeline list
 

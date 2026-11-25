@@ -2,7 +2,7 @@
 
 PRJ-CT4M WP5. This is the server side of the Tasks agent tab described in the brief "Agent tab design" (approved 2026-10-06). It builds on [tasks-api.md](tasks-api.md).
 
-All routes need the `/api/*` bearer auth. If notes DB can't be reached, every route returns `503 {"error":"turso_unreachable"}`.
+All routes need the `/api/*` bearer auth. If notes DB (GCP `tls-sqld`) can't be reached, every route returns `503 {"error":"turso_unreachable"}`.
 
 Code:
 

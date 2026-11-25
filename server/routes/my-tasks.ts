@@ -10,7 +10,7 @@ import { jsonObject } from "../lib/json-body"
 //   POST /api/tasks/:id/due  {due}  → { ok, done, due }   (due: "YYYY-MM-DD" | null)
 // Every write and every change the 60 s watcher sees (dashboard edits, agents)
 // pushes `{ type: "tasks_changed" }` so the phone refetches. Auth = the /api/*
-// bearer gate. Notes DB failures → 503 turso_unreachable, never SQL or a stack.
+// bearer gate. Notes DB (GCP tls-sqld) failures → 503 turso_unreachable, never SQL or a stack.
 
 export const CACHE_TTL_MS = 30_000
 export const WATCH_MS = 60_000

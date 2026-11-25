@@ -7,7 +7,7 @@
 # curl code = no answer. Only queued, blocked and failed rows cancel. Refusals:
 # 404 not_found, 403 not_agent_task, 403 not_brain_task, 409 already_final,
 # 409 running, 409 not_cancellable, 409 changed, 503 pr_state_unknown,
-# 503 turso_unreachable. An open PR is not closed: the reply names it, close it
+# 503 turso_unreachable (GCP tls-sqld unreachable). An open PR is not closed: the reply names it, close it
 # with bin/pr-close. Same auth as bin/propose: loopback, X-Companion-Task-Id:
 # brain and the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail

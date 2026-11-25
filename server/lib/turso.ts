@@ -2,7 +2,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { readFileSync } from "node:fs"
 
-// Minimal notes DB client (libSQL Hrana-over-HTTP, tls-sqld; the module keeps its turso name): read-only proxy routes, plus
+// Minimal notes DB client (tls-sqld on GCP, libSQL Hrana-over-HTTP; the module keeps its legacy turso name): read-only proxy routes, plus
 // the guarded dispatch-task writes (tursoExec, orchestrator-one-queue P2).
 // The phone never holds the notes DB token; the server does. Token source is
 // TURSO_AUTH_TOKEN from the shell env, ~/.claude-companion/.env (loaded by

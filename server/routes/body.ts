@@ -22,7 +22,7 @@ import { type BodyInvestigator, HOP_HEADER, bodyInvestigator } from "../wiring/b
 //                                     (+ a problem state triggers an auto-investigation)
 //   POST /api/body/investigate        {component_id,…} investigate on this host / {report} from a peer
 //   POST /api/body/component/:id/agent  "Get an agent on it": files a pending agent task tagged for the owning host
-// Notes DB failures map to 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
+// Notes DB (GCP tls-sqld) failures map to 503 `{ok:false, error:"turso_unreachable"}`; never the SQL.
 
 export interface BodyRouteDeps {
   query?: QueryFn

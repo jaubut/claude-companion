@@ -18,7 +18,7 @@ import { orchEmit } from "./orchestrator"
 //   repo jaubut/* (403 not_own_repo) · open (409 not_open) · head `dispatch/*` (403 not_agent_branch) ·
 //   not a fork (403 cross_repository) · base plain ref characters (403 unsafe_base) ·
 //   no client origin (403 client_origin), no live park or hold (403 parked) ·
-//   notes DB must answer (503 turso_unreachable) ·
+//   notes DB (GCP tls-sqld) must answer (503 turso_unreachable) ·
 //   mergeable CONFLICTING (409 not_conflicting when MERGEABLE; 409 mergeable_unknown when UNKNOWN after one retry).
 // The worker merges the base into the head locally and pushes the head branch; the new head voids the reviewed-sha
 // stamps, so bin/pr-merge answers not_approved until the cascade reviews it again.

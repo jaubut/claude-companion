@@ -180,7 +180,7 @@ Query: `?range=today|7d|30d` (default `today`; anything else → 400
   `null` when companion.db is unreadable (hide the line). Not cached: always
   current, even on a cached token view.
 - No `token_usage` table yet (collector not deployed) → the same shape with zero
-  totals and empty lists, not an error. Notes DB down → 503 `turso_unreachable`.
+  totals and empty lists, not an error. Notes DB (GCP `tls-sqld`) down → 503 `turso_unreachable`.
 
 ## `POST /api/body/alert`
 
@@ -272,7 +272,7 @@ POST /api/body/investigate
 
 The Mac sends its finished investigations to Zettlab this way (Zettlab owns
 #Body). A replayed report id is `duplicate` (no second turn or card). 400
-`{ok:false, error}` on a bad body; 503 `turso_unreachable` as elsewhere.
+`{ok:false, error}` on a bad body; 503 `turso_unreachable` (GCP `tls-sqld`) as elsewhere.
 
 **Peer config** (both hosts):
 
@@ -390,7 +390,7 @@ or silence the probe — and report what changed.
 | 404 | `no such component` | |
 | 422 | `unknown_host` | the id carries no `mac`/`zettlab`/`cloud` prefix and the component has no known host |
 | 400 | `invalid JSON` / `instruction must be a string` / `bad component id` | |
-| 503 | `turso_unreachable` | |
+| 503 | `turso_unreachable` | notes DB (GCP `tls-sqld`) unreachable |
 | — | the live path's errors (`429 live_cap`, `422 no_cwd`, `400 unknown_agent`, …) | the local row is then `cancelled` (no stray card) |
 
 Every start writes the notes DB `agent_activity`: `agent_slug` = the agent, `action`

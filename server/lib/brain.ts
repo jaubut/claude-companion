@@ -291,8 +291,10 @@ export function brainToolStep(tool: string, input: Record<string, unknown>): Bra
     if (cmd.startsWith("bin/ui")) return step("writing", "Rendering a card", "Rendered a card")
     return step("working", "Running a command", "Ran a command")
   }
-  if (tool === "mcp__turso__note_create" || tool === "mcp__turso__note_update") return step("writing", "Writing a note", "Wrote a note", d)
-  if (tool.startsWith("mcp__turso__")) return step("reading", "Reading notes", "Read notes", d)
+  if (tool === "mcp__tls__note_create" || tool === "mcp__tls__note_update" || tool === "mcp__turso__note_create" || tool === "mcp__turso__note_update") return step("writing", "Writing a note", "Wrote a note", d)
+  if (tool === "mcp__tls__send_email" || tool === "mcp__turso__send_email") return step("writing", "Sending an email", "Sent an email")
+  if (tool === "mcp__tls__execute" || tool === "mcp__turso__execute") return step("writing", "Running SQL", "Ran SQL", d)
+  if (tool.startsWith("mcp__tls__") || tool.startsWith("mcp__turso__")) return step("reading", "Reading notes", "Read notes", d)
   if (tool.includes("Gmail__send_message") || tool.includes("Gmail__reply")) return step("writing", "Sending an email", "Sent an email")
   if (/Gmail__(create|update)_draft/.test(tool)) return step("writing", "Drafting an email", "Drafted an email")
   if (tool.includes("Gmail__")) return step("reading", "Reading mail", "Read mail", d)

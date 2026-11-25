@@ -151,7 +151,7 @@ Any bare jaubut repo name (`leadSlug` in `lib/brain.ts`) with a checkout on this
 | 404 `pr_not_found` | gh cannot read it |
 | 409 `not_open` (+`state`) | already closed or merged |
 | 409 `not_dead` | none of the four signals |
-| 502 `close_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
+| 502 `close_unverified` · 503 `gh_unreachable` / `turso_unreachable` (GCP `tls-sqld`) | nothing recorded |
 
 ### Routine agent PRs (`/hooks/brain/pr-merge`)
 
@@ -181,7 +181,7 @@ The merge itself is `gh pr merge --squash --delete-branch --match-head-commit <c
 | 409 `base_moved` | the base branch changed during the check, or by the last read before the merge (a retarget changes the diff, not the head); `gate_unavailable` if that read fails; ask again |
 | 409 `client_gone` | the caller hung up before the merge, nothing merged. It reaches nobody, it shows in the log |
 | 409 `not_open` / `draft` · 409 `not_green` / `not_approved` (+`reasons`) | not now |
-| 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` | nothing recorded |
+| 502 `merge_unverified` · 503 `gh_unreachable` / `turso_unreachable` (GCP `tls-sqld`) | nothing recorded |
 
 ### Stale agent PRs (`/hooks/brain/pr-update-branch`)
 
@@ -203,7 +203,7 @@ The new head voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge` answers `n
 | 502 `update_failed` (+`head`, the old one) | `gh pr update-branch` failed; a head that moved anyway is someone else's push, nothing recorded |
 | 502 `update_unverified` (+`head`, the old one) · 503 `gh_unreachable` | nothing recorded |
 | 502 `gh_bad_json` | the initial GitHub response is not valid JSON; no update attempted |
-| 503 `turso_unreachable` | origin or park/hold lookup failed; no update attempted |
+| 503 `turso_unreachable` | GCP `tls-sqld` origin or park/hold lookup failed; no update attempted |
 
 ### Conflicting agent PRs (`/hooks/brain/pr-resolve-conflicts`)
 
@@ -228,7 +228,7 @@ The pushed merge commit voids the `reviewed-sha` stamps: `/hooks/brain/pr-merge`
 | 409 `already_resolving` (+`taskId`) | the resolver for this head is already running |
 | 409 `already_attempted` (+`taskId`) | a resolver already ran for this head: never re-run on its leftover worktree or session (resume it as a normal task, or push a new head) |
 | 502 `dispatch_failed` (+`detail`) · 502 `gh_bad_json` · 503 `gh_unreachable` | nothing recorded |
-| 503 `turso_unreachable` | origin or park/hold lookup failed; nothing dispatched |
+| 503 `turso_unreachable` | GCP `tls-sqld` origin or park/hold lookup failed; nothing dispatched |
 
 ### Obsolete tasks (`/hooks/brain/task-cancel`)
 
@@ -252,7 +252,7 @@ bin/task-cancel prints the JSON: exit 0 cancelled, 22 refused, 2 usage, any othe
 | 409 `already_final` (+`prState`) | done, cancelled, or its PR merged |
 | 409 `running` (+`owner`) · 409 `not_cancellable` (+`status`) | running · pending, pr, completed or no status |
 | 409 `changed` | the row moved mid-cancel, nothing written |
-| 503 `pr_state_unknown` / `turso_unreachable` | not cancelled, or see the time-out above |
+| 503 `pr_state_unknown` / `turso_unreachable` (GCP `tls-sqld`) | not cancelled, or see the time-out above |
 
 ### Deploys (`wiring/auto-deploy.ts`, `/hooks/brain/deploy`)
 
@@ -269,7 +269,7 @@ Every step writes an `agent_activity` row (`agent_slug` auto-deploy, action `dep
 
 ## Hooks (no hook-script change)
 
-The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow notes DB read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|pr-update-branch|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
+The brain is a **normal Claude Code session**: its tool limits are `brain/CLAUDE.md`, `brain/.claude/settings.json` (deny Edit/Write/MultiEdit/NotebookEdit; allow `tls` MCP notes DB read + note_create/note_update, Gmail drafts + send + reply, `bin/propose|lead|thread|sessions|todo|pr-close|pr-merge|pr-update-branch|task-cancel|deploy`) and the normal permission flow (SUPER, auto-judge → phone). It is detected by `X-Companion-Task-Id: brain` first, then the registered session's taskId.
 
 - PreToolUse: the brain takes the normal path like any session (SUPER, then auto-judge → phone; Jeremie, 2026-10-29). Its hooks also refresh the supervisor's busy deadline (UserPromptSubmit too).
 - Stop: the reply becomes an `orchestrator` turn in the brain thread (adopted session only); no waiting badge, no push, no global auto-compact (`compactTargetFor` excludes brain and `lead-*`).
