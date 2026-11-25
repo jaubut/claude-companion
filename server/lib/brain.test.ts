@@ -80,7 +80,7 @@ describe("brainToolStep", () => {
     expect(brainToolStep("mcp__tls__note_update", { ref_code: "RES-1" })).toMatchObject({ kind: "writing", running: "Writing a note", detail: "RES-1" })
     expect(brainToolStep("mcp__tls__query", { sql: "SELECT 1" })).toMatchObject({ kind: "reading", running: "Reading notes" })
     expect(brainToolStep("mcp__tls__search", { query: "roadmap" })).toMatchObject({ kind: "reading", running: "Reading notes", detail: "roadmap" })
-    expect(brainToolStep("mcp__tls__execute", { query: "SELECT 1" })).toMatchObject({ kind: "reading", running: "Reading notes" })
+    expect(brainToolStep("mcp__tls__execute", { query: "SELECT 1" })).toMatchObject({ kind: "writing", running: "Running SQL" })
     expect(brainToolStep("mcp__tls__send_email", {})).toMatchObject({ kind: "writing", running: "Sending an email" })
     expect(brainToolStep("mcp__turso__note_update", { ref_code: "RES-1" })).toMatchObject({ kind: "writing", running: "Writing a note", detail: "RES-1" })
     expect(brainToolStep("mcp__turso__query", { sql: "SELECT 1" })).toMatchObject({ kind: "reading", running: "Reading notes" })

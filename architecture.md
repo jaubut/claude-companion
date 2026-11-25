@@ -74,7 +74,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/model.ts` | 322 | route-host | 1 | state: inFlight: Set · routes: 3 |
 | `wiring/brain-headless.ts` | 321 | lib | 11 |  |
 | `wiring/brain-workers.ts` | 317 | lib | 9 | emits: brain_trace |
-| `lib/brain.ts` | 306 | lib | 53 |  |
+| `lib/brain.ts` | 307 | lib | 53 |  |
 | `lib/copy-jobs.ts` | 306 | lib | 15 |  |
 | `lib/triage-sources.ts` | 304 | lib | 26 | state: HOLDS: Set |
 | `lib/trip-classify.ts` | 303 | lib | 30 |  |

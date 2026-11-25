@@ -1588,7 +1588,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 306,
+          "lines": 307,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
