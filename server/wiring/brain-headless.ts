@@ -560,7 +560,7 @@ export function createHeadlessBrainRunner(hooks: {
           activeWarmTurn = { prompt, turnModel, settled: false, cancelReason: null }
           if (warmHandle.writeLine(formatGeminiStreamInput(prompt))) {
             clearWarmWatchdog()
-            const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 60_000)
+            const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
             if (maxTurnMs > 0) {
               const watchedTurn = activeWarmTurn
               warmTurnWatchdog = setTimeout(() => {

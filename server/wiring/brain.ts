@@ -332,7 +332,7 @@ export function createBrainWiring(deps: BrainDeps) {
     const was = control
     control = null
     // A late Stop after the transcript fallback carries the same reply: once only.
-    if (!was && text && text !== lastReplyText && text.toLowerCase() !== QUIET_REPLY) say(text)
+    if (!was && text && text !== lastReplyText && text.toLowerCase() !== QUIET_REPLY && text.toLowerCase() !== "interrupted") say(text)
     if (text) lastReplyText = text
     if (!was) {
       turnsSinceReset++
@@ -489,14 +489,17 @@ export function createBrainWiring(deps: BrainDeps) {
           deps.log("[brain] message during idle compact — compact cancelled")
           void deps.interrupt(sessionKey).then(() => flush())
         } else if (busy && sessionKey && busySince > 0 && steerAfterMs > 0 && deps.now() - busySince >= steerAfterMs) {
-          // Mid-turn turn-stealing: never let a long background/tool turn block Jeremie past 15s.
-          const elapsed = deps.now() - busySince
-          const interrupted = clearTyped()
-          const bgToRequeue = interrupted.filter((id) => getTurn(id)?.role !== "user")
-          if (bgToRequeue.length > 0) requeueDeliveries(bgToRequeue)
-          setBusy(false)
-          deps.log(`[brain] user message arrived while turn open ${elapsed}ms — interrupting active turn to deliver immediately`)
-          void deps.interrupt(sessionKey).then(() => flush())
+          // Mid-turn turn-stealing: ONLY preempt a pure background-event turn — never kill an active user turn!
+          const activeTyped = openDeliveries().filter((r) => r.state === "typed").map((r) => r.turnId)
+          const isPureBackgroundTurn = activeTyped.length > 0 && activeTyped.every((id) => getTurn(id)?.role !== "user")
+          if (isPureBackgroundTurn) {
+            const elapsed = deps.now() - busySince
+            const interrupted = clearTyped()
+            if (interrupted.length > 0) requeueDeliveries(interrupted)
+            setBusy(false)
+            deps.log(`[brain] user message arrived while background turn open ${elapsed}ms — interrupting background turn to deliver immediately`)
+            void deps.interrupt(sessionKey).then(() => flush())
+          }
         }
         trace([upsertRow({ id: rowId.turn(turn.id), turnId: turn.id, kind: "turn", status: "pending", title: turn.text, detail: state === "up" ? null : `brain ${state}` })])
         void flush()
