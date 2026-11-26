@@ -214,10 +214,16 @@ export function createHeadlessBrainRunner(hooks: {
     return s
   }
 
+  let warmTurnWatchdog: ReturnType<typeof setTimeout> | null = null
+  const clearWarmWatchdog = (): void => {
+    if (warmTurnWatchdog) { clearTimeout(warmTurnWatchdog); warmTurnWatchdog = null }
+  }
+
   function stopWarmAgy(reason: "interrupt" | "stop" = "stop"): void {
+    clearWarmWatchdog()
     if (activeWarmTurn && !activeWarmTurn.settled) {
       activeWarmTurn.cancelReason = reason
-      activeWarmTurn.settled = true
+      clearWarmWatchdog(); activeWarmTurn.settled = true
     }
     activeWarmTurn = null
     if (!activeHandle) turnInFlight = false
@@ -553,6 +559,23 @@ export function createHeadlessBrainRunner(hooks: {
           turnInFlight = true
           activeWarmTurn = { prompt, turnModel, settled: false, cancelReason: null }
           if (warmHandle.writeLine(formatGeminiStreamInput(prompt))) {
+            clearWarmWatchdog()
+            const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 60_000)
+            if (maxTurnMs > 0) {
+              const watchedTurn = activeWarmTurn
+              warmTurnWatchdog = setTimeout(() => {
+                warmTurnWatchdog = null
+                if (!activeWarmTurn || activeWarmTurn !== watchedTurn || activeWarmTurn.settled) return
+                log(`[brain] warm agy turn exceeded ${maxTurnMs}ms watchdog — aborting stuck turn`)
+                const captured = lastTurnReply
+                stopWarmAgy("interrupt")
+                turnInFlight = false
+                delivering = false
+                syncSession()
+                void hooks.onStop(turnSid, captured || "")
+              }, maxTurnMs)
+              warmTurnWatchdog.unref?.()
+            }
             delivering = false
             activePid = warmHandle.pid > 1 ? warmHandle.pid : null
             syncSession(turnModel)

@@ -17,6 +17,12 @@ describe("parseTriageVerdict", () => {
     expect(parseTriageVerdict("not json")).toBeNull()
     expect(parseTriageVerdict('{"action":"delete","reason":"bad"}')).toBeNull()
     expect(parseTriageVerdict("[]")).toBeNull()
+    expect(parseTriageVerdict(JSON.stringify({
+      conversation_id: "c1",
+      status: "SUCCESS",
+      structured_output: { action: "ignore", reason: "PR waiting on CI" },
+      response: "{\"action\":\"ignore\",\"reason\":\"PR waiting on CI\"}\n",
+    }))).toEqual({ action: "ignore", reason: "PR waiting on CI" })
   })
 })
 

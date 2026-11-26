@@ -141,9 +141,17 @@ export function parseTriageVerdict(raw: string): { action: OpsTriageAction; reas
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
     const obj = parsed as Record<string, unknown>
-    if (obj.action !== "ignore" && obj.action !== "escalate") continue
-    const reason = typeof obj.reason === "string" && obj.reason.trim() ? obj.reason.trim().slice(0, 180) : obj.action
-    return { action: obj.action, reason }
+    const inner = (obj.structured_output && typeof obj.structured_output === "object" && !Array.isArray(obj.structured_output))
+      ? (obj.structured_output as Record<string, unknown>)
+      : obj
+    if (inner.action === "ignore" || inner.action === "escalate") {
+      const reason = typeof inner.reason === "string" && inner.reason.trim() ? inner.reason.trim().slice(0, 180) : inner.action
+      return { action: inner.action, reason }
+    }
+    if (typeof obj.response === "string" && obj.response.trim() && obj.response.trim() !== candidate) {
+      const nested = parseTriageVerdict(obj.response)
+      if (nested) return nested
+    }
   }
   return null
 }
@@ -152,6 +160,7 @@ export function parseTriageVerdict(raw: string): { action: OpsTriageAction; reas
 export function defaultRunAgy(cmd: string, args: string[], timeoutMs: number): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   return new Promise((resolve) => {
     let stdout = ""
+    let stderr = ""
     let settled = false
     const done = (res: { ok: true; text: string } | { ok: false; error: string }) => {
       if (settled) return
@@ -161,7 +170,7 @@ export function defaultRunAgy(cmd: string, args: string[], timeoutMs: number): P
     }
     let child: ReturnType<typeof spawn>
     try {
-      child = spawn(cmd, args, { cwd: tmpdir(), env: process.env, stdio: ["ignore", "pipe", "ignore"] })
+      child = spawn(cmd, args, { cwd: tmpdir(), env: process.env, stdio: ["ignore", "pipe", "pipe"] })
     } catch (err) {
       return done({ ok: false, error: `agy_spawn_${(err as Error)?.name || "error"}` })
     }
@@ -173,9 +182,15 @@ export function defaultRunAgy(cmd: string, args: string[], timeoutMs: number): P
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
       if (stdout.length < 16_000) stdout += chunk
     })
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      if (stderr.length < 2_000) stderr += chunk
+    })
     child.on("error", (err) => done({ ok: false, error: `agy_${err.name || "error"}` }))
     child.on("close", (code) => {
-      if (code !== 0) return done({ ok: false, error: `agy_exit_${code ?? "null"}` })
+      if (code !== 0) {
+        const msg = stderr.trim().replace(/\s+/g, " ").slice(0, 160)
+        return done({ ok: false, error: msg ? `agy_exit_${code ?? "null"}: ${msg}` : `agy_exit_${code ?? "null"}` })
+      }
       const text = stdout.trim()
       return text ? done({ ok: true, text }) : done({ ok: false, error: "agy_empty" })
     })
@@ -270,7 +285,7 @@ export async function triageOpsEvents(
       `--print=${prompt}`,
       "--model", model,
       "--mode", "plan",
-      "--output-format", "text",
+      "--output-format", "json",
       "--json-schema", TRIAGE_JSON_SCHEMA,
       "--disable-slash-commands",
       "--print-timeout", `${Math.max(5, Math.ceil(timeoutMs / 1000))}s`,

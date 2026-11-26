@@ -481,11 +481,21 @@ export function createBrainWiring(deps: BrainDeps) {
         clearCoalesce()
         enqueueDelivery(turn.id, turn.createdAt)
         lastActivity = deps.now()
+        const steerAfterMs = Number(process.env.COMPANION_BRAIN_USER_STEER_MS ?? 15_000)
         if (compacting && sessionKey) {
           // Jeremie comes first: Esc cancels the idle /compact, delivery follows.
           compacting = false
           syncActivity()
           deps.log("[brain] message during idle compact — compact cancelled")
+          void deps.interrupt(sessionKey).then(() => flush())
+        } else if (busy && sessionKey && busySince > 0 && steerAfterMs > 0 && deps.now() - busySince >= steerAfterMs) {
+          // Mid-turn turn-stealing: never let a long background/tool turn block Jeremie past 15s.
+          const elapsed = deps.now() - busySince
+          const interrupted = clearTyped()
+          const bgToRequeue = interrupted.filter((id) => getTurn(id)?.role !== "user")
+          if (bgToRequeue.length > 0) requeueDeliveries(bgToRequeue)
+          setBusy(false)
+          deps.log(`[brain] user message arrived while turn open ${elapsed}ms — interrupting active turn to deliver immediately`)
           void deps.interrupt(sessionKey).then(() => flush())
         }
         trace([upsertRow({ id: rowId.turn(turn.id), turnId: turn.id, kind: "turn", status: "pending", title: turn.text, detail: state === "up" ? null : `brain ${state}` })])
