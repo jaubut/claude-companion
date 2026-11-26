@@ -12,12 +12,14 @@
 //     any client-supplied copy. The forwarded address is trusted ONLY here.
 //   - loopback, no XFF            → a process on this host.
 //   - 100.64.0.0/10, fd7a:115c:a1e0::/48 → direct tailnet peer (WireGuard).
+//   - 10.8.0.0/24, fdcc:ad94:bacf:61a4::/64 (+ COMPANION_WG_SUBNETS) → direct
+//     WireGuard peer (or via local reverse proxy on loopback → wireguard-proxy).
 //   - anything else (LAN, public) → refused. X-Forwarded-For from a non-
 //     loopback peer is ignored: anyone can send that header.
 
 import { checkBearerHeaderOnly } from "./auth"
 
-export type Transport = "tailscale-serve" | "loopback" | "tailnet" | "untrusted"
+export type Transport = "tailscale-serve" | "wireguard" | "wireguard-proxy" | "loopback" | "tailnet" | "untrusted"
 
 export interface ClientOrigin { transport: Transport; peer: string }
 
@@ -49,19 +51,136 @@ export function isTailnet(ip: string): boolean {
   return /^fd7a:115c:a1e0(:|$)/.test(a)
 }
 
+function parseIpv4(ip: string): number | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip)
+  if (!m) return null
+  const a = Number(m[1]), b = Number(m[2]), c = Number(m[3]), d = Number(m[4])
+  if (a > 255 || b > 255 || c > 255 || d > 255) return null
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0
+}
+
+function parseIpv6(ip: string): bigint | null {
+  if (!ip.includes(":")) return null
+  let groups: string[]
+  if (ip.includes("::")) {
+    const parts = ip.split("::")
+    if (parts.length !== 2) return null
+    const left = parts[0] ? parts[0].split(":") : []
+    const right = parts[1] ? parts[1].split(":") : []
+    if (left.length + right.length > 7) return null
+    const fill = Array<string>(8 - left.length - right.length).fill("0")
+    groups = [...left, ...fill, ...right]
+  } else {
+    groups = ip.split(":")
+    if (groups.length !== 8) return null
+  }
+  let val = 0n
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null
+    val = (val << 16n) | BigInt(Number.parseInt(g, 16))
+  }
+  return val
+}
+
+// Refuse Docker (172.16.0.0/12), LAN (192.168.0.0/16), loopback (127.0.0.0/8),
+// link-local (169.254.0.0/16), 0.0.0.0/8, and multicast/reserved (224.0.0.0/3).
+function isForbiddenWgIpv4(v4: number): boolean {
+  return (
+    ((v4 & 0xfff00000) >>> 0) === 0xac100000 ||
+    ((v4 & 0xffff0000) >>> 0) === 0xc0a80000 ||
+    ((v4 & 0xff000000) >>> 0) === 0x7f000000 ||
+    ((v4 & 0xff000000) >>> 0) === 0 ||
+    ((v4 & 0xffff0000) >>> 0) === 0xa9fe0000 ||
+    ((v4 & 0xe0000000) >>> 0) === 0xe0000000
+  )
+}
+
+function isForbiddenWgIpv6(v6: bigint): boolean {
+  return v6 <= 1n || (v6 >> 118n) === 0x3fan || (v6 >> 120n) === 0xffn
+}
+
+type ExtraWgSubnet =
+  | { kind: "v4"; net: number; mask: number }
+  | { kind: "v6"; net: bigint; shift: bigint }
+
+function extraWgSubnets(): ExtraWgSubnet[] {
+  const raw = process.env.COMPANION_WG_SUBNETS
+  if (!raw) return []
+  const out: ExtraWgSubnet[] = []
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim()
+    if (!trimmed) continue
+    const slash = trimmed.indexOf("/")
+    if (slash <= 0 || trimmed.indexOf("/", slash + 1) !== -1) continue
+    const addr = normalize(trimmed.slice(0, slash))
+    const prefixStr = trimmed.slice(slash + 1).trim()
+    if (!/^\d{1,3}$/.test(prefixStr)) continue
+    const prefix = Number(prefixStr)
+    const v4 = parseIpv4(addr)
+    if (v4 !== null) {
+      if (prefix < 16 || prefix > 32) continue
+      const mask = (0xffffffff << (32 - prefix)) >>> 0
+      const net = (v4 & mask) >>> 0
+      if (isForbiddenWgIpv4(v4) || isForbiddenWgIpv4(net)) continue
+      out.push({ kind: "v4", net, mask })
+      continue
+    }
+    const v6 = parseIpv6(addr)
+    if (v6 !== null) {
+      if (prefix < 48 || prefix > 128) continue
+      if (isForbiddenWgIpv6(v6)) continue
+      const shift = BigInt(128 - prefix)
+      out.push({ kind: "v6", net: v6 >> shift, shift })
+    }
+  }
+  return out
+}
+
+/**
+ * Matches Zettlab wg-easy WireGuard peers: 10.8.0.0/24 and
+ * fdcc:ad94:bacf:61a4::/64 by default, plus optional comma-separated CIDRs in
+ * COMPANION_WG_SUBNETS (IPv4 >= /16, IPv6 >= /48; never Docker 172.16.0.0/12
+ * or LAN 192.168.0.0/16).
+ */
+export function isWireGuard(ip: string): boolean {
+  const a = normalize(ip)
+  const v4 = parseIpv4(a)
+  if (v4 !== null) {
+    if (isForbiddenWgIpv4(v4)) return false
+    if (((v4 & 0xffffff00) >>> 0) === 0x0a080000) return true
+    for (const s of extraWgSubnets()) {
+      if (s.kind === "v4" && ((v4 & s.mask) >>> 0) === s.net) return true
+    }
+    return false
+  }
+  const v6 = parseIpv6(a)
+  if (v6 !== null) {
+    if (isForbiddenWgIpv6(v6)) return false
+    if ((v6 >> 64n) === 0xfdccad94bacf61a4n) return true
+    for (const s of extraWgSubnets()) {
+      if (s.kind === "v6" && (v6 >> s.shift) === s.net) return true
+    }
+    return false
+  }
+  return false
+}
+
 /** Where the request really comes from. `untrusted` = refuse (403). */
 export function clientOrigin(req: Request, tcpPeer: string | null): ClientOrigin {
   if (!tcpPeer) return { transport: "untrusted", peer: "unknown" }
   const peer = normalize(tcpPeer)
   if (isTailnet(peer)) return { transport: "tailnet", peer }
+  if (isWireGuard(peer)) return { transport: "wireguard", peer }
   if (!isLoopback(peer)) return { transport: "untrusted", peer }
 
   const xff = req.headers.get("x-forwarded-for")
   if (!xff) return { transport: "loopback", peer }
-  // Funnel = public internet through tailscaled: never.
+  // Funnel / Cloudflare Tunnel = public internet through a local daemon: never.
   if (req.headers.get("tailscale-funnel-request")) return { transport: "untrusted", peer: "funnel" }
+  if (req.headers.has("cf-connecting-ip")) return { transport: "untrusted", peer: "cloudflare" }
   const fwd = normalize(xff.split(",").pop() ?? "")
   if (fwd && (isTailnet(fwd) || isLoopback(fwd))) return { transport: "tailscale-serve", peer: fwd }
+  if (fwd && isWireGuard(fwd)) return { transport: "wireguard-proxy", peer: fwd }
   return { transport: "untrusted", peer: fwd || "unknown" }
 }
 

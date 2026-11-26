@@ -100,6 +100,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/link-media-guard.ts` | 263 | lib | 10 | state: let shared |
 | `lib/github-webhook.ts` | 261 | lib | 10 | state: TRIGGER_ACTIONS: Set, SKIP_LABELS: Set, REDISPATCH_LABELS: Set |
 | `lib/orphan-question.ts` | 259 | lib | 13 | state: raised: Map |
+| `lib/vault-guard.ts` | 256 | lib | 19 | state: peers: WeakMap |
 | `lib/command-offpane-launch.ts` | 255 | lib | 19 | state: versionMemo: Map |
 | `lib/media.ts` | 255 | lib | 10 | state: let mediaBytes, let seededFor, let active, inflight: Map |
 | `wiring/orchestrator.ts` | 255 | lib | 15 | state: taskListeners: Set, let triageDigest · emits: orchestrator, orchestrator_task, orchestrator_channel |
@@ -188,7 +189,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/a2ui-pr-state.ts` | 139 | lib | 13 | state: RESERVED_OUTBOUND_ACTIONS: Set, RESERVED_PR_ACTIONS: Set |
 | `lib/board-mcp.ts` | 139 | lib | 4 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
-| `lib/vault-guard.ts` | 137 | lib | 18 | state: peers: WeakMap |
 | `wiring/brain-task-cancel.ts` | 137 | lib | 5 |  |
 | `lib/mytask-triage.ts` | 136 | lib | 11 |  |
 | `routes/board.ts` | 132 | route-host | 5 | state: ALLOWED_ORIGINS: Set · routes: 2 |
@@ -215,6 +215,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/brain-workers.ts` | 113 | lib | 19 |  |
 | `lib/brain-store.ts` | 111 | lib | 15 |  |
 | `lib/model-prices.ts` | 110 | lib | 8 |  |
+| `lib/request-gate.ts` | 110 | lib | 6 | state: NAMES: Set, let tailscaleName |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |
@@ -224,7 +225,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/tasks-agent.ts` | 100 | lib | 3 |  |
 | `wiring/brain-restore.ts` | 100 | lib | 6 |  |
 | `lib/byq.ts` | 98 | lib | 12 | state: let index, THUMB_HOSTS: Set |
-| `lib/request-gate.ts` | 96 | lib | 6 | state: NAMES: Set, let tailscaleName |
 | `routes/worker-mcp.ts` | 96 | route-host | 3 | route: * /api/mcp/workers |
 | `lib/hrana-stub.test-util.ts` | 95 | lib | 2 |  |
 | `routes/taste.ts` | 95 | lib | 1 |  |

@@ -5084,7 +5084,7 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 96,
+          "lines": 110,
           "kind": "lib",
           "exports": [
             "hostAllowed",
@@ -7126,7 +7126,7 @@
         },
         {
           "path": "lib/vault-guard.ts",
-          "lines": 137,
+          "lines": 256,
           "kind": "lib",
           "exports": [
             "Transport",
@@ -7135,6 +7135,7 @@
             "peerOf",
             "isLoopback",
             "isTailnet",
+            "isWireGuard",
             "clientOrigin",
             "Limiter",
             "clock",
@@ -15926,6 +15927,12 @@
           ]
         },
         "isTailnet": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/request-gate.ts"
+          ]
+        },
+        "isWireGuard": {
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/request-gate.ts"
