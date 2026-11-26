@@ -20,25 +20,38 @@ export const REASON_MAX = 300
 /** The shepherd's park reasons once a fix budget is spent (claude-config tools/pr-shepherd.ts decide()). */
 const BUDGET_SPENT = /^(dep lane: )?(CI still failing after \d+ fixes|merge conflict unresolved after \d+ attempts|review verdict CHANGES after \d+ fix runs)/
 
-export interface PrCloseInput { repo: string; pr: number; reason: string }
+export interface PrCloseInput {
+  repo: string
+  pr: number
+  reason: string
+  humanApproved?: boolean
+  expectedTitle?: string | null
+  expectedUrl?: string | null
+}
 export interface PrCloseDeps { gh: GhFn; exec: ExecFn; event(text: string): void }
 type Out = { status: number; body: Record<string, unknown> }
 
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}): Out => ({ status, body: { ok: false, error, ...extra } })
 
-interface PrView { state: string; headRefName: string; mergeable: string; url: string }
+interface PrView { state: string; headRefName: string; mergeable: string; url: string; title?: string }
 
 async function view(gh: GhFn, p: PrCloseInput): Promise<PrView | Out> {
   let r: Awaited<ReturnType<GhFn>>
   try {
-    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,mergeable,url"])
+    r = await gh(["pr", "view", String(p.pr), "--repo", p.repo, "--json", "state,headRefName,mergeable,url,title"])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
   if (r.code !== 0) return fail(404, "pr_not_found", { detail: r.stderr.trim().slice(0, 200) })
   try {
     const v = JSON.parse(r.stdout) as Partial<PrView>
-    return { state: String(v.state ?? ""), headRefName: String(v.headRefName ?? ""), mergeable: String(v.mergeable ?? ""), url: String(v.url ?? "") }
+    return {
+      state: String(v.state ?? ""),
+      headRefName: String(v.headRefName ?? ""),
+      mergeable: String(v.mergeable ?? ""),
+      url: String(v.url ?? ""),
+      title: String(v.title ?? ""),
+    }
   } catch {
     return fail(502, "gh_bad_json")
   }
@@ -77,14 +90,70 @@ export async function deadReasons(exec: ExecFn, pr: PrView): Promise<{ reasons: 
   return { reasons, taskId }
 }
 
-export async function closeDeadPr(p: PrCloseInput, deps: PrCloseDeps = realDeps): Promise<Out> {
-  const v = await view(deps.gh, p)
+export async function closeDeadPr(p: PrCloseInput, deps: Partial<PrCloseDeps> = realDeps): Promise<Out> {
+  const fullDeps: PrCloseDeps = { ...realDeps, ...deps }
+  const v = await view(fullDeps.gh, p)
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
+  if (p.humanApproved === true) {
+    // `!== undefined` like mergeAgentPr: a null (card lost its title/url) fails closed as stale.
+    if (p.expectedTitle !== undefined || p.expectedUrl !== undefined) {
+      const actualTitle = (v.title || `${p.repo}#${p.pr}`).trim().replace(/</g, "‹").replace(/>/g, "›")
+      const actualUrl = v.url || `https://github.com/${p.repo}/pull/${p.pr}`
+      if (
+        (p.expectedTitle !== undefined && p.expectedTitle !== actualTitle) ||
+        (p.expectedUrl !== undefined && p.expectedUrl !== actualUrl)
+      ) {
+        return fail(409, "pr_metadata_stale", {
+          expectedTitle: p.expectedTitle ?? null,
+          actualTitle,
+          expectedUrl: p.expectedUrl ?? null,
+          actualUrl,
+        })
+      }
+    }
+    const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
+    let run: Awaited<ReturnType<GhFn>>
+    try {
+      run = await fullDeps.gh(["pr", "close", String(p.pr), "--repo", p.repo, "--comment", "Closed via Companion PR Gate card"])
+    } catch (err) {
+      return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
+    }
+    const after = await prState(fullDeps.gh, v.url).catch(() => "unknown")
+    if (after !== "CLOSED") return fail(502, "close_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
+    let taskId: string | null = null
+    try {
+      const id8 = /^dispatch\/[\w.-]+$/.test(v.headRefName) ? v.headRefName.slice("dispatch/".length).slice(0, 8) : ""
+      const { rows } = await fullDeps.exec(
+        "SELECT id, done, dispatch_status, dispatch_pr_url FROM tasks WHERE dispatch_pr_url = ? OR substr(id, 1, 8) = ? ORDER BY dispatch_pr_url = ? DESC LIMIT 1",
+        [v.url, id8.length === 8 ? id8 : null, v.url],
+      )
+      // Only the task this PR belongs to: a task already pointing at a newer PR stays live.
+      const t = rows[0] && (!rows[0].dispatch_pr_url || rows[0].dispatch_pr_url === v.url) ? rows[0] : undefined
+      taskId = t ? String(t.id) : null
+      if (t && String(t.done ?? "0") === "0" && t.dispatch_status !== "done" && t.dispatch_status !== "cancelled") {
+        await fullDeps.exec("UPDATE tasks SET dispatch_status = 'cancelled' WHERE id = ? AND done = 0", [taskId])
+      }
+    } catch (err) {
+      companionLog(`[brain] pr-close: task cancel failed (${(err as Error)?.name ?? "error"})`)
+    }
+    try {
+      await fullDeps.exec(
+        "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
+        [BRAIN_AGENT, PR_CLOSE_ACTION, taskId ? "task" : "pr", taskId ?? v.url, `${p.repo}#${p.pr} closed via PR Gate card: ${reason}`.slice(0, 200),
+          JSON.stringify({ repo: p.repo, pr: p.pr, url: v.url, branch: v.headRefName, reason, evidence: ["human-card"], source: "companion" })],
+      )
+    } catch (err) {
+      companionLog(`[brain] pr-close: activity row failed (${(err as Error)?.name ?? "error"})`)
+    }
+    fullDeps.event(`Closed ${p.repo}#${p.pr} via PR Gate card`)
+    companionLog(`[brain] pr-close ${p.repo}#${p.pr} closed (human-card)`)
+    return { status: 200, body: { ok: true, closed: true, url: v.url, evidence: ["human-card"] } }
+  }
   if (!/^dispatch\/[\w.-]+$/.test(v.headRefName)) return fail(403, "not_agent_branch", { branch: v.headRefName })
   let dead: Awaited<ReturnType<typeof deadReasons>>
   try {
-    dead = await deadReasons(deps.exec, v)
+    dead = await deadReasons(fullDeps.exec, v)
   } catch (err) {
     companionLog(`[brain] pr-close: turso ${err instanceof TursoUnreachable ? err.message : (err as Error)?.name ?? "error"}`)
     return fail(503, "turso_unreachable")
@@ -93,15 +162,15 @@ export async function closeDeadPr(p: PrCloseInput, deps: PrCloseDeps = realDeps)
   const reason = redactSecrets(p.reason).slice(0, REASON_MAX)
   let run: Awaited<ReturnType<GhFn>>
   try {
-    run = await deps.gh(["pr", "close", String(p.pr), "--repo", p.repo, "--comment", `Closed by the brain: ${reason}`])
+    run = await fullDeps.gh(["pr", "close", String(p.pr), "--repo", p.repo, "--comment", `Closed by the brain: ${reason}`])
   } catch (err) {
     return fail(503, "gh_unreachable", { detail: String((err as Error)?.message ?? "").slice(0, 200) })
   }
-  const after = await prState(deps.gh, v.url).catch(() => "unknown")
+  const after = await prState(fullDeps.gh, v.url).catch(() => "unknown")
   if (after !== "CLOSED") return fail(502, "close_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
   const evidence = dead.reasons.join("; ")
   try {
-    await deps.exec(
+    await fullDeps.exec(
       "INSERT INTO agent_activity (agent_slug, action, target_kind, target_id, summary, meta) VALUES (?, ?, ?, ?, ?, ?)",
       [BRAIN_AGENT, PR_CLOSE_ACTION, dead.taskId ? "task" : "pr", dead.taskId ?? v.url, `${p.repo}#${p.pr} closed by the brain: ${reason}`.slice(0, 200),
         JSON.stringify({ repo: p.repo, pr: p.pr, url: v.url, branch: v.headRefName, reason, evidence: dead.reasons, source: "companion" })],
@@ -109,7 +178,7 @@ export async function closeDeadPr(p: PrCloseInput, deps: PrCloseDeps = realDeps)
   } catch (err) {
     companionLog(`[brain] pr-close: activity row failed (${(err as Error)?.name ?? "error"})`)
   }
-  deps.event(`Brain closed ${p.repo}#${p.pr} (${evidence}): ${reason}`)
+  fullDeps.event(`Brain closed ${p.repo}#${p.pr} (${evidence}): ${reason}`)
   companionLog(`[brain] pr-close ${p.repo}#${p.pr} closed (${evidence})`)
   return { status: 200, body: { ok: true, closed: true, url: v.url, evidence: dead.reasons } }
 }

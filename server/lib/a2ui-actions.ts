@@ -22,6 +22,7 @@ import { type Turn, appendTurn, findA2UITurn, getTurn, setTurnCard } from "./orc
 import { type OutboundPayload, type OutboundRecord, payloadHash, policyRefusal, sendable } from "./outbound"
 import { realGh } from "./triage-pr"
 import { autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
+import { closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { orchEmit } from "../wiring/orchestrator"
 import { gmailSender } from "../wiring/outbound"
@@ -152,6 +153,50 @@ async function runActionForTurn(
       merged: true,
       url: mergeOut.body.url,
       head: mergeOut.body.head,
+      replay: false,
+    }
+    rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+    return { status: 200, body: outBody }
+  }
+
+  if (name === "pr.close") {
+    if (!/^pr-/.test(req.surfaceId)) return fail(403, "pr_surface_mismatch")
+    const prModel = (dataModel.pr && typeof dataModel.pr === "object" ? dataModel.pr : {}) as Record<string, unknown>
+    // Pin repo and prNum strictly to the surface's hydrated prModel so context cannot redirect a close.
+    const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
+    const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
+    if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
+    if (prModel.state === "merged" || prModel.state === "closed") {
+      return fail(409, "not_open", { state: prModel.state })
+    }
+
+    const expectedTitle = typeof prModel.title === "string" ? prModel.title : null
+    const expectedUrl = typeof prModel.url === "string" ? prModel.url : null
+    const closeFn = deps.prClose ?? closeDeadPr
+    const closeOut = await closeFn(
+      {
+        repo,
+        pr: prNum,
+        reason: "Closed via A2UI PR Gate card",
+        humanApproved: true,
+        expectedTitle,
+        expectedUrl,
+      },
+      deps.gh ? { gh: deps.gh } : undefined,
+    )
+    if (closeOut.status !== 200 || closeOut.body.ok !== true) {
+      return { status: closeOut.status, body: closeOut.body }
+    }
+    const patched = updateSurfaceData(req.surfaceId, "/pr/state", "closed", scopedEngine)
+    if (!patched.ok) return fail(patched.status, patched.error)
+    const outBody: Record<string, unknown> = {
+      ok: true,
+      surfaceId: req.surfaceId,
+      turnId: turn.id,
+      action: "pr.close",
+      state: "closed",
+      closed: true,
+      url: closeOut.body.url,
       replay: false,
     }
     rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)

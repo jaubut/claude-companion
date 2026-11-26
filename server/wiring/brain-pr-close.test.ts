@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { GhFn, GhResult } from "../lib/triage-pr"
-import type { ExecFn, Row } from "../lib/turso"
+import { type ExecFn, type Row, TursoUnreachable } from "../lib/turso"
 
 // bin/pr-close gate (wiring/brain-pr-close.ts): every refusal and the close,
 // gh faked at the process boundary, notes DB a real sqlite with the prod columns.
@@ -128,5 +128,121 @@ describe("bin/pr-close gate", () => {
     const w = world(open())
     const out = await closeDeadPr(input, { ...w.deps, gh: async () => { throw new Error("spawn failed") } })
     expect(out.status).toBe(503)
+  })
+
+  test("humanApproved: closes human/non-dispatch and healthy MERGEABLE PRs, cancels matching open task best-effort, and verifies metadata", async () => {
+    // 1. Non-dispatch human branch + MERGEABLE closes with 'Closed via Companion PR Gate card' and keeps branch
+    const humanWorld = world(
+      open({ headRefName: "jeremie/feature-x", mergeable: "MERGEABLE", title: "feat: human PR" }),
+      `INSERT INTO tasks VALUES ('human-task-1', 0, 'pr', '${URL}');`,
+    )
+    const humanOut = await closeDeadPr(
+      {
+        repo: "o/r",
+        pr: 7,
+        reason: "Closed via A2UI PR Gate card",
+        humanApproved: true,
+        expectedTitle: "feat: human PR",
+        expectedUrl: URL,
+      },
+      humanWorld.deps,
+    )
+    expect(humanOut).toEqual({
+      status: 200,
+      body: { ok: true, closed: true, url: URL, evidence: ["human-card"] },
+    })
+    const [humanClose] = closes(humanWorld.calls)
+    expect(humanClose).toEqual(["pr", "close", "7", "--repo", "o/r", "--comment", "Closed via Companion PR Gate card"])
+    expect(humanClose).not.toContain("--delete-branch")
+    const taskRow = humanWorld.db.query("SELECT dispatch_status, done FROM tasks WHERE id = 'human-task-1'").get() as Row
+    expect(taskRow.dispatch_status).toBe("cancelled")
+    expect(taskRow.done).toBe(0)
+    const actRows = humanWorld.db.query("SELECT agent_slug, action, target_kind, target_id, meta FROM agent_activity WHERE action = ?").all(PR_CLOSE_ACTION) as Row[]
+    expect(actRows).toHaveLength(1)
+    expect(actRows[0]!.target_kind).toBe("task")
+    expect(actRows[0]!.target_id).toBe("human-task-1")
+    expect(JSON.parse(String(actRows[0]!.meta)).evidence).toEqual(["human-card"])
+    expect(humanWorld.events).toEqual(["Closed o/r#7 via PR Gate card"])
+
+    // 2. Stale metadata (title or url mismatch) returns 409 pr_metadata_stale before gh pr close
+    const staleWorld = world(open({ headRefName: "jeremie/feature-x", title: "live title on GitHub" }))
+    const staleTitleOut = await closeDeadPr(
+      {
+        repo: "o/r",
+        pr: 7,
+        reason: "Closed via A2UI PR Gate card",
+        humanApproved: true,
+        expectedTitle: "old card title",
+        expectedUrl: URL,
+      },
+      staleWorld.deps,
+    )
+    expect(staleTitleOut.status).toBe(409)
+    expect(staleTitleOut.body.error).toBe("pr_metadata_stale")
+    expect(closes(staleWorld.calls)).toHaveLength(0)
+
+    const staleUrlOut = await closeDeadPr(
+      {
+        repo: "o/r",
+        pr: 7,
+        reason: "Closed via A2UI PR Gate card",
+        humanApproved: true,
+        expectedTitle: "live title on GitHub",
+        expectedUrl: "https://github.com/o/r/pull/999",
+      },
+      staleWorld.deps,
+    )
+    expect(staleUrlOut.status).toBe(409)
+    expect(staleUrlOut.body.error).toBe("pr_metadata_stale")
+    expect(closes(staleWorld.calls)).toHaveLength(0)
+
+    // 3. Turso hiccup is non-fatal when humanApproved === true
+    const tursoDownWorld = world(open({ headRefName: "dispatch/abcd1234", mergeable: "MERGEABLE", title: "feat: resilient close" }))
+    const tursoDownOut = await closeDeadPr(
+      {
+        repo: "o/r",
+        pr: 7,
+        reason: "Closed via A2UI PR Gate card",
+        humanApproved: true,
+        expectedTitle: "feat: resilient close",
+        expectedUrl: URL,
+      },
+      {
+        ...tursoDownWorld.deps,
+        exec: async () => {
+          throw new TursoUnreachable("sqld timeout")
+        },
+      },
+    )
+    expect(tursoDownOut.status).toBe(200)
+    expect(tursoDownOut.body.closed).toBe(true)
+    expect(closes(tursoDownWorld.calls)).toHaveLength(1)
+    expect(tursoDownWorld.events).toEqual(["Closed o/r#7 via PR Gate card"])
+  })
+
+  const human = { repo: "o/r", pr: 7, reason: "Closed via A2UI PR Gate card", humanApproved: true }
+
+  test("humanApproved: closing a superseded PR leaves the task (already on a newer PR) live", async () => {
+    const w = world(open({ title: "t" }), `INSERT INTO tasks VALUES ('abcd1234-0000', 0, 'pr', 'https://github.com/o/r/pull/9');`)
+    const out = await closeDeadPr({ ...human, expectedTitle: "t", expectedUrl: URL }, w.deps)
+    expect(out.status).toBe(200)
+    const t = w.db.query("SELECT dispatch_status FROM tasks WHERE id = 'abcd1234-0000'").get() as Row
+    expect(t.dispatch_status).toBe("pr")
+    const act = w.db.query("SELECT target_kind FROM agent_activity WHERE action = ?").get(PR_CLOSE_ACTION) as Row
+    expect(act.target_kind).toBe("pr")
+  })
+
+  test("humanApproved: a short dispatch/<slug> branch never prefix-matches a short task id", async () => {
+    const w = world(open({ headRefName: "dispatch/abc", title: "t" }), `INSERT INTO tasks (id, done, dispatch_status) VALUES ('abc', 0, 'running');`)
+    expect((await closeDeadPr({ ...human, expectedTitle: "t", expectedUrl: URL }, w.deps)).status).toBe(200)
+    expect((w.db.query("SELECT dispatch_status FROM tasks WHERE id = 'abc'").get() as Row).dispatch_status).toBe("running")
+  })
+
+  test("humanApproved: a null expected title/url (card lost them) fails closed as stale", async () => {
+    const w = world(open({ title: "t" }))
+    const out = await closeDeadPr({ ...human, expectedTitle: null, expectedUrl: null }, w.deps)
+    expect(out.status).toBe(409)
+    expect(out.body.error).toBe("pr_metadata_stale")
+    expect(closes(w.calls)).toHaveLength(0)
   })
 })

@@ -40,6 +40,7 @@ import {
 } from "./a2ui-pr-state"
 import { type GhFn, realGh } from "./triage-pr"
 import type { DeployResult } from "../wiring/auto-deploy"
+import type { closeDeadPr } from "../wiring/brain-pr-close"
 import type { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { outboundStore } from "../wiring/outbound"
 
@@ -303,7 +304,7 @@ export function buildPrGateSurface(
   const reason = rawReason ? stripAngleTags(rawReason) : null
 
   const colChildren = ["header_row", "meta_row", "url_text", ...(reason ? ["reason_text"] : []), "divider", "actions_row"]
-  const actionIds = ["refresh_btn", "merge_btn", ...(pr.deployRepo ? ["deploy_btn"] : [])]
+  const actionIds = ["refresh_btn", "merge_btn", "close_btn", ...(pr.deployRepo ? ["deploy_btn"] : [])]
   const components: A2UIComponent[] = [
     { id: "root", component: "Card", children: ["col"] },
     { id: "col", component: "Column", children: colChildren },
@@ -318,28 +319,11 @@ export function buildPrGateSurface(
     ...(reason ? [{ id: "reason_text", component: "Text" as const, text: { "@path": "/pr/reason" }, variant: "body" }] : []),
     { id: "divider", component: "Divider" },
     { id: "actions_row", component: "Row", children: actionIds },
-    {
-      id: "refresh_btn",
-      component: "Button",
-      label: "Refresh",
-      variant: "secondary",
-      action: { name: "pr.refresh", context: { repo: pr.repo, pr: pr.number } },
-    },
-    {
-      id: "merge_btn",
-      component: "Button",
-      label: "Merge PR",
-      variant: "primary",
-      action: { name: "pr.merge", context: { repo: pr.repo, pr: pr.number } },
-    },
+    { id: "refresh_btn", component: "Button", label: "Refresh", variant: "secondary", action: { name: "pr.refresh", context: { repo: pr.repo, pr: pr.number } } },
+    { id: "merge_btn", component: "Button", label: "Merge PR", variant: "primary", action: { name: "pr.merge", context: { repo: pr.repo, pr: pr.number } } },
+    { id: "close_btn", component: "Button", label: "Close PR", variant: "secondary", action: { name: "pr.close", context: { repo: pr.repo, pr: pr.number } } },
     ...(pr.deployRepo
-      ? [{
-          id: "deploy_btn",
-          component: "Button" as const,
-          label: `Deploy ${pr.deployRepo}`,
-          variant: "secondary",
-          action: { name: "pr.deploy", context: { repo: pr.deployRepo } },
-        }]
+      ? [{ id: "deploy_btn", component: "Button" as const, label: `Deploy ${pr.deployRepo}`, variant: "secondary", action: { name: "pr.deploy", context: { repo: pr.deployRepo } } }]
       : []),
   ]
 
@@ -360,6 +344,7 @@ export function buildPrGateSurface(
 export interface A2UIRouteDeps {
   gh?: GhFn
   prMerge?: typeof mergeAgentPr
+  prClose?: typeof closeDeadPr
   deploy?: ((repo: string) => Promise<DeployResult>) | null
   outbound?: OutboundStore | (() => OutboundStore) | null
   emailSender?: OutboundSender

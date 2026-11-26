@@ -79,7 +79,7 @@ export function computeReviewState(
 }
 
 const RESERVED_OUTBOUND_ACTIONS = new Set(["email.confirm", "email.cancel"])
-const RESERVED_PR_ACTIONS = new Set(["pr.merge", "pr.deploy", "pr.refresh"])
+const RESERVED_PR_ACTIONS = new Set(["pr.merge", "pr.close", "pr.deploy", "pr.refresh"])
 
 export const prSurfaceId = (repo: string, pr: number): string =>
   `pr-${repo.replace(/[^A-Za-z0-9_.-]/g, "-")}-${pr}`

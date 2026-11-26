@@ -371,6 +371,6 @@ describe("PrGateCard hydration & computeReviewState tier rules", () => {
     expect(surface.ok).toBe(true)
     if (!surface.ok) return
     const cs = (surface.messages[0] as { createSurface: { components: Array<{ id: string; action?: { name: string } }> } }).createSurface
-    expect(cs.components.map((c) => c.action?.name).filter(Boolean)).toEqual(["pr.refresh", "pr.merge", "pr.deploy"])
+    expect(cs.components.map((c) => c.action?.name).filter(Boolean)).toEqual(["pr.refresh", "pr.merge", "pr.close", "pr.deploy"])
   })
 })
