@@ -30,6 +30,10 @@ export function hostAllowed(host: string | null): boolean {
   if (NAMES.has(name) || name === tailscaleName) return true
   const labels = name.split(".")
   if (SHORT && labels.length === 4 && labels[0] === SHORT && name.endsWith(".ts.net")) return true
+  // On wake-from-sleep or cold boot, tailscaled may not have answered yet
+  // while os.hostname() differs from the tailnet DNS name. Trigger an
+  // immediate background refresh so subsequent retries succeed quickly.
+  if (!tailscaleName && name.endsWith(".ts.net")) triggerTailscaleRefresh()
   const ip = name.replace(/^\[|\]$/g, "")
   return isLoopback(ip) || isTailnet(ip) || localAddresses().has(ip)
 }
@@ -45,11 +49,29 @@ export function tailscaleNameOf(status: string): string {
   } catch { return "" }
 }
 
+const TAILSCALE_BINS = [
+  "tailscale",
+  "/usr/local/bin/tailscale",
+  "/opt/homebrew/bin/tailscale",
+  "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+]
+
 async function readTailscaleStatus(): Promise<string> {
-  const p = Bun.spawn(["tailscale", "status", "--json"], { stdout: "pipe", stderr: "ignore", timeout: 3_000 })
-  const out = await new Response(p.stdout).text()
-  return (await p.exited) === 0 ? out : ""
+  for (const bin of TAILSCALE_BINS) {
+    try {
+      const p = Bun.spawn([bin, "status", "--json"], { stdout: "pipe", stderr: "ignore", timeout: 3_000 })
+      const out = await new Response(p.stdout).text()
+      if ((await p.exited) === 0 && out.trim()) return out
+    } catch {
+      continue
+    }
+  }
+  return ""
 }
+
+let refreshInFlight: Promise<void> | null = null
+let lastRefreshAt = 0
+let activeReader: (() => Promise<string>) | null = null
 
 // One read; a failed one keeps the last good name.
 export async function refreshTailscaleName(read: () => Promise<string> = readTailscaleStatus): Promise<void> {
@@ -57,12 +79,50 @@ export async function refreshTailscaleName(read: () => Promise<string> = readTai
   if (name) tailscaleName = name
 }
 
-// tailscaled may start after this server, and a machine can be renamed, so the
-// name is read now and every minute. Until the first read lands, `tailscale
-// serve` requests get 421 unless the short-name rule above matches them.
-export function watchTailscaleName(everyMs = 60_000): void {
-  void refreshTailscaleName()
-  setInterval(() => void refreshTailscaleName(), everyMs).unref()
+/** Test-only reset to simulate cold boot before tailscaled answers. */
+export function _resetTailscaleNameForTest(): void {
+  tailscaleName = ""
+  activeReader = null
+  lastRefreshAt = 0
+}
+
+function triggerTailscaleRefresh(): void {
+  const reader = activeReader
+  if (!reader) return
+  const now = Date.now()
+  if (refreshInFlight || now - lastRefreshAt < 1_000) return
+  lastRefreshAt = now
+  refreshInFlight = refreshTailscaleName(reader).finally(() => { refreshInFlight = null })
+}
+
+// tailscaled may start after this server (or reconnect after Mac sleep), and a
+// machine can be renamed, so the name is read now and refreshed periodically.
+// While tailscaleName is still empty, retry quickly (fastRetryMs) so boot/wake
+// 421s recover in seconds instead of waiting a full minute.
+export function watchTailscaleName(
+  everyMs = 60_000,
+  read: () => Promise<string> = readTailscaleStatus,
+  fastRetryMs = 2_000,
+): () => void {
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  activeReader = read
+  const schedule = () => {
+    if (stopped) return
+    const delay = tailscaleName ? everyMs : Math.min(everyMs, fastRetryMs)
+    timer = setTimeout(async () => {
+      if (stopped) return
+      await refreshTailscaleName(read)
+      schedule()
+    }, delay)
+    timer.unref?.()
+  }
+  void refreshTailscaleName(read).finally(schedule)
+  return () => {
+    stopped = true
+    if (activeReader === read) activeReader = null
+    if (timer) clearTimeout(timer)
+  }
 }
 
 // Read per call: DHCP / Wi-Fi changes move the LAN address while the server runs.

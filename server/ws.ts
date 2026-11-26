@@ -26,6 +26,11 @@ import { brainWiring } from "./wiring/brain"
 // then replay pending approvals/questions; on message, approve/deny/answer/input/ping; on close,
 // drop the client. Same frames and log lines as before the split.
 export const websocket: WebSocketHandler<WsData> = {
+  // Keep Tailscale Serve / NAT tunnels alive and match iOS CompanionSocket's
+  // 16 MiB maximumMessageSize so large init/feed frames never close with 1006.
+  sendPings: true,
+  idleTimeout: 120,
+  maxPayloadLength: 16 * 1024 * 1024,
   open(ws) {
     if (ws.data.terminal) return terminalOpen(ws)
     if (ws.data.mirror) return mirrorOpen(ws)
