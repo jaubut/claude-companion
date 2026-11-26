@@ -532,6 +532,17 @@ describe("bin/pr-merge gate: the merge", () => {
     })
     expect(gateInvocations).toBe(0)
 
+    // When a PR is already MERGED or CLOSED on GitHub, not_open takes precedence over head_moved
+    const alreadyMergedWorld = worldWithRealGate({ state: "MERGED", files: [{ path: "server/lib/feed-format.ts" }] }, "server/lib/feed-format.ts\t\n")
+    const alreadyMergedOut = await mergeAgentPr(
+      { ...input, humanApproved: true, expectedHeadSha: OLD, expectedTitle: "wrong title", expectedUrl: URL },
+      alreadyMergedWorld.deps,
+    )
+    expect(alreadyMergedOut).toEqual({
+      status: 409,
+      body: { ok: false, error: "not_open", state: "MERGED" },
+    })
+
     const staleMetaOut = await mergeAgentPr(
       { ...input, humanApproved: true, expectedHeadSha: SHA, expectedTitle: "wrong title", expectedUrl: URL },
       countedDeps,

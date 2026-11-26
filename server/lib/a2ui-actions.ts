@@ -15,6 +15,7 @@ import {
   prSurfaceId,
   resolveOutboundStore,
   stripAngleTags,
+  syncPrGateButtons,
 } from "./a2ui-macros"
 import { isReservedAction } from "./a2ui-pr-state"
 import { BRAIN_THREAD } from "./brain"
@@ -101,6 +102,7 @@ async function runActionForTurn(
     }
     const patched = updateSurfaceData(req.surfaceId, "/pr", nextPr, scopedEngine)
     if (!patched.ok) return fail(patched.status, patched.error)
+    syncPrGateButtons(req.surfaceId, nextPr.state, deployRepo, scopedEngine)
     const outBody: Record<string, unknown> = {
       ok: true,
       surfaceId: req.surfaceId,
@@ -122,6 +124,23 @@ async function runActionForTurn(
     const expectedSha = typeof prModel.headSha === "string" ? prModel.headSha.trim() : ""
     if (!repo || !prNum || !expectedSha) return fail(400, "pr_target_missing")
     if (req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
+    const deployRepo = typeof prModel.deployRepo === "string" ? prModel.deployRepo : null
+    if (prModel.state === "merged") {
+      syncPrGateButtons(req.surfaceId, "merged", deployRepo, scopedEngine)
+      const outBody: Record<string, unknown> = {
+        ok: true,
+        surfaceId: req.surfaceId,
+        turnId: turn.id,
+        action: "pr.merge",
+        state: "merged",
+        merged: true,
+        url: prModel.url ?? null,
+        head: prModel.headSha ?? null,
+        replay: true,
+      }
+      rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+      return { status: 200, body: outBody }
+    }
 
     const expectedTitle = typeof prModel.title === "string" ? prModel.title : null
     const expectedUrl = typeof prModel.url === "string" ? prModel.url : null
@@ -140,10 +159,35 @@ async function runActionForTurn(
       deps.gh ? { gh: deps.gh } : undefined,
     )
     if (mergeOut.status !== 200 || mergeOut.body.ok !== true) {
+      if (mergeOut.body.error === "not_open") {
+        const liveState = String(mergeOut.body.state ?? "").toUpperCase()
+        if (liveState === "MERGED") {
+          updateSurfaceData(req.surfaceId, "/pr/state", "merged", scopedEngine)
+          syncPrGateButtons(req.surfaceId, "merged", deployRepo, scopedEngine)
+          const outBody: Record<string, unknown> = {
+            ok: true,
+            surfaceId: req.surfaceId,
+            turnId: turn.id,
+            action: "pr.merge",
+            state: "merged",
+            merged: true,
+            url: prModel.url ?? null,
+            head: prModel.headSha ?? null,
+            replay: true,
+          }
+          rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+          return { status: 200, body: outBody }
+        }
+        if (liveState === "CLOSED") {
+          updateSurfaceData(req.surfaceId, "/pr/state", "closed", scopedEngine)
+          syncPrGateButtons(req.surfaceId, "closed", deployRepo, scopedEngine)
+        }
+      }
       return { status: mergeOut.status, body: mergeOut.body }
     }
     const patched = updateSurfaceData(req.surfaceId, "/pr/state", "merged", scopedEngine)
     if (!patched.ok) return fail(patched.status, patched.error)
+    syncPrGateButtons(req.surfaceId, "merged", deployRepo, scopedEngine)
     const outBody: Record<string, unknown> = {
       ok: true,
       surfaceId: req.surfaceId,
@@ -166,7 +210,24 @@ async function runActionForTurn(
     const repo = typeof prModel.repo === "string" && REPO_RE.test(prModel.repo.trim()) ? prModel.repo.trim() : ""
     const prNum = typeof prModel.number === "number" && Number.isInteger(prModel.number) && prModel.number > 0 ? prModel.number : 0
     if (!repo || !prNum || req.surfaceId !== prSurfaceId(repo, prNum)) return fail(403, "pr_surface_mismatch")
-    if (prModel.state === "merged" || prModel.state === "closed") {
+    const deployRepo = typeof prModel.deployRepo === "string" ? prModel.deployRepo : null
+    if (prModel.state === "closed") {
+      syncPrGateButtons(req.surfaceId, "closed", deployRepo, scopedEngine)
+      const outBody: Record<string, unknown> = {
+        ok: true,
+        surfaceId: req.surfaceId,
+        turnId: turn.id,
+        action: "pr.close",
+        state: "closed",
+        closed: true,
+        url: prModel.url ?? null,
+        replay: true,
+      }
+      rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+      return { status: 200, body: outBody }
+    }
+    if (prModel.state === "merged") {
+      syncPrGateButtons(req.surfaceId, "merged", deployRepo, scopedEngine)
       return fail(409, "not_open", { state: prModel.state })
     }
 
@@ -185,10 +246,35 @@ async function runActionForTurn(
       deps.gh ? { gh: deps.gh } : undefined,
     )
     if (closeOut.status !== 200 || closeOut.body.ok !== true) {
+      if (closeOut.body.error === "not_open") {
+        const liveState = String(closeOut.body.state ?? "").toUpperCase()
+        if (liveState === "CLOSED") {
+          updateSurfaceData(req.surfaceId, "/pr/state", "closed", scopedEngine)
+          syncPrGateButtons(req.surfaceId, "closed", deployRepo, scopedEngine)
+          const outBody: Record<string, unknown> = {
+            ok: true,
+            surfaceId: req.surfaceId,
+            turnId: turn.id,
+            action: "pr.close",
+            state: "closed",
+            closed: true,
+            url: prModel.url ?? null,
+            replay: true,
+          }
+          rememberActionKey(turn.id, req.actionKey, outBody, scopedEngine)
+          return { status: 200, body: outBody }
+        }
+        if (liveState === "MERGED") {
+          updateSurfaceData(req.surfaceId, "/pr/state", "merged", scopedEngine)
+          syncPrGateButtons(req.surfaceId, "merged", deployRepo, scopedEngine)
+          return { status: 409, body: { ok: false, error: "already_merged", state: "merged" } }
+        }
+      }
       return { status: closeOut.status, body: closeOut.body }
     }
     const patched = updateSurfaceData(req.surfaceId, "/pr/state", "closed", scopedEngine)
     if (!patched.ok) return fail(patched.status, patched.error)
+    syncPrGateButtons(req.surfaceId, "closed", deployRepo, scopedEngine)
     const outBody: Record<string, unknown> = {
       ok: true,
       surfaceId: req.surfaceId,
@@ -221,6 +307,7 @@ async function runActionForTurn(
         return { status: 409, body: { ...deployOut } }
       }
       updateSurfaceData(req.surfaceId, "/pr/state", "deployed", scopedEngine)
+      syncPrGateButtons(req.surfaceId, "deployed", deployRepo, scopedEngine)
       const outBody: Record<string, unknown> = {
         ok: true,
         surfaceId: req.surfaceId,

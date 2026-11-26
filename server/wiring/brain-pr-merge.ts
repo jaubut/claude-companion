@@ -226,6 +226,7 @@ export async function mergeAgentPr(p: PrMergeInput, deps: Partial<PrMergeDeps> =
   const fullDeps: PrMergeDeps = { ...realDeps, ...deps }
   const v = await view(fullDeps.gh, p)
   if ("status" in v) return v
+  if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (p.expectedHeadSha !== undefined && v.headRefOid !== p.expectedHeadSha) {
     return fail(409, "head_moved", { expected: p.expectedHeadSha, actual: v.headRefOid })
   }
@@ -244,7 +245,6 @@ export async function mergeAgentPr(p: PrMergeInput, deps: Partial<PrMergeDeps> =
       })
     }
   }
-  if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   const cardApproved = p.humanApproved === true
   const humanApproved = cardApproved || fullDeps.humanApproved?.(p.pr, p.repo) === true
   const canCheckPark = !v.isDraft && /^dispatch\/[\w.-]+$/.test(v.headRefName)

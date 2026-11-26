@@ -1,5 +1,5 @@
 import { BRAIN_THREAD } from "./brain"
-import { type Turn, type TurnCard, appendTurn, findA2UITurn, getTurn, setTurnCard } from "./orchestrator-chat"
+import { type Turn, type TurnCard, appendTurn, findA2UITurn, findAllA2UITurns, getTurn, setTurnCard } from "./orchestrator-chat"
 import { broadcast as defaultBroadcast } from "../state"
 import { orchEmit } from "../wiring/orchestrator"
 
@@ -379,6 +379,7 @@ export function validateA2UIActionRequest(raw: unknown): { ok: true; request: A2
 export interface A2UIEngineDeps {
   appendTurn?: typeof appendTurn
   findTurn?: typeof findA2UITurn
+  findAllTurns?: typeof findAllA2UITurns
   getTurn?: typeof getTurn
   setCard?: typeof setTurnCard
   broadcast?: (frame: Record<string, unknown>) => void
@@ -433,6 +434,7 @@ export function updateSurfaceData(
   if (containsHtmlOrScript(value)) return { ok: false, status: 400, error: "html_not_allowed" }
 
   const find = deps.findTurn ?? findA2UITurn
+  const findAll = deps.findAllTurns ?? findAllA2UITurns
   const get = deps.getTurn ?? getTurn
   const setCard = deps.setCard ?? setTurnCard
   const bcast = deps.broadcast ?? defaultBroadcast
@@ -458,6 +460,21 @@ export function updateSurfaceData(
   }
 
   const updated = setCard(existing.id, { messages }) ?? { ...existing, card: { ...existing.card, messages } }
+  for (const other of findAll(surfaceId)) {
+    if (other.id === existing.id || other.card?.kind !== "a2ui") continue
+    const otherMsgs = structuredClone(other.card.messages ?? [])
+    const otherCreate = otherMsgs.find((m): m is A2UICreateSurfaceMessage => "createSurface" in m)
+    try {
+      if (otherCreate) {
+        otherCreate.createSurface.dataModel = setJsonPointer(otherCreate.createSurface.dataModel, path, value)
+      } else {
+        otherMsgs.push({ version: A2UI_VERSION, updateDataModel: { surfaceId, path, value: structuredClone(value) } })
+      }
+      setCard(other.id, { messages: otherMsgs })
+    } catch {
+      /* ignore invalid pointer target on historical turn */
+    }
+  }
   const patchMsg: A2UIUpdateDataModelMessage = {
     version: A2UI_VERSION,
     updateDataModel: { surfaceId, path, value },
@@ -492,6 +509,7 @@ export function updateSurfaceComponents(
   }
 
   const find = deps.findTurn ?? findA2UITurn
+  const findAll = deps.findAllTurns ?? findAllA2UITurns
   const get = deps.getTurn ?? getTurn
   const setCard = deps.setCard ?? setTurnCard
   const bcast = deps.broadcast ?? defaultBroadcast
@@ -504,20 +522,38 @@ export function updateSurfaceComponents(
     return { ok: false, status: 404, error: "surface_not_found" }
   }
 
-  const messages = structuredClone(existing.card.messages ?? [])
-  const createMsg = messages.find((m): m is A2UICreateSurfaceMessage => "createSurface" in m)
-  if (createMsg) {
-    const cs = createMsg.createSurface
-    for (const comp of validated) {
-      const idx = cs.components.findIndex((c: A2UIComponent) => c.id === comp.id)
-      if (idx >= 0) cs.components[idx] = comp
-      else cs.components.push(comp)
+  const foldComponents = (msgs: A2UIMessage[]): A2UIMessage[] => {
+    const cloned = structuredClone(msgs)
+    const createMsg = cloned.find((m): m is A2UICreateSurfaceMessage => "createSurface" in m)
+    if (createMsg) {
+      const cs = createMsg.createSurface
+      for (const comp of validated) {
+        const idx = cs.components.findIndex((c: A2UIComponent) => c.id === comp.id)
+        if (idx >= 0) {
+          const prev = cs.components[idx]!
+          cs.components[idx] = {
+            ...prev,
+            ...comp,
+            ...(prev.action && comp.action && !comp.action.context && prev.action.context
+              ? { action: { ...prev.action, ...comp.action } }
+              : {}),
+          }
+        } else {
+          cs.components.push(comp)
+        }
+      }
+    } else {
+      cloned.push({ version: A2UI_VERSION, updateComponents: { surfaceId, components: validated } })
     }
-  } else {
-    messages.push({ version: A2UI_VERSION, updateComponents: { surfaceId, components: validated } })
+    return cloned
   }
 
+  const messages = foldComponents(existing.card.messages ?? [])
   const updated = setCard(existing.id, { messages }) ?? { ...existing, card: { ...existing.card, messages } }
+  for (const other of findAll(surfaceId)) {
+    if (other.id === existing.id || other.card?.kind !== "a2ui") continue
+    setCard(other.id, { messages: foldComponents(other.card.messages ?? []) })
+  }
   const patchMsg: A2UIUpdateComponentsMessage = {
     version: A2UI_VERSION,
     updateComponents: { surfaceId, components: validated },

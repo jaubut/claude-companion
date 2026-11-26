@@ -18,17 +18,18 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
+| `lib/a2ui-macros.ts` | 587 | lib | 14 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/worker-invocation.ts` | 586 | lib | 42 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
-| `lib/a2ui-macros.ts` | 582 | lib | 14 |  |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
+| `lib/a2ui.ts` | 571 | lib | 35 | state: ALLOWED_COMPONENTS: Set, DANGEROUS_KEYS: Set |
 | `wiring/brain-headless.ts` | 570 | lib | 13 |  |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
+| `lib/a2ui-actions.ts` | 565 | lib | 1 | state: inFlightActions: Map |
 | `lib/dispatch-tasks.ts` | 556 | lib | 55 |  |
 | `lib/transcript.ts` | 551 | lib | 15 | state: states: Map, busyImages: WeakMap |
 | `lib/tasks-agent.ts` | 546 | lib | 39 |  |
-| `lib/a2ui.ts` | 535 | lib | 35 | state: ALLOWED_COMPONENTS: Set, DANGEROUS_KEYS: Set |
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/link-media.ts` | 526 | lib | 22 | state: inflight: Map |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
@@ -38,7 +39,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `lib/a2ui-actions.ts` | 478 | lib | 1 | state: inFlightActions: Map |
 | `routes/brain.ts` | 472 | lib | 3 |  |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
@@ -60,8 +60,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/body.ts` | 382 | lib | 26 |  |
 | `lib/design-state.ts` | 382 | lib | 9 | state: ALLOWED_SCALES: Set, let activePromptProvider |
 | `lib/herdr.ts` | 367 | lib | 34 | state: let clientMod, spawnedAgents: Map |
+| `lib/orchestrator-chat.ts` | 367 | lib | 29 | state: appendedListeners: Set |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
-| `lib/orchestrator-chat.ts` | 359 | lib | 28 | state: appendedListeners: Set |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/board-url-resolve.ts` | 351 | lib | 14 |  |
 | `lib/outbound.ts` | 348 | lib | 27 |  |
@@ -168,6 +168,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/tool-format.ts` | 166 | lib | 6 |  |
 | `lib/orchestrator-channels.ts` | 165 | lib | 14 |  |
 | `lib/terminal-bridge.ts` | 160 | lib | 17 |  |
+| `lib/a2ui-pr-state.ts` | 159 | lib | 14 | state: RESERVED_OUTBOUND_ACTIONS: Set, RESERVED_PR_ACTIONS: Set |
 | `lib/worker-pr-link.ts` | 159 | lib | 7 |  |
 | `lib/project-catalog.ts` | 156 | lib | 12 | state: GENERIC_TAIL: Set |
 | `lib/repo-rework.ts` | 155 | lib | 8 |  |
@@ -187,7 +188,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-stage.ts` | 141 | lib | 8 |  |
 | `lib/vault-upstream.ts` | 141 | lib | 11 | state: LOCAL_HTTP: Set, warned: Set, inflight: Set |
 | `lib/receipt-sonnet.ts` | 140 | lib | 11 | state: MONEY_FIELDS: Set |
-| `lib/a2ui-pr-state.ts` | 139 | lib | 13 | state: RESERVED_OUTBOUND_ACTIONS: Set, RESERVED_PR_ACTIONS: Set |
 | `lib/board-mcp.ts` | 139 | lib | 4 |  |
 | `lib/quick-look.ts` | 139 | lib | 17 |  |
 | `wiring/brain-task-cancel.ts` | 137 | lib | 5 |  |
@@ -566,6 +566,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WsData()` | `state.ts` | `companion-server.ts`, `wiring/board.ts`, `wiring/pane-mirror.ts`, `wiring/shell-sessions.ts`, `ws.ts` |
 | `A2UIEngineDeps()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts`, `routes/brain.ts`, `wiring/brain-stuck-events.ts` |
 | `getTurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `wiring/brain-handoff.ts`, `wiring/brain.ts`, `wiring/worker-blocked.ts` |
+| `setTurnCard()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `lib/a2ui.ts`, `wiring/brain.ts`, `wiring/worker-blocked.ts` |
 | `findA2UITurn()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts`, `lib/a2ui.ts`, `wiring/brain-stuck-events.ts` |
 | `OutboundStore()` | `lib/outbound.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts`, `routes/triage.ts`, `wiring/outbound.ts`, `wiring/triage.ts` |
 | `appendFeedEvent()` | `lib/feed.ts` | `lib/activity.ts`, `lib/agy-feed.ts`, `lib/codex-feed.ts`, `lib/transcript-artifacts.ts`, `lib/transcript.ts` |
@@ -596,7 +597,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `checkBearerHeaderOnly()` | `lib/auth.ts` | `companion-server.ts#* /ws`, `lib/vault-guard.ts`, `routes/records.ts`, `routes/vault.ts` |
 | `shellNetworkRefusal()` | `lib/terminal-bridge.ts` | `companion-server.ts#* /ws`, `routes/api.ts#POST /api/spawn-session`, `routes/api.ts#POST /api/sessions/resume`, `routes/api.ts#POST /api/shell/close` |
 | `getSurfaceDataModel()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts`, `wiring/brain-stuck-events.ts` |
-| `setTurnCard()` | `lib/orchestrator-chat.ts` | `lib/a2ui-actions.ts`, `lib/a2ui.ts`, `wiring/brain.ts`, `wiring/worker-blocked.ts` |
 | `OutboundSender()` | `lib/outbound.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts`, `wiring/outbound.ts`, `wiring/triage.ts` |
 | `TurnCard()` | `lib/orchestrator-chat.ts` | `lib/a2ui.ts`, `lib/dispatch-poller.ts`, `lib/worker-blocked.ts`, `routes/orchestrator.ts` |
 | `QuestionItem()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-driver.ts`, `lib/question-hook.ts` |
@@ -664,6 +664,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `mergeAgentPr()` | `wiring/brain-pr-merge.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
 | `closeDeadPr()` | `wiring/brain-pr-close.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
 | `createSurfaceTurn()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/brain-stuck-events.ts` |
+| `updateSurfaceComponents()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts`, `wiring/brain-stuck-events.ts` |
 | `outboundStore()` | `wiring/outbound.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/triage.ts` |
 | `readTailLines()` | `lib/transcript-cursor.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `lib/transcript.ts` |
 | `parseQuestionInput()` | `lib/questions.ts` | `lib/agy-feed.ts`, `lib/orphan-question.ts`, `lib/question-hook.ts` |
@@ -770,8 +771,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `A2UIComponent()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/a2ui-pr-state.ts` |
 | `A2UICreateSurfaceMessage()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `A2UIMessage()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `lib/orchestrator-chat.ts` |
-| `updateSurfaceComponents()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `DeployResult()` | `wiring/auto-deploy.ts` | `lib/a2ui-macros.ts`, `routes/brain.ts` |
+| `findAllA2UITurns()` | `lib/orchestrator-chat.ts` | `lib/a2ui-macros.ts`, `lib/a2ui.ts` |
 | `verbFor()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `extractToolResult()` | `lib/tool-format.ts` | `lib/activity.ts`, `lib/agy-feed.ts` |
 | `normalizeAgyCliModelFlag()` | `lib/worker-invocation.ts` | `lib/agy-feed.ts`, `lib/worker-supervisor.ts` |

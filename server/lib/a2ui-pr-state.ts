@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { type A2UIComponent, type A2UIEngineDeps, getSurfaceDataModel } from "./a2ui"
+import { type A2UIComponent, type A2UIEngineDeps, getSurfaceDataModel, updateSurfaceComponents } from "./a2ui"
 import { findA2UITurn } from "./orchestrator-chat"
 
 // PR Gate card state (CI rollup and shepherd review verdicts from `gh pr view` JSON)
@@ -135,4 +135,24 @@ export function checkComponentActionsGuard(
     if (act && RESERVED_PR_ACTIONS.has(act)) return "pr_surface_readonly"
   }
   return null
+}
+
+/** Synchronize PR Gate button labels and disabled flags across terminal transitions and refresh. */
+export function syncPrGateButtons(
+  surfaceId: string,
+  state: "open" | "merged" | "closed" | "deployed",
+  deployRepo?: string | null,
+  engine: A2UIEngineDeps = {},
+): void {
+  const isTerminal = state !== "open"
+  const components: A2UIComponent[] = [
+    { id: "merge_btn", component: "Button", label: state === "merged" || state === "deployed" ? "Merged" : "Merge PR", variant: "primary", action: { name: "pr.merge" }, disabled: isTerminal },
+    { id: "close_btn", component: "Button", label: state === "closed" ? "Closed" : "Close PR", variant: "secondary", action: { name: "pr.close" }, disabled: isTerminal },
+    ...(state === "deployed"
+      ? [{ id: "deploy_btn", component: "Button" as const, label: "Deployed", variant: "secondary", action: { name: "pr.deploy", ...(deployRepo ? { context: { repo: deployRepo } } : {}) }, disabled: true }]
+      : state === "open" && deployRepo
+        ? [{ id: "deploy_btn", component: "Button" as const, label: `Deploy ${deployRepo}`, variant: "secondary", action: { name: "pr.deploy", context: { repo: deployRepo } }, disabled: false }]
+        : []),
+  ]
+  updateSurfaceComponents(surfaceId, components, engine)
 }

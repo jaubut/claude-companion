@@ -16,7 +16,7 @@ import {
   updateSurfaceData,
   validateA2UIMessages,
 } from "./a2ui"
-import { type Turn, findA2UITurn } from "./orchestrator-chat"
+import { type Turn, findA2UITurn, findAllA2UITurns, setTurnCard } from "./orchestrator-chat"
 import {
   type OutboundAccount,
   type OutboundSender,
@@ -45,7 +45,7 @@ import type { mergeAgentPr } from "../wiring/brain-pr-merge"
 import { outboundStore } from "../wiring/outbound"
 
 export { handleA2UIAction } from "./a2ui-actions"
-export { backsOutbound, backsPrGate, isOutboundSurface, isPrGateSurface, prSurfaceId } from "./a2ui-pr-state"
+export { backsOutbound, backsPrGate, isOutboundSurface, isPrGateSurface, prSurfaceId, syncPrGateButtons } from "./a2ui-pr-state"
 
 // Server-side A2UI v1.0 macro expansion (`EmailConfirmCard`, `PrGateCard`, `patch`, `custom`).
 
@@ -303,6 +303,7 @@ export function buildPrGateSurface(
   if (rawReason && containsHtmlOrScript(rawReason)) return { ok: false, error: "html_not_allowed" }
   const reason = rawReason ? stripAngleTags(rawReason) : null
 
+  const isTerminal = pr.state === "merged" || pr.state === "closed"
   const colChildren = ["header_row", "meta_row", "url_text", ...(reason ? ["reason_text"] : []), "divider", "actions_row"]
   const actionIds = ["refresh_btn", "merge_btn", "close_btn", ...(pr.deployRepo ? ["deploy_btn"] : [])]
   const components: A2UIComponent[] = [
@@ -320,8 +321,8 @@ export function buildPrGateSurface(
     { id: "divider", component: "Divider" },
     { id: "actions_row", component: "Row", children: actionIds },
     { id: "refresh_btn", component: "Button", label: "Refresh", variant: "secondary", action: { name: "pr.refresh", context: { repo: pr.repo, pr: pr.number } } },
-    { id: "merge_btn", component: "Button", label: "Merge PR", variant: "primary", action: { name: "pr.merge", context: { repo: pr.repo, pr: pr.number } } },
-    { id: "close_btn", component: "Button", label: "Close PR", variant: "secondary", action: { name: "pr.close", context: { repo: pr.repo, pr: pr.number } } },
+    { id: "merge_btn", component: "Button", label: pr.state === "merged" ? "Merged" : "Merge PR", variant: "primary", action: { name: "pr.merge", context: { repo: pr.repo, pr: pr.number } }, ...(isTerminal ? { disabled: true } : {}) },
+    { id: "close_btn", component: "Button", label: pr.state === "closed" ? "Closed" : "Close PR", variant: "secondary", action: { name: "pr.close", context: { repo: pr.repo, pr: pr.number } }, ...(isTerminal ? { disabled: true } : {}) },
     ...(pr.deployRepo
       ? [{ id: "deploy_btn", component: "Button" as const, label: `Deploy ${pr.deployRepo}`, variant: "secondary", action: { name: "pr.deploy", context: { repo: pr.deployRepo } } }]
       : []),
@@ -463,6 +464,10 @@ export async function executeA2UIMacro(
     const built = buildPrGateSurface(hydrated.pr, expectedId)
     if (!built.ok) return fail(400, built.error)
     const turn = createSurfaceTurn({ surfaceId: built.surfaceId, text: built.text, messages: built.messages }, deps.engine)
+    const setCard = deps.engine?.setCard ?? setTurnCard
+    for (const older of (deps.engine?.findAllTurns ?? findAllA2UITurns)(built.surfaceId)) {
+      if (older.id !== turn.id && older.card?.kind === "a2ui") setCard(older.id, { messages: structuredClone(built.messages) })
+    }
     return {
       status: 200,
       body: { ok: true, macro: "pr", turnId: turn.id, surfaceId: built.surfaceId, pr: hydrated.pr, turn },
