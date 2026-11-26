@@ -17,10 +17,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/sessions.ts` | 660 ⚠ 660 > cap 600 | lib | 26 | state: sessions: Map, archived: Map, headlessIds: Set, listeners: Set, let pidDeadAdopter, let pruneTimer, let titleResolver, resolvingTitle: Set |
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
-| `lib/a2ui-macros.ts` | 597 | lib | 14 |  |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
 | `lib/worker-invocation.ts` | 586 | lib | 42 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
+| `lib/a2ui-macros.ts` | 582 | lib | 14 |  |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `wiring/brain-headless.ts` | 570 | lib | 13 |  |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -38,7 +38,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/canvas.ts` | 485 | lib | 31 | state: BLOCKING: Set |
 | `lib/submit-confirm.ts` | 484 | lib | 20 | state: watches: Set, paneLocks: Map |
 | `lib/auto-judge.ts` | 480 | lib | 15 | state: ALWAYS_SAFE_TOOLS: Set |
-| `routes/brain.ts` | 470 | lib | 3 |  |
+| `lib/a2ui-actions.ts` | 478 | lib | 1 | state: inFlightActions: Map |
+| `routes/brain.ts` | 472 | lib | 3 |  |
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
@@ -46,7 +47,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
 | `lib/receipt-qa-worker.ts` | 436 | lib | 14 | state: ownedKm: Map, let running, let again, let timer, let started, HUMAN_FIELDS: Set |
-| `lib/a2ui-actions.ts` | 433 | lib | 1 | state: inFlightActions: Map |
 | `routes/orchestrator.ts` | 417 | route-host | 3 | routes: 11 |
 | `lib/desk-runner.ts` | 416 | lib | 16 | state: let secretsOnce · emits: inject_error |
 | `lib/dispatch-poller.ts` | 413 | lib | 11 | state: ANNOUNCE: Set, PUSH: Set · emits: orchestrator_task, orchestrator_channel, orchestrator_queue, orchestrator |
@@ -153,6 +153,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
+| `wiring/brain-pr-close.ts` | 189 | lib | 6 |  |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |
@@ -201,7 +202,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/link-media-extract.ts` | 126 | lib | 5 |  |
 | `lib/trip-autofile.ts` | 125 | lib | 10 |  |
 | `lib/sent-files.ts` | 123 | lib | 6 |  |
-| `wiring/brain-pr-close.ts` | 122 | lib | 6 |  |
 | `lib/note-media.ts` | 120 | lib | 4 |  |
 | `routes/my-tasks.ts` | 120 | route-host | 6 | route: * /api/tasks/mine |
 | `routes/dialogs.ts` | 119 | route-host | 1 | routes: 2 |
@@ -662,6 +662,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getShellSession()` | `lib/shell-sessions.ts` | `companion-server.ts#* /ws`, `routes/command.ts#POST /api/command/list`, `wiring/shell-sessions.ts` |
 | `updateSurfaceData()` | `lib/a2ui.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `wiring/brain-stuck-events.ts` |
 | `mergeAgentPr()` | `wiring/brain-pr-merge.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
+| `closeDeadPr()` | `wiring/brain-pr-close.ts` | `lib/a2ui-actions.ts`, `lib/a2ui-macros.ts`, `routes/brain.ts` |
 | `createSurfaceTurn()` | `lib/a2ui.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/brain-stuck-events.ts` |
 | `outboundStore()` | `wiring/outbound.ts` | `lib/a2ui-macros.ts`, `routes/triage.ts`, `wiring/triage.ts` |
 | `readTailLines()` | `lib/transcript-cursor.ts` | `lib/agy-feed.ts`, `lib/transcript-backfill.ts`, `lib/transcript.ts` |

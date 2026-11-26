@@ -11,6 +11,7 @@ import type { Session } from "../lib/sessions"
 import type { GhFn } from "../lib/triage-pr"
 import { recordPeer } from "../lib/vault-guard"
 import type { BrainWiring } from "../wiring/brain"
+import { closeDeadPr } from "../wiring/brain-pr-close"
 import type { BrainRouteDeps } from "./brain"
 
 process.env.COMPANION_DB_PATH ??= join(mkdtempSync(join(tmpdir(), "cc-brain-a2ui-")), "test.db")
@@ -63,6 +64,7 @@ beforeEach(() => {
 function makeHarness(overrides: {
   gh?: GhFn
   prMerge?: BrainRouteDeps["prMerge"]
+  prClose?: BrainRouteDeps["prClose"]
   deploy?: BrainRouteDeps["deploy"]
   outbound?: OutboundStore | (() => OutboundStore) | null
   emailSender?: OutboundSender
@@ -85,6 +87,7 @@ function makeHarness(overrides: {
     enabled: overrides.enabled ?? (() => true),
     gh: overrides.gh,
     prMerge: overrides.prMerge,
+    prClose: overrides.prClose,
     deploy: overrides.deploy,
     outbound: "outbound" in overrides ? overrides.outbound : null,
     emailSender: overrides.emailSender,
@@ -1422,5 +1425,244 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(mismatchedPrNum.status).toBe(403)
     expect(mismatchedPrNum.json.error).toBe("pr_surface_mismatch")
+  })
+
+  test("pr.close: 1-tap close on human-origin MERGEABLE PRs, context-spoofing immunity, forgery guard, metadata staleness, idempotency, terminal state guard, and strict CLI /hooks/brain/pr-close", async () => {
+    let ghState = "OPEN"
+    let headBranch = "jeremie/experimental-ui"
+    let liveTitle = "feat(ui): experimental human PR"
+    const ghCalls: string[][] = []
+
+    const gh: GhFn = async (args) => {
+      ghCalls.push(args)
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          code: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            state: ghState,
+            isDraft: false,
+            headRefName: headBranch,
+            headRefOid: "1234567890abcdef",
+            baseRefName: "main",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            reviewDecision: "APPROVED",
+            url: "https://github.com/jaubut/claude-companion/pull/520",
+            title: liveTitle,
+            author: { login: "jaubut" },
+            labels: [],
+            statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS", name: "test" }],
+            comments: [],
+            files: [],
+          }),
+        }
+      }
+      if (args[0] === "pr" && args[1] === "close") {
+        ghState = "CLOSED"
+        return { code: 0, stdout: "", stderr: "" }
+      }
+      return { code: 1, stdout: "", stderr: "unexpected gh command" }
+    }
+
+    const { call, broadcasts } = makeHarness({
+      gh,
+      prClose: (p, d) => closeDeadPr(p, { gh, exec: async () => ({ rows: [], affected: 0 }), ...d }),
+    })
+
+    // 1. CLI /hooks/brain/pr-close remains 100% strict: refuses non-dispatch/* branch and MERGEABLE undead dispatch/* PR
+    const cliNonAgent = await call(
+      "POST",
+      "/hooks/brain/pr-close",
+      {
+        repo: "jaubut/claude-companion",
+        pr: 520,
+        reason: "trying to close human branch from CLI",
+        humanApproved: true,
+      },
+      { headers: AUTH },
+    )
+    expect(cliNonAgent.status).toBe(403)
+    expect(cliNonAgent.json.error).toBe("not_agent_branch")
+
+    headBranch = "dispatch/1234abcd"
+    const cliUndeadAgent = await call(
+      "POST",
+      "/hooks/brain/pr-close",
+      {
+        repo: "jaubut/claude-companion",
+        pr: 520,
+        reason: "trying to close healthy MERGEABLE agent PR from CLI",
+        humanApproved: true,
+      },
+      { headers: AUTH },
+    )
+    expect(cliUndeadAgent.status).toBe(409)
+    expect(cliUndeadAgent.json.error).toBe("not_dead")
+    expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(0)
+    headBranch = "jeremie/experimental-ui"
+
+    // 2. Custom surface attempting to forge a pr.close button is rejected with 403 pr_surface_readonly
+    const forgedCloseBtn = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "custom",
+        json: [{
+          version: "1.0",
+          createSurface: {
+            surfaceId: "forged-pr-close-btn",
+            catalogId: "basic_catalog_1_0",
+            components: [{ id: "root", component: "Button", label: "Dismiss", action: { name: "pr.close" } }],
+            dataModel: { note: "benign" },
+          },
+        }],
+      },
+      { headers: AUTH },
+    )
+    expect(forgedCloseBtn.status).toBe(403)
+    expect(forgedCloseBtn.json.error).toBe("pr_surface_readonly")
+
+    // 3. Hydrate PR Gate card for human-origin MERGEABLE PR #520
+    const created = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 520,
+      },
+      { headers: AUTH },
+    )
+    expect(created.status).toBe(200)
+    const surfaceId = String(created.json.surfaceId)
+    const turnId = String(created.json.turnId)
+    expect(surfaceId).toBe("pr-jaubut-claude-companion-520")
+
+    const turn = chat.getTurn(turnId)!
+    const cs = (turn.card!.messages![0] as A2UICreateSurfaceMessage).createSurface
+    const actionsRow = cs.components.find((c) => c.id === "actions_row")!
+    expect(actionsRow.children).toEqual(["refresh_btn", "merge_btn", "close_btn"])
+    expect(cs.components.find((c) => c.id === "close_btn")).toEqual({
+      id: "close_btn",
+      component: "Button",
+      label: "Close PR",
+      variant: "secondary",
+      action: { name: "pr.close", context: { repo: "jaubut/claude-companion", pr: 520 } },
+    })
+
+    // 4. Stale metadata: if live GitHub title changed since card hydration, pr.close refuses with 409 pr_metadata_stale
+    liveTitle = "feat(ui): silently swapped PR title"
+    const staleClose = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "pr.close", context: { repo: "evil/repo", pr: 999 } },
+        actionKey: "stale-close-1",
+      },
+      { headers: bearer },
+    )
+    expect(staleClose.status).toBe(409)
+    expect(staleClose.json.error).toBe("pr_metadata_stale")
+    expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(0)
+
+    // 5. Restore title and execute 1-tap pr.close with spoofed context.repo / context.pr -> ignores spoofed context, closes pinned PR
+    liveTitle = "feat(ui): experimental human PR"
+    const closedRes = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "pr.close", context: { repo: "evil/repo", pr: 999 } },
+        actionKey: "close-key-1",
+      },
+      { headers: bearer },
+    )
+    expect(closedRes.status).toBe(200)
+    expect(closedRes.json).toEqual({
+      ok: true,
+      surfaceId,
+      turnId,
+      action: "pr.close",
+      state: "closed",
+      closed: true,
+      url: "https://github.com/jaubut/claude-companion/pull/520",
+      replay: false,
+    })
+    const closeCmds = ghCalls.filter((c) => c[1] === "close")
+    expect(closeCmds).toEqual([
+      ["pr", "close", "520", "--repo", "jaubut/claude-companion", "--comment", "Closed via Companion PR Gate card"],
+    ])
+    expect(broadcasts.at(-1)).toMatchObject({
+      type: "a2ui",
+      threadId: "brain",
+      turnId,
+      surfaceId,
+      messages: [{ version: "1.0", updateDataModel: { surfaceId, path: "/pr/state", value: "closed" } }],
+    })
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turnId)!.card!), "/pr/state")).toBe("closed")
+
+    // 6. Replaying same actionKey returns cached 200 with replay: true and Idempotent-Replayed header
+    const replayClose = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "pr.close" },
+        actionKey: "close-key-1",
+      },
+      { headers: bearer },
+    )
+    expect(replayClose.status).toBe(200)
+    expect(replayClose.json.replay).toBe(true)
+    expect(replayClose.headers.get("Idempotent-Replayed")).toBe("true")
+    expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(1)
+
+    // 7. Closing an already closed card with a new actionKey returns 409 not_open
+    const closeAgain = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId,
+        action: { name: "pr.close" },
+        actionKey: "close-key-2",
+      },
+      { headers: bearer },
+    )
+    expect(closeAgain.status).toBe(409)
+    expect(closeAgain.json).toEqual({ ok: false, error: "not_open", state: "closed" })
+    expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(1)
+
+    // 8. Closing an already merged card returns 409 not_open
+    ghState = "MERGED"
+    const mergedCard = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 521,
+      },
+      { headers: AUTH },
+    )
+    expect(mergedCard.status).toBe(200)
+    const closeMerged = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId: String(mergedCard.json.surfaceId),
+        turnId: String(mergedCard.json.turnId),
+        action: { name: "pr.close" },
+        actionKey: "close-merged-1",
+      },
+      { headers: bearer },
+    )
+    expect(closeMerged.status).toBe(409)
+    expect(closeMerged.json).toEqual({ ok: false, error: "not_open", state: "merged" })
   })
 })

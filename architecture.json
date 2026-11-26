@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 433,
+          "lines": 478,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -167,6 +167,7 @@
             "lib/outbound.ts",
             "lib/triage-pr.ts",
             "wiring/auto-deploy.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/orchestrator.ts",
             "wiring/outbound.ts"
@@ -177,7 +178,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 597,
+          "lines": 582,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -207,6 +208,7 @@
             "lib/a2ui-pr-state.ts",
             "lib/triage-pr.ts",
             "wiring/auto-deploy.ts",
+            "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/outbound.ts",
             "lib/a2ui-actions.ts"
@@ -8095,7 +8097,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 470,
+          "lines": 472,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -9413,7 +9415,7 @@
         },
         {
           "path": "wiring/brain-pr-close.ts",
-          "lines": 122,
+          "lines": 189,
           "kind": "lib",
           "exports": [
             "PR_CLOSE_ACTION",
@@ -11692,6 +11694,14 @@
         },
         "mergeAgentPr": {
           "module": "wiring/brain-pr-merge.ts",
+          "callers": [
+            "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "closeDeadPr": {
+          "module": "wiring/brain-pr-close.ts",
           "callers": [
             "lib/a2ui-actions.ts",
             "lib/a2ui-macros.ts",
@@ -18416,12 +18426,6 @@
         },
         "BrainWorkers": {
           "module": "wiring/brain-workers.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "closeDeadPr": {
-          "module": "wiring/brain-pr-close.ts",
           "callers": [
             "routes/brain.ts"
           ]

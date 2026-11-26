@@ -344,6 +344,7 @@ async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const out = await executeA2UIMacro(body, {
     gh: deps.gh,
     prMerge: deps.prMerge,
+    prClose: deps.prClose,
     deploy: deps.deploy,
     outbound: deps.outbound,
     emailSender: deps.emailSender,
@@ -360,6 +361,7 @@ async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response>
   const out = await handleA2UIAction(body, {
     gh: deps.gh,
     prMerge: deps.prMerge,
+    prClose: deps.prClose,
     deploy: deps.deploy,
     outbound: deps.outbound,
     emailSender: deps.emailSender,
