@@ -28,10 +28,16 @@ const SELF_ECHO_RE = /^(?:Brain (?:merged|closed|updated) |Sent email \[)/i
 const DONE_RECEIPT_RE = /^done \[[0-9a-f]{6,32}\]/i
 
 /**
- * Duplicate 8-char `PR ready [xxxxxxxx] handoff — ...` receipt from dispatch-poller.
- * Headless handoff workers already post a rich 32-char `PR ready [32-hex] ...` via worker-mcp.
+ * Duplicate 8-char `(PR ready|completed) [xxxxxxxx] handoff — ...` receipt from dispatch-poller.
+ * Headless handoff workers already post a rich 32-char receipt (`[32-hex] <repo> — ...`) via worker-mcp.
  */
-const DUP_HANDOFF_PR_READY_RE = /^PR ready \[[0-9a-f]{8}\]\s+handoff\b/i
+const DUP_HANDOFF_RECEIPT_RE = /^(?:PR ready|completed) \[[0-9a-f]{8}\]\s+handoff\b/i
+
+/**
+ * Brain's own vault-memory (`RES-3T6G`) and daily brain-log (`RES-BL*`) worker completion rows:
+ * background housekeeping that needs no `noted` turn from the Brain.
+ */
+const BRAIN_VAULT_MEMORY_COMPLETED_RE = /^completed \[[0-9a-f]{6,32}\][^\n]*\b(?:RES-3T6G|RES-BL[A-Z0-9]*)\b/i
 
 /** Routine auto-deploy telemetry (keep `restart_mismatch` / unexpected head errors). */
 const ROUTINE_DEPLOY_RE = /^(?:Deploying (?:claude-companion|claude-config) |claude-config deployed:|claude-companion restarted at [0-9a-f]+ \(deploy )/i
@@ -53,7 +59,8 @@ export function classifyBrainEvent(turn: BrainEventCandidate): BrainEventDisposi
 
   if (SELF_ECHO_RE.test(text)) return "silent"
   if (DONE_RECEIPT_RE.test(text)) return "silent"
-  if (DUP_HANDOFF_PR_READY_RE.test(text)) return "silent"
+  if (DUP_HANDOFF_RECEIPT_RE.test(text)) return "silent"
+  if (BRAIN_VAULT_MEMORY_COMPLETED_RE.test(text)) return "silent"
   if (ROUTINE_DEPLOY_RE.test(text) && !DEPLOY_MISMATCH_RE.test(text)) return "silent"
 
   // Pure acknowledgments from repo leads (`[from lead-foo] ack`, `lead-foo: noted`, etc.)

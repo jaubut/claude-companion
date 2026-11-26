@@ -9,13 +9,18 @@ const ev = (text: string, extra: Partial<{ threadId: string; role: string; card:
 })
 
 describe("classifyBrainEvent", () => {
-  test("silences self-echoes, done receipts, duplicate 8-char handoff PR ready, routine deploys, and pure lead ACKs", () => {
+  test("silences self-echoes, done receipts, duplicate 8-char handoff PR ready / completed rows, Brain vault-memory completions, routine deploys, and pure lead ACKs", () => {
     expect(classifyBrainEvent(ev("Brain merged jaubut/remorquage-pelchat#202 (feat(db): PG): routine"))).toBe("silent")
     expect(classifyBrainEvent(ev("Brain closed jaubut/claude-companion#310: superseded"))).toBe("silent")
     expect(classifyBrainEvent(ev("Brain updated jaubut/claude-companion#311: stale CI"))).toBe("silent")
     expect(classifyBrainEvent(ev('Sent email [outbound-123] -> client@example.com (Cc: ops@example.com): "Invoice"'))).toBe("silent")
     expect(classifyBrainEvent(ev("done [eaedcf7f] handoff — Brouemont client dashboard\nhttps://github.com/jaubut/tls-dashboard-v2/pull/450"))).toBe("silent")
     expect(classifyBrainEvent(ev("PR ready [eaedcf7f] handoff — Brouemont client dashboard\nhttps://github.com/jaubut/tls-dashboard-v2/pull/450"))).toBe("silent")
+    expect(classifyBrainEvent(ev("completed [6412a5d7] handoff — media(zettlab): rebuild CATCH Ep.3 v5 motion design on-brand"))).toBe("silent")
+    expect(classifyBrainEvent(ev("completed [d02f9d19] handoff — docs(vault): save Le Brouemont Ardoise & Napron blueprint (RES-BRM2) and update RES-3T6G"))).toBe("silent")
+    expect(classifyBrainEvent(ev("completed [d02f9d199b018281ecfff53e0f8f6288] claude-config — docs(vault): record CATCH Ep.3 v6 worker d8881a71 in RES-3T6G\nResult: Updated RES-3T6G"))).toBe("silent")
+    expect(classifyBrainEvent(ev("completed [d02f9d199b018281ecfff53e0f8f6288] claude-config — chore(brain): nightly rollover append RES-BL25 & finalize RES-3T6G (<3000 chars)"))).toBe("silent")
+    expect(classifyBrainEvent(ev("completed [d02f9d199b018281ecfff53e0f8f6288] claude-config — docs(vault): append 2026-11-25 evening rollover log to RES-BL25"))).toBe("silent")
     expect(classifyBrainEvent(ev("Deploying claude-companion 76153ec→932663c (1 commit): restarting"))).toBe("silent")
     expect(classifyBrainEvent(ev("claude-companion restarted at 932663c (deploy 76153ec→932663c done)"))).toBe("silent")
     expect(classifyBrainEvent(ev("Deploying claude-config c8b79a7→d1b0a6c (1 commit): claude-config-sync started"))).toBe("silent")
