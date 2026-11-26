@@ -678,4 +678,54 @@ describe("event triage & mid-day rollover", () => {
       h.w.stop()
     }
   })
+
+  test("user turns preempt in-flight pure-event triage immediately and never wait behind oversized event batches", async () => {
+    let resolveTriage: ((d: Awaited<ReturnType<NonNullable<Parameters<typeof mod.createBrainWiring>[0]["triageEvents"]>>>) => void) | null = null
+    const h = harness({
+      triageEvents: () => new Promise((resolve) => { resolveTriage = resolve }),
+    })
+    await upBrain(h)
+    const off = chat.onTurnAppended(h.w.onTurn)
+    try {
+      // 1. Slow pure-event triage starts
+      const ev1 = chat.appendTurn("orchestrator", "completed [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] repoA — done", null, "brain")
+      await Bun.sleep(5)
+      expect(resolveTriage).not.toBeNull()
+      expect(h.delivered).toHaveLength(0)
+
+      // 2. Jeremie sends a message while triage is still running: it preempts triage immediately without waiting
+      const u1 = userTurn("need this now")
+      h.w.enqueue(u1)
+      await Bun.sleep(5)
+      expect(h.delivered).toHaveLength(1)
+      expect(h.delivered[0]!.text).toContain(`[event ${ev1.id}]`)
+      expect(h.delivered[0]!.text).toContain(`[turn ${u1.id}] need this now`)
+
+      // Late triage resolution is a no-op
+      resolveTriage!({
+        action: "ignore",
+        verdict: "ignore",
+        reason: "late",
+        provider: "agy",
+        model: "gemini-3.8-flash-low",
+        latencyMs: 5000,
+        mode: "live",
+      })
+      await h.w.onStop("sid-brain", "On it.")
+
+      // 3. Even if >4000 chars of batchable events sit in the outbox ahead of a user turn, the user turn goes first
+      const huge1 = chat.appendTurn("orchestrator", `completed [11111111111111111111111111111111] repoA — ${"x".repeat(2200)}`, null, "brain")
+      const huge2 = chat.appendTurn("orchestrator", `completed [22222222222222222222222222222222] repoB — ${"y".repeat(2200)}`, null, "brain")
+      store.enqueueDelivery(huge1.id, huge1.createdAt)
+      store.enqueueDelivery(huge2.id, huge2.createdAt)
+      const u2 = userTurn("priority user message")
+      h.w.enqueue(u2)
+      await Bun.sleep(5)
+      expect(h.delivered).toHaveLength(2)
+      expect(h.delivered[1]!.text).toContain(`[turn ${u2.id}] priority user message`)
+    } finally {
+      off()
+      h.w.stop()
+    }
+  })
 })

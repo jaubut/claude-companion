@@ -549,6 +549,22 @@ export function buildHeadlessGeminiArgs(opts: {
   return args
 }
 
+/** Build the persistent `agy --print= --input-format stream-json --output-format stream-json` daemon argv. */
+export function buildPersistentGeminiArgs(opts: { sessionId?: string; resume?: boolean; mode: string; model?: string }): string[] {
+  const args = ["--print=", "--input-format", "stream-json", "--output-format", "stream-json"]
+  if (opts.resume && opts.sessionId?.trim()) args.push("--conversation", opts.sessionId.trim())
+  if (opts.model?.trim()) args.push("--model", normalizeAgyCliModelFlag(opts.model))
+  if (opts.mode === "plan") args.push("--mode", "plan")
+  else if (opts.mode === "acceptEdits") args.push("--mode", "accept-edits")
+  else args.push("--dangerously-skip-permissions")
+  return args
+}
+
+/** Encode a user turn prompt as a single NDJSON line for `agy --input-format stream-json` stdin. */
+export function formatGeminiStreamInput(prompt: string): string {
+  return `${JSON.stringify({ event: "user", message: { content: prompt } })}\n`
+}
+
 /** Hosts a Claude worker's sandboxed Bash may reach on top of ~/.claude/settings.json: GCP (Cloud Run, Artifact Registry, Gmail API), Cloudflare Workers, Resend, Brevo. */
 export const WORKER_SANDBOX_HOSTS: readonly string[] = ["*.googleapis.com", "*.pkg.dev", "*.run.app", "*.workers.dev", "api.resend.com", "api.brevo.com"]
 

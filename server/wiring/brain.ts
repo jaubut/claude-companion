@@ -111,9 +111,7 @@ export function createBrainWiring(deps: BrainDeps) {
   let coalesceTimer: ReturnType<typeof setTimeout> | null = null
   const coalesceMs = deps.eventCoalesceMs ?? 0
   /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
-  let selfWrite = 0
-  let ticking = false
-  let triaging = false
+  let selfWrite = 0, ticking = false, triaging = false, triageGen = 0
 
   function clearCoalesce(): void {
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null }
@@ -236,64 +234,64 @@ export function createBrainWiring(deps: BrainDeps) {
     const known = getKv("memory_ref")
     if (known) return known
     try {
-      const rows = await deps.dispatch.query(
-        "SELECT ref_code FROM notes WHERE folder = 'resources' AND tags LIKE ? ORDER BY updated_at DESC LIMIT 1",
-        [`%"${MEMORY_TAG}"%`],
-      )
+      const rows = await deps.dispatch.query("SELECT ref_code FROM notes WHERE folder = 'resources' AND tags LIKE ? ORDER BY updated_at DESC LIMIT 1", [`%"${MEMORY_TAG}"%`])
       const ref = rows[0]?.ref_code
-      if (typeof ref === "string" && ref) {
-        setKv("memory_ref", ref)
-        return ref
-      }
+      if (typeof ref === "string" && ref) { setKv("memory_ref", ref); return ref }
     } catch { /* Notes DB unreachable: the brain looks it up itself */ }
     return null
+  }
+
+  function fitPrioritized(queued: string[], found: DeliveryTurn[]): { turns: DeliveryTurn[]; ids: string[] } {
+    const fitted = fitQueued(queued, found)
+    if (!found.some((t) => t.role === "user") || fitted.turns.some((t) => t.role === "user")) return fitted
+    return fitQueued(queued, [...found.filter((t) => t.role === "user"), ...found.filter((t) => t.role !== "user")])
   }
 
   /** Deliver what is queued (with the boot seed first after a spawn). One typed prompt per brain turn. */
   async function flush(): Promise<void> {
     // A lost post-compact SessionStart must not hold delivery forever.
     if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
-    if (deps.paused.read() || busy || compacting || triaging || state !== "up" || !target()) return
+    if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
     const seed = pendingSeed
-    const queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
+    let queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && queued.length === 0) return
-    const { turns, ids } = fitQueued(queued, turnsOf(queued))
-    if (!seed && deps.triageEvents && turns.length > 0 && turns.every((t) => t.role === "orchestrator" && classifyBrainEvent({ threadId: BRAIN_THREAD, role: "orchestrator", text: t.text, card: t.card ?? null }) === "batch")) {
-      triaging = true
+    let found = turnsOf(queued)
+    const hasUserTurn = found.some((t) => t.role === "user")
+    if (triaging) {
+      if (!hasUserTurn) return
+      // A real user turn arrived while pure-event triage was running: preempt triage so Jeremie never waits behind it.
+      triageGen++; triaging = false
+    }
+    let { turns, ids } = seed ? fitQueued(queued, found) : fitPrioritized(queued, found)
+    if (!seed && !hasUserTurn && deps.triageEvents && turns.length > 0 && turns.every((t) => t.role === "orchestrator" && classifyBrainEvent({ threadId: BRAIN_THREAD, role: "orchestrator", text: t.text, card: t.card ?? null }) === "batch")) {
+      const myGen = ++triageGen; triaging = true
       let ignored = false
       try {
         const d = await deps.triageEvents(turns.map((t) => ({ id: t.id, text: brainText(t), cardKind: t.card?.kind ?? null })))
-        if (d.provider !== "none") {
-          deps.log(`[brain] ops-triage (${d.mode}) ${d.verdict}→${d.action} [${d.provider}/${d.model} ${d.latencyMs}ms]: ${d.reason}${d.error ? ` (${d.error})` : ""}`)
-        }
-        if (d.action === "ignore") {
-          dismissDeliveries(ids)
-          ignored = true
-        }
+        if (myGen !== triageGen) return
+        if (d.provider !== "none") deps.log(`[brain] ops-triage (${d.mode}) ${d.verdict}→${d.action} [${d.provider}/${d.model} ${d.latencyMs}ms]: ${d.reason}${d.error ? ` (${d.error})` : ""}`)
+        if (d.action === "ignore") { dismissDeliveries(ids); ignored = true }
       } catch (err) {
+        if (myGen !== triageGen) return
         deps.log(`[brain] ops-triage failed (escalating): ${(err as Error)?.message ?? String(err)}`)
       } finally {
-        triaging = false
+        if (myGen === triageGen) triaging = false
       }
-      if (ignored) {
-        // Re-check outbox in case a user turn arrived while triaging.
-        if (takeDeliveries().length > 0) void flush()
-        return
-      }
+      if (ignored) { if (takeDeliveries().length > 0) void flush(); return }
+      queued = takeDeliveries()
+      if (queued.length === 0) return
+      found = turnsOf(queued)
+      ;({ turns, ids } = fitPrioritized(queued, found))
     }
     const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
     if (busy || !target()) return
     setBusy(true)
     const out = await type(text)
-    if (out === "refused") {
-      setBusy(false)
-      return
-    }
+    if (out === "refused") { setBusy(false); return }
     if (seed) { pendingSeed = false; requeueDeliveries(queued.filter((id) => !ids.includes(id))) }
     lastActivity = deps.now()
     if (out === "maybe") {
-      markMaybe(ids)
-      setBusy(false)
+      markMaybe(ids); setBusy(false)
       say("⚠︎ Typed into the brain but not confirmed as submitted — not retyped. Check the brain pane, or resend.")
       return
     }
