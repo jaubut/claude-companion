@@ -3,12 +3,16 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
+import { getKv, setKv } from "../lib/brain-store"
 import { listSessions, recordSession } from "../lib/sessions"
+import { buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
+import type { SpawnWorkerOpts } from "../lib/worker-supervisor"
 import {
   AGY_BOOT_PREFIX,
   BRAIN_DIR,
   BRAIN_RUNTIME_ALLOWED_TOOLS,
   HEADLESS_BRAIN_PANE,
+  type SpawnedPersistentWorkerHandle,
   brainFamilyForModel,
   buildBrainClaudeArgs,
   createHeadlessBrainRunner,
@@ -74,10 +78,10 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(brainFamilyForModel("claude-sonnet-5-5")).toBe("claude")
   })
 
-  test("resolves default model from picker, COMPANION_BRAIN_DEFAULT_MODEL, or COMPANION_BRAIN_FAMILY=gemini", () => {
+  test("resolves default model from picker, COMPANION_BRAIN_DEFAULT_MODEL, or COMPANION_BRAIN_FAMILY=gemini (fast gemini-4-argon-high fallback)", () => {
     expect(resolveBrainSessionModel("Gemini 4 Carbon (High)", {})).toBe("Gemini 4 Carbon (High)")
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_DEFAULT_MODEL: "gemini-4-argon-medium" })).toBe("gemini-4-argon-medium")
-    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-carbon-high")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-argon-high")
     expect(resolveBrainSessionModel("auto", {})).toBe("claude-opus-5-5")
   })
 
@@ -94,5 +98,185 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(args.slice(-2)).toEqual(["--", "render card"])
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui email --to <addr>")
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui pr --repo <owner/name> --pr <n>")
+  })
+
+  test("buildPersistentGeminiArgs and formatGeminiStreamInput build stream-json persistent daemon args and NDJSON user event lines", () => {
+    expect(buildPersistentGeminiArgs({ mode: "auto", model: "Gemini 4 Argon (High)" })).toEqual([
+      "--print=",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "gemini-4-argon-high",
+      "--dangerously-skip-permissions",
+    ])
+    expect(buildPersistentGeminiArgs({ sessionId: "agy-conv-123", resume: true, mode: "plan", model: "gemini-4-argon-high" })).toEqual([
+      "--print=",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--conversation",
+      "agy-conv-123",
+      "--model",
+      "gemini-4-argon-high",
+      "--mode",
+      "plan",
+    ])
+    expect(JSON.parse(formatGeminiStreamInput("hello brain"))).toEqual({
+      event: "user",
+      message: { content: "hello brain" },
+    })
+  })
+})
+
+describe("warm persistent Antigravity Brain session & CLI fallback", () => {
+  test("keeps one warm persistent agy daemon alive across turns instead of cold-booting per turn", async () => {
+    setKv("brain_model", "gemini-4-argon-high")
+    setKv("agy_conversation_id", "")
+    const persistentSpawns: Array<{ opts: SpawnWorkerOpts; lines: string[]; killed: boolean }> = []
+    const oneShotSpawns: SpawnWorkerOpts[] = []
+    const stops: Array<{ sid: string; reply: string }> = []
+    const activities: Array<{ sid: string; tool?: string }> = []
+
+    const runner = createHeadlessBrainRunner({
+      noteActivity: (sid, call) => { activities.push({ sid, tool: call?.tool }) },
+      onStop: async (sid, reply) => { stops.push({ sid, reply }) },
+      spawnPersistentWorker: (opts): SpawnedPersistentWorkerHandle => {
+        const rec = { opts, lines: [] as string[], killed: false }
+        persistentSpawns.push(rec)
+        // Warm daemon emits init immediately upon startup
+        queueMicrotask(() => {
+          opts.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-warm-conv-1" }))
+        })
+        return {
+          pid: 7171,
+          writeLine(line: string) {
+            rec.lines.push(line.trim())
+            return true
+          },
+          closeInput() {},
+          kill() { rec.killed = true },
+        }
+      },
+      spawnWorker: (opts) => {
+        oneShotSpawns.push(opts)
+        return { pid: 8181, kill() {} }
+      },
+      log: () => {},
+    })
+
+    await runner.spawn(null)
+    await Bun.sleep(5)
+
+    // Turn 1: spawns the warm persistent daemon once and sends AGY_BOOT_PREFIX + prompt over stdin
+    const r1 = await runner.deliver("first question")
+    expect(r1.status).toBe(200)
+    expect(await runner.agentStatus()).toBe("busy")
+    expect(persistentSpawns).toHaveLength(1)
+    expect(oneShotSpawns).toHaveLength(0)
+    expect(persistentSpawns[0]!.opts.args).toContain("--input-format")
+    expect(persistentSpawns[0]!.opts.args).toContain("stream-json")
+    expect(persistentSpawns[0]!.lines).toHaveLength(1)
+    const turn1Msg = JSON.parse(persistentSpawns[0]!.lines[0]!) as { event: string; message: { content: string } }
+    expect(turn1Msg.event).toBe("user")
+    expect(turn1Msg.message.content).toStartWith(AGY_BOOT_PREFIX)
+    expect(turn1Msg.message.content).toEndWith("first question")
+
+    await Bun.sleep(5)
+    expect(getKv("agy_conversation_id")).toBe("agy-warm-conv-1")
+
+    // Emit tool step and turn result on the warm daemon WITHOUT exiting
+    persistentSpawns[0]!.opts.onStdoutLine(JSON.stringify({
+      event: "step_update",
+      conversation_id: "agy-warm-conv-1",
+      step_update: { step_index: 1, step_type: "tool", state: "ACTIVE", tool_name: "run_command", tool_info: { parameters: { CommandLine: "bin/thread" } } },
+    }))
+    persistentSpawns[0]!.opts.onStdoutLine(JSON.stringify({
+      event: "result",
+      result: { conversation_id: "agy-warm-conv-1", status: "SUCCESS", response: "first answer" },
+    }))
+    await Bun.sleep(5)
+    expect(await runner.agentStatus()).toBe("idle")
+    expect(stops).toEqual([{ sid: expect.any(String), reply: "first answer" }])
+    expect(activities.some((a) => a.tool === "run_command")).toBe(true)
+
+    // Turn 2: reuses the exact same warm persistent daemon (persistentSpawns still 1!) without AGY_BOOT_PREFIX
+    const r2 = await runner.deliver("second question")
+    expect(r2.status).toBe(200)
+    expect(persistentSpawns).toHaveLength(1)
+    expect(oneShotSpawns).toHaveLength(0)
+    expect(persistentSpawns[0]!.lines).toHaveLength(2)
+    const turn2Msg = JSON.parse(persistentSpawns[0]!.lines[1]!) as { event: string; message: { content: string } }
+    expect(turn2Msg.message.content).toBe("second question")
+
+    persistentSpawns[0]!.opts.onStdoutLine(JSON.stringify({
+      event: "result",
+      result: { conversation_id: "agy-warm-conv-1", status: "SUCCESS", response: "second answer" },
+    }))
+    await Bun.sleep(5)
+    expect(stops).toHaveLength(2)
+    expect(stops[1]!.reply).toBe("second answer")
+
+    await runner.stopAgent()
+    expect(persistentSpawns[0]!.killed).toBe(true)
+    setKv("brain_model", "auto")
+  })
+
+  test("seamlessly falls back to one-shot agy --print --conversation when the warm daemon crashes mid-turn", async () => {
+    setKv("brain_model", "gemini-4-argon-high")
+    setKv("agy_conversation_id", "agy-saved-conv-99")
+    const persistentSpawns: SpawnWorkerOpts[] = []
+    const oneShotSpawns: SpawnWorkerOpts[] = []
+    const stops: Array<{ sid: string; reply: string }> = []
+
+    const runner = createHeadlessBrainRunner({
+      noteActivity: () => {},
+      onStop: async (sid, reply) => { stops.push({ sid, reply }) },
+      spawnPersistentWorker: (opts): SpawnedPersistentWorkerHandle => {
+        persistentSpawns.push(opts)
+        return {
+          pid: 7272,
+          writeLine() { return true },
+          closeInput() {},
+          kill() {},
+        }
+      },
+      spawnWorker: (opts) => {
+        oneShotSpawns.push(opts)
+        queueMicrotask(() => {
+          opts.onStdoutLine(JSON.stringify({
+            event: "result",
+            result: { conversation_id: "agy-saved-conv-99", status: "SUCCESS", response: "recovered via fallback" },
+          }))
+          opts.onExit(0, null)
+        })
+        return { pid: 8282, kill() {} }
+      },
+      log: () => {},
+    })
+
+    await runner.spawn("resumed-brain-sid")
+    const res = await runner.deliver("urgent question")
+    expect(res.status).toBe(200)
+    expect(persistentSpawns).toHaveLength(1)
+    expect(persistentSpawns[0]!.args).toContain("--conversation")
+    expect(persistentSpawns[0]!.args).toContain("agy-saved-conv-99")
+
+    // Simulate warm daemon crashing mid-turn before emitting result
+    persistentSpawns[0]!.onExit(1, null)
+    await Bun.sleep(10)
+
+    // Seamlessly fell back to one-shot agy --print with --conversation agy-saved-conv-99
+    expect(oneShotSpawns).toHaveLength(1)
+    expect(oneShotSpawns[0]!.args).toContain("--print=urgent question")
+    expect(oneShotSpawns[0]!.args).toContain("--conversation")
+    expect(oneShotSpawns[0]!.args).toContain("agy-saved-conv-99")
+    expect(stops).toEqual([{ sid: "resumed-brain-sid", reply: "recovered via fallback" }])
+    expect(await runner.agentStatus()).toBe("idle")
+
+    await runner.stopAgent()
+    setKv("brain_model", "auto")
   })
 })

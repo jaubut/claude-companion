@@ -3,31 +3,45 @@
 
 import { hostname, networkInterfaces } from "node:os"
 import { checkBearer } from "./auth"
-import { clientOrigin, isLoopback, isTailnet, peerOf } from "./vault-guard"
+import { clientOrigin, isLoopback, isTailnet, isWireGuard, peerOf } from "./vault-guard"
 
 const FULL = hostname().toLowerCase()
 const SHORT = FULL.split(".")[0] ?? ""
-const NAMES = new Set(["localhost", FULL, SHORT, SHORT && `${SHORT}.local`].filter(Boolean))
+const WG_HOSTS = ["zettlab-wg.cherrypik.app", "wg.cherrypik.app"]
+const NAMES = new Set(["localhost", FULL, SHORT, SHORT && `${SHORT}.local`, ...WG_HOSTS].filter(Boolean))
 // This machine's name on the tailnet, from tailscaled: os.hostname() need not
 // match it (the Mac is "Mac" and "m2-max-ji-dog" on the tailnet).
 let tailscaleName = ""
 // `name`, `[v6]`, optional `:port` — nothing else (no userinfo, no path).
 const HOST_RE = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d{1,5})?$/
 
+function extraAllowedHosts(): Set<string> {
+  const raw = process.env.COMPANION_ALLOWED_HOSTS
+  if (!raw) return new Set()
+  const out = new Set<string>()
+  for (const part of raw.split(",")) {
+    const clean = part.trim().toLowerCase()
+    const m = HOST_RE.exec(clean)
+    if (m?.[1]) out.add(m[1])
+  }
+  return out
+}
+
 /**
  * DNS rebinding guard: a page on evil.example whose name is re-resolved to
  * 127.0.0.1 / a tailnet IP still sends `Host: evil.example`. Accept only names
  * that are this machine: localhost, os.hostname() (full and short), its
  * Tailscale name (what `tailscale serve` and the iOS/Mac app use), either as
- * tailscaled reports it or `<short>.<tailnet>.ts.net`, `<short>.local`, and
- * loopback / Tailscale / this machine's own interface IP literals
+ * tailscaled reports it or `<short>.<tailnet>.ts.net`, `<short>.local`, built-in
+ * private WireGuard hostnames + COMPANION_ALLOWED_HOSTS, and loopback /
+ * Tailscale / WireGuard / this machine's own interface IP literals
  * (scripts/pair.ts puts a LAN IP in the pairing QR).
  */
 export function hostAllowed(host: string | null): boolean {
   const m = HOST_RE.exec((host ?? "").trim().toLowerCase())
   if (!m) return false
   const name = m[1]!
-  if (NAMES.has(name) || name === tailscaleName) return true
+  if (NAMES.has(name) || name === tailscaleName || extraAllowedHosts().has(name)) return true
   const labels = name.split(".")
   if (SHORT && labels.length === 4 && labels[0] === SHORT && name.endsWith(".ts.net")) return true
   // On wake-from-sleep or cold boot, tailscaled may not have answered yet
@@ -35,7 +49,7 @@ export function hostAllowed(host: string | null): boolean {
   // immediate background refresh so subsequent retries succeed quickly.
   if (!tailscaleName && name.endsWith(".ts.net")) triggerTailscaleRefresh()
   const ip = name.replace(/^\[|\]$/g, "")
-  return isLoopback(ip) || isTailnet(ip) || localAddresses().has(ip)
+  return isLoopback(ip) || isTailnet(ip) || isWireGuard(ip) || localAddresses().has(ip)
 }
 
 // Self.DNSName of `tailscale status --json`, trailing dot dropped; "" for
@@ -145,11 +159,11 @@ export function hookCallerAllowed(req: Request): boolean {
 }
 
 /**
- * Public Tailscale Funnel traffic (`Tailscale-Funnel-Request` set by
- * tailscaled after stripping client headers) is admitted ONLY on
- * `/webhooks/github`, never on `/api/*`, `/hooks/*`, `/ws`, `/health`, or `/`.
+ * Public Tailscale Funnel (`Tailscale-Funnel-Request`) or Cloudflare Tunnel
+ * (`CF-Connecting-IP`) traffic is admitted ONLY on `/webhooks/github`, never on
+ * `/api/*`, `/hooks/*`, `/ws`, `/health`, or `/`.
  */
 export function funnelRequestAllowed(req: Request, pathname: string): boolean {
-  if (!req.headers.has("tailscale-funnel-request")) return true
+  if (!req.headers.has("tailscale-funnel-request") && !req.headers.has("cf-connecting-ip")) return true
   return pathname === "/webhooks/github"
 }

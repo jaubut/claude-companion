@@ -1461,7 +1461,7 @@
         },
         {
           "path": "lib/brain-event-triage.ts",
-          "lines": 68,
+          "lines": 75,
           "kind": "lib",
           "exports": [
             "BrainEventDisposition",
@@ -5084,7 +5084,7 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 156,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "hostAllowed",
@@ -7130,7 +7130,7 @@
         },
         {
           "path": "lib/vault-guard.ts",
-          "lines": 137,
+          "lines": 256,
           "kind": "lib",
           "exports": [
             "Transport",
@@ -7139,6 +7139,7 @@
             "peerOf",
             "isLoopback",
             "isTailnet",
+            "isWireGuard",
             "clientOrigin",
             "Limiter",
             "clock",
@@ -7329,7 +7330,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 570,
+          "lines": 586,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7370,6 +7371,8 @@
             "GEMINI_INLINE_PROMPT_MAX",
             "agyWorkerSettings",
             "buildHeadlessGeminiArgs",
+            "buildPersistentGeminiArgs",
+            "formatGeminiStreamInput",
             "WORKER_SANDBOX_HOSTS",
             "buildHeadlessWorkerInvocation"
           ],
@@ -9332,9 +9335,11 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 321,
+          "lines": 570,
           "kind": "lib",
           "exports": [
+            "SpawnedPersistentWorkerHandle",
+            "defaultSpawnPersistentWorker",
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
             "BRAIN_RUNTIME_ALLOWED_TOOLS",
@@ -9360,6 +9365,7 @@
             "lib/session-titles.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
+            "lib/worker-pid.ts",
             "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts",
             "wiring/brain-workers.ts",
@@ -9719,7 +9725,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 669,
+          "lines": 667,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -12487,6 +12493,7 @@
             "wiring/body-investigate.ts",
             "wiring/body.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-headless.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-resolve-conflicts.ts",
@@ -14032,7 +14039,8 @@
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-spawn.ts",
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "defaultLoadAgentSecrets": {
@@ -15923,6 +15931,12 @@
           ]
         },
         "isTailnet": {
+          "module": "lib/vault-guard.ts",
+          "callers": [
+            "lib/request-gate.ts"
+          ]
+        },
+        "isWireGuard": {
           "module": "lib/vault-guard.ts",
           "callers": [
             "lib/request-gate.ts"
@@ -20312,6 +20326,18 @@
             "wiring/brain-headless.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "buildPersistentGeminiArgs": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "formatGeminiStreamInput": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
           ]
         },
         "AgentLookup": {
