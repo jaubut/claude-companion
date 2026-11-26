@@ -146,7 +146,7 @@
         },
         {
           "path": "lib/a2ui-actions.ts",
-          "lines": 478,
+          "lines": 565,
           "kind": "lib",
           "exports": [
             "handleA2UIAction"
@@ -178,7 +178,7 @@
         },
         {
           "path": "lib/a2ui-macros.ts",
-          "lines": 582,
+          "lines": 587,
           "kind": "lib",
           "exports": [
             "REPO_RE",
@@ -219,7 +219,7 @@
         },
         {
           "path": "lib/a2ui-pr-state.ts",
-          "lines": 139,
+          "lines": 159,
           "kind": "lib",
           "exports": [
             "GhCheck",
@@ -234,7 +234,8 @@
             "isPrGateSurface",
             "checkSurfaceWriteGuard",
             "checkDataModelGuard",
-            "checkComponentActionsGuard"
+            "checkComponentActionsGuard",
+            "syncPrGateButtons"
           ],
           "state": [
             "RESERVED_OUTBOUND_ACTIONS: Set",
@@ -254,7 +255,7 @@
         },
         {
           "path": "lib/a2ui.ts",
-          "lines": 535,
+          "lines": 571,
           "kind": "lib",
           "exports": [
             "A2UI_VERSION",
@@ -4117,7 +4118,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 359,
+          "lines": 367,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -4134,6 +4135,7 @@
             "findWorkerAlert",
             "openWorkerAlertIds",
             "findA2UITurn",
+            "findAllA2UITurns",
             "getThread",
             "searchThread",
             "createTask",
@@ -11611,6 +11613,12 @@
             "wiring/brain-stuck-events.ts"
           ]
         },
+        "syncPrGateButtons": {
+          "module": "lib/a2ui-pr-state.ts",
+          "callers": [
+            "lib/a2ui-actions.ts"
+          ]
+        },
         "OutboundRecord": {
           "module": "lib/outbound.ts",
           "callers": [
@@ -11645,6 +11653,7 @@
           "module": "lib/orchestrator-chat.ts",
           "callers": [
             "lib/a2ui-actions.ts",
+            "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
             "wiring/brain.ts",
             "wiring/worker-blocked.ts"
@@ -11904,6 +11913,7 @@
           "module": "lib/a2ui.ts",
           "callers": [
             "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
             "wiring/brain-stuck-events.ts"
           ]
         },
@@ -12041,6 +12051,13 @@
           "callers": [
             "lib/a2ui-macros.ts",
             "routes/brain.ts"
+          ]
+        },
+        "findAllA2UITurns": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "lib/a2ui-macros.ts",
+            "lib/a2ui.ts"
           ]
         },
         "TurnCard": {

@@ -1596,14 +1596,36 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(closeCmds).toEqual([
       ["pr", "close", "520", "--repo", "jaubut/claude-companion", "--comment", "Closed via Companion PR Gate card"],
     ])
-    expect(broadcasts.at(-1)).toMatchObject({
+    expect(broadcasts.at(-2)).toMatchObject({
       type: "a2ui",
       threadId: "brain",
       turnId,
       surfaceId,
       messages: [{ version: "1.0", updateDataModel: { surfaceId, path: "/pr/state", value: "closed" } }],
     })
-    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turnId)!.card!), "/pr/state")).toBe("closed")
+    expect(broadcasts.at(-1)).toMatchObject({
+      type: "a2ui",
+      threadId: "brain",
+      turnId,
+      surfaceId,
+      messages: [
+        {
+          version: "1.0",
+          updateComponents: {
+            surfaceId,
+            components: [
+              { id: "merge_btn", component: "Button", label: "Merge PR", disabled: true },
+              { id: "close_btn", component: "Button", label: "Closed", disabled: true },
+            ],
+          },
+        },
+      ],
+    })
+    const closedTurn = chat.getTurn(turnId)!
+    expect(getJsonPointer(getSurfaceDataModel(closedTurn.card!), "/pr/state")).toBe("closed")
+    const closedComps = (closedTurn.card!.messages![0] as A2UICreateSurfaceMessage).createSurface.components
+    expect(closedComps.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merge PR", disabled: true })
+    expect(closedComps.find((c) => c.id === "close_btn")).toMatchObject({ label: "Closed", disabled: true })
 
     // 6. Replaying same actionKey returns cached 200 with replay: true and Idempotent-Replayed header
     const replayClose = await call(
@@ -1622,7 +1644,7 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     expect(replayClose.headers.get("Idempotent-Replayed")).toBe("true")
     expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(1)
 
-    // 7. Closing an already closed card with a new actionKey returns 409 not_open
+    // 7. Closing an already closed card with a new actionKey returns self-healing idempotent 200 (never 409 not_open)
     const closeAgain = await call(
       "POST",
       "/api/brain/a2ui/action",
@@ -1634,8 +1656,18 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
       },
       { headers: bearer },
     )
-    expect(closeAgain.status).toBe(409)
-    expect(closeAgain.json).toEqual({ ok: false, error: "not_open", state: "closed" })
+    expect(closeAgain.status).toBe(200)
+    expect(closeAgain.json).toEqual({
+      ok: true,
+      surfaceId,
+      turnId,
+      action: "pr.close",
+      state: "closed",
+      closed: true,
+      url: "https://github.com/jaubut/claude-companion/pull/520",
+      replay: true,
+    })
+    expect(closeAgain.headers.get("Idempotent-Replayed")).toBe("true")
     expect(ghCalls.filter((c) => c[1] === "close")).toHaveLength(1)
 
     // 8. Closing an already merged card returns 409 not_open
@@ -1664,5 +1696,284 @@ describe("POST /api/brain/a2ui/action — bidirectional actions & actionKey idem
     )
     expect(closeMerged.status).toBe(409)
     expect(closeMerged.json).toEqual({ ok: false, error: "not_open", state: "merged" })
+  })
+
+  test("self-healing pr.close & pr.merge on externally closed/merged PRs (including non-green CI) and duplicate-surfaceId turn sync across macro:pr, actions, and deploy", async () => {
+    let ghState = "OPEN"
+    let headSha = "aaaa1111bbbb2222"
+    let ciConclusion = "FAILURE"
+
+    const gh: GhFn = async (args) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          code: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            state: ghState,
+            isDraft: false,
+            headRefName: "dispatch/37800000",
+            headRefOid: headSha,
+            baseRefName: "main",
+            mergeable: "CONFLICTING",
+            mergeStateStatus: "DIRTY",
+            reviewDecision: "",
+            url: "https://github.com/jaubut/claude-companion/pull/378",
+            title: "fix(a2ui): pr gate self-healing",
+            author: { login: "jaubut" },
+            labels: [],
+            statusCheckRollup: [{ status: "COMPLETED", conclusion: ciConclusion, name: "ci" }],
+            comments: [],
+            files: [],
+          }),
+        }
+      }
+      return { code: 1, stdout: "", stderr: "unexpected" }
+    }
+
+    const { call } = makeHarness({
+      gh,
+      prClose: (p, d) => closeDeadPr(p, { gh, exec: async () => ({ rows: [], affected: 0 }), ...d }),
+      deploy: async (repo) => ({
+        ok: true,
+        repo: repo as "claude-companion",
+        result: "no_restart",
+        from: "111",
+        to: "222",
+        commits: 1,
+      }),
+    })
+
+    // 1. Hydrate first turn for PR #378 while OPEN with non-green CI
+    const first = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 378,
+        deployRepo: "claude-companion",
+      },
+      { headers: AUTH },
+    )
+    expect(first.status).toBe(200)
+    const surfaceId = String(first.json.surfaceId)
+    const turn1Id = String(first.json.turnId)
+
+    // 2. Push new commit and call macro: "pr" again -> creates turn2 with same surfaceId and syncs turn1 in SQLite
+    headSha = "cccc3333dddd4444"
+    const second = await call(
+      "POST",
+      "/hooks/brain/ui",
+      {
+        macro: "pr",
+        repo: "jaubut/claude-companion",
+        pr: 378,
+        deployRepo: "claude-companion",
+      },
+      { headers: AUTH },
+    )
+    expect(second.status).toBe(200)
+    const turn2Id = String(second.json.turnId)
+    expect(turn2Id).not.toBe(turn1Id)
+    expect(chat.findAllA2UITurns(surfaceId).map((t) => t.id)).toEqual([turn2Id, turn1Id])
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn1Id)!.card!), "/pr/headSha")).toBe("cccc3333dddd4444")
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn2Id)!.card!), "/pr/headSha")).toBe("cccc3333dddd4444")
+
+    // 3. PR is closed externally on GitHub while card still says state: "open" (and CI is non-green).
+    // Tapping Close PR on turn1 self-heals BOTH turn1 and turn2 to state: "closed" with disabled buttons and returns 200!
+    ghState = "CLOSED"
+    const selfHealClose = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn1Id,
+        action: { name: "pr.close" },
+        actionKey: "self-heal-close-1",
+      },
+      { headers: bearer },
+    )
+    expect(selfHealClose.status).toBe(200)
+    expect(selfHealClose.json).toEqual({
+      ok: true,
+      surfaceId,
+      turnId: turn1Id,
+      action: "pr.close",
+      state: "closed",
+      closed: true,
+      url: "https://github.com/jaubut/claude-companion/pull/378",
+      replay: true,
+    })
+    for (const id of [turn1Id, turn2Id]) {
+      const t = chat.getTurn(id)!
+      expect(getJsonPointer(getSurfaceDataModel(t.card!), "/pr/state")).toBe("closed")
+      const comps = (t.card!.messages![0] as A2UICreateSurfaceMessage).createSurface.components
+      expect(comps.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merge PR", disabled: true })
+      expect(comps.find((c) => c.id === "close_btn")).toMatchObject({ label: "Closed", disabled: true })
+    }
+
+    // 4. PR is reopened on GitHub and pr.refresh is tapped -> re-enables merge_btn & close_btn on BOTH turns
+    ghState = "OPEN"
+    ciConclusion = "SUCCESS"
+    const refreshed = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.refresh" },
+        actionKey: "refresh-reopen-1",
+      },
+      { headers: bearer },
+    )
+    expect(refreshed.status).toBe(200)
+    for (const id of [turn1Id, turn2Id]) {
+      const t = chat.getTurn(id)!
+      expect(getJsonPointer(getSurfaceDataModel(t.card!), "/pr/state")).toBe("open")
+      const comps = (t.card!.messages![0] as A2UICreateSurfaceMessage).createSurface.components
+      expect(comps.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merge PR", disabled: false })
+      expect(comps.find((c) => c.id === "close_btn")).toMatchObject({ label: "Close PR", disabled: false })
+    }
+
+    // 5. PR is merged externally on GitHub (and headSha moved).
+    // Tapping pr.close self-heals card to "merged" and returns 409 already_merged;
+    // Tapping pr.merge self-heals/replays 200 with state: "merged" (not 409 head_moved!).
+    ghState = "MERGED"
+    headSha = "eeee5555ffff6666"
+    const closeOnExternallyMerged = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.close" },
+        actionKey: "close-when-merged-1",
+      },
+      { headers: bearer },
+    )
+    expect(closeOnExternallyMerged.status).toBe(409)
+    expect(closeOnExternallyMerged.json).toEqual({
+      ok: false,
+      error: "already_merged",
+      state: "merged",
+    })
+    for (const id of [turn1Id, turn2Id]) {
+      const t = chat.getTurn(id)!
+      expect(getJsonPointer(getSurfaceDataModel(t.card!), "/pr/state")).toBe("merged")
+      const comps = (t.card!.messages![0] as A2UICreateSurfaceMessage).createSurface.components
+      expect(comps.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merged", disabled: true })
+      expect(comps.find((c) => c.id === "close_btn")).toMatchObject({ label: "Close PR", disabled: true })
+    }
+
+    // Reset state to "open" in SQLite to also test pr.merge hitting live GitHub MERGED with moved headSha
+    await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.merge" },
+        actionKey: "merge-already-merged-model-1",
+      },
+      { headers: bearer },
+    ).then((res) => {
+      expect(res.status).toBe(200)
+      expect(res.json).toEqual({
+        ok: true,
+        surfaceId,
+        turnId: turn2Id,
+        action: "pr.merge",
+        state: "merged",
+        merged: true,
+        url: "https://github.com/jaubut/claude-companion/pull/378",
+        head: "cccc3333dddd4444",
+        replay: true,
+      })
+    })
+
+    // Also test pr.merge when card model says "open" (with old headSha) but GitHub says "MERGED" (with new headSha)
+    const t2 = chat.getTurn(turn2Id)!
+    const openClone = structuredClone(t2.card!)
+    ;((openClone.messages![0] as A2UICreateSurfaceMessage).createSurface.dataModel.pr as Record<string, unknown>).state = "open"
+    chat.setTurnCard(turn2Id, { messages: openClone.messages })
+
+    const mergeLiveMerged = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.merge" },
+        actionKey: "merge-live-merged-1",
+      },
+      { headers: bearer },
+    )
+    expect(mergeLiveMerged.status).toBe(200)
+    expect(mergeLiveMerged.json).toEqual({
+      ok: true,
+      surfaceId,
+      turnId: turn2Id,
+      action: "pr.merge",
+      state: "merged",
+      merged: true,
+      url: "https://github.com/jaubut/claude-companion/pull/378",
+      head: "cccc3333dddd4444",
+      replay: true,
+    })
+
+    // Also test pr.merge when card model says "open" but GitHub says "CLOSED" -> self-heals card to "closed" and returns 409 not_open
+    const openClone2 = structuredClone(chat.getTurn(turn2Id)!.card!)
+    ;((openClone2.messages![0] as A2UICreateSurfaceMessage).createSurface.dataModel.pr as Record<string, unknown>).state = "open"
+    chat.setTurnCard(turn2Id, { messages: openClone2.messages })
+    ghState = "CLOSED"
+    const mergeLiveClosed = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.merge" },
+        actionKey: "merge-live-closed-1",
+      },
+      { headers: bearer },
+    )
+    expect(mergeLiveClosed.status).toBe(409)
+    expect(mergeLiveClosed.json).toEqual({ ok: false, error: "not_open", state: "CLOSED" })
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn1Id)!.card!), "/pr/state")).toBe("closed")
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn2Id)!.card!), "/pr/state")).toBe("closed")
+
+    // Restore merged state for step 6 (pr.deploy)
+    ghState = "MERGED"
+    await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.merge" },
+        actionKey: "merge-restore-for-deploy-1",
+      },
+      { headers: bearer },
+    )
+
+    // 6. Tapping pr.deploy disables deploy_btn with label "Deployed" across both duplicate-surfaceId turns
+    const deployed = await call(
+      "POST",
+      "/api/brain/a2ui/action",
+      {
+        surfaceId,
+        turnId: turn2Id,
+        action: { name: "pr.deploy", context: { repo: "claude-companion" } },
+        actionKey: "deploy-dup-1",
+      },
+      { headers: bearer },
+    )
+    expect(deployed.status).toBe(200)
+    for (const id of [turn1Id, turn2Id]) {
+      const t = chat.getTurn(id)!
+      expect(getJsonPointer(getSurfaceDataModel(t.card!), "/pr/state")).toBe("deployed")
+      const comps = (t.card!.messages![0] as A2UICreateSurfaceMessage).createSurface.components
+      expect(comps.find((c) => c.id === "deploy_btn")).toMatchObject({ label: "Deployed", disabled: true })
+    }
   })
 })

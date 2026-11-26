@@ -195,6 +195,14 @@ export function findA2UITurn(surfaceId: string): Turn | null {
   return row ? toTurn(row) : null
 }
 
+/** Find all A2UI surface turns by `surfaceId` (newest first). */
+export function findAllA2UITurns(surfaceId: string): Turn[] {
+  const rows = db
+    .query("SELECT * FROM orchestrator_turns WHERE json_extract(card, '$.kind') = 'a2ui' AND json_extract(card, '$.surfaceId') = ? ORDER BY created_at DESC, rowid DESC")
+    .all(surfaceId) as TurnRow[]
+  return rows.map(toTurn)
+}
+
 // The most recent `limit` turns, oldest-first.
 //
 // It used to select the OLDEST `limit` (ORDER BY created_at ASC LIMIT ?), so a

@@ -231,7 +231,7 @@ describe("SQLite TurnCard persistence, JSON-pointer folding, and WS broadcast", 
     expect(btn?.disabled).toBe(true)
   })
 
-  test("turnId-scoped updateSurfaceData and updateSurfaceComponents mutate the exact turn even when two turns share surfaceId", () => {
+  test("turnId-scoped updateSurfaceData and updateSurfaceComponents sync all duplicate-surfaceId turns in SQLite", () => {
     const first = buildEmailConfirmSurface({ to: "one@example.com", subject: "First", body: "1", surfaceId: "dup-surf" })
     const second = buildEmailConfirmSurface({ to: "two@example.com", subject: "Second", body: "2", surfaceId: "dup-surf" })
     if (!first.ok || !second.ok) throw new Error("failed")
@@ -252,9 +252,14 @@ describe("SQLite TurnCard persistence, JSON-pointer folding, and WS broadcast", 
     )
     expect(compPatched.ok).toBe(true)
 
-    // turn1 was mutated; turn2 remains untouched ("pending")
+    // Both duplicate-surfaceId turns stay synced so first-write-wins thread loads see the latest state and components
+    expect(chat.findAllA2UITurns("dup-surf").map((t) => t.id)).toEqual([turn2.id, turn1.id])
     expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn1.id)!.card!), "/email/state")).toBe("cancelled")
-    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn2.id)!.card!), "/email/state")).toBe("pending")
+    expect(getJsonPointer(getSurfaceDataModel(chat.getTurn(turn2.id)!.card!), "/email/state")).toBe("cancelled")
+    const cs1 = (chat.getTurn(turn1.id)!.card!.messages![0] as { createSurface: { components: Array<{ id: string; label?: string; disabled?: boolean }> } }).createSurface
+    const cs2 = (chat.getTurn(turn2.id)!.card!.messages![0] as { createSurface: { components: Array<{ id: string; label?: string; disabled?: boolean }> } }).createSurface
+    expect(cs1.components.find((c) => c.id === "cancel_btn")).toMatchObject({ label: "Cancelled 1", disabled: true })
+    expect(cs2.components.find((c) => c.id === "cancel_btn")).toMatchObject({ label: "Cancelled 1", disabled: true })
   })
 })
 
@@ -370,7 +375,25 @@ describe("PrGateCard hydration & computeReviewState tier rules", () => {
     const surface = buildPrGateSurface(hydrated.pr)
     expect(surface.ok).toBe(true)
     if (!surface.ok) return
-    const cs = (surface.messages[0] as { createSurface: { components: Array<{ id: string; action?: { name: string } }> } }).createSurface
+    const cs = (surface.messages[0] as { createSurface: { components: Array<{ id: string; label?: string; disabled?: boolean; action?: { name: string } }> } }).createSurface
     expect(cs.components.map((c) => c.action?.name).filter(Boolean)).toEqual(["pr.refresh", "pr.merge", "pr.close", "pr.deploy"])
+    expect(cs.components.find((c) => c.id === "merge_btn")?.disabled).toBeUndefined()
+    expect(cs.components.find((c) => c.id === "close_btn")?.disabled).toBeUndefined()
+
+    const mergedSurface = buildPrGateSurface({ ...hydrated.pr, state: "merged" })
+    expect(mergedSurface.ok).toBe(true)
+    if (mergedSurface.ok) {
+      const mcs = (mergedSurface.messages[0] as { createSurface: { components: Array<{ id: string; label?: string; disabled?: boolean }> } }).createSurface
+      expect(mcs.components.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merged", disabled: true })
+      expect(mcs.components.find((c) => c.id === "close_btn")).toMatchObject({ label: "Close PR", disabled: true })
+    }
+
+    const closedSurface = buildPrGateSurface({ ...hydrated.pr, state: "closed" })
+    expect(closedSurface.ok).toBe(true)
+    if (closedSurface.ok) {
+      const ccs = (closedSurface.messages[0] as { createSurface: { components: Array<{ id: string; label?: string; disabled?: boolean }> } }).createSurface
+      expect(ccs.components.find((c) => c.id === "merge_btn")).toMatchObject({ label: "Merge PR", disabled: true })
+      expect(ccs.components.find((c) => c.id === "close_btn")).toMatchObject({ label: "Closed", disabled: true })
+    }
   })
 })
