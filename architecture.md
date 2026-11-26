@@ -152,8 +152,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/approval-history-auto.ts` | 191 | lib | 14 | state: let buffer, let timer, let lastErrorLog, flushListeners: Set, let retention |
+| `wiring/brain-pr-close.ts` | 191 | lib | 6 |  |
 | `lib/transcript-cursor.ts` | 189 | lib | 13 | state: cursors: WeakMap |
-| `wiring/brain-pr-close.ts` | 189 | lib | 6 |  |
 | `lib/inject-guard.ts` | 188 | lib | 7 |  |
 | `lib/secret-requests.ts` | 186 | lib | 12 | state: entries: Map · emits: secret_request, secret_request_resolved |
 | `lib/worker-blocked.ts` | 186 | lib | 10 | emits: orchestrator |

@@ -96,12 +96,13 @@ export async function closeDeadPr(p: PrCloseInput, deps: Partial<PrCloseDeps> = 
   if ("status" in v) return v
   if (v.state !== "OPEN") return fail(409, "not_open", { state: v.state })
   if (p.humanApproved === true) {
-    if (p.expectedTitle != null || p.expectedUrl != null) {
+    // `!== undefined` like mergeAgentPr: a null (card lost its title/url) fails closed as stale.
+    if (p.expectedTitle !== undefined || p.expectedUrl !== undefined) {
       const actualTitle = (v.title || `${p.repo}#${p.pr}`).trim().replace(/</g, "‹").replace(/>/g, "›")
       const actualUrl = v.url || `https://github.com/${p.repo}/pull/${p.pr}`
       if (
-        (p.expectedTitle != null && p.expectedTitle !== actualTitle) ||
-        (p.expectedUrl != null && p.expectedUrl !== actualUrl)
+        (p.expectedTitle !== undefined && p.expectedTitle !== actualTitle) ||
+        (p.expectedUrl !== undefined && p.expectedUrl !== actualUrl)
       ) {
         return fail(409, "pr_metadata_stale", {
           expectedTitle: p.expectedTitle ?? null,
@@ -122,12 +123,13 @@ export async function closeDeadPr(p: PrCloseInput, deps: Partial<PrCloseDeps> = 
     if (after !== "CLOSED") return fail(502, "close_unverified", { state: after, detail: (run.stderr || run.stdout).trim().slice(0, 200) })
     let taskId: string | null = null
     try {
-      const id8 = /^dispatch\/[\w.-]+$/.test(v.headRefName) ? v.headRefName.slice("dispatch/".length).slice(0, 8) : null
+      const id8 = /^dispatch\/[\w.-]+$/.test(v.headRefName) ? v.headRefName.slice("dispatch/".length).slice(0, 8) : ""
       const { rows } = await fullDeps.exec(
         "SELECT id, done, dispatch_status, dispatch_pr_url FROM tasks WHERE dispatch_pr_url = ? OR substr(id, 1, 8) = ? ORDER BY dispatch_pr_url = ? DESC LIMIT 1",
-        [v.url, id8, v.url],
+        [v.url, id8.length === 8 ? id8 : null, v.url],
       )
-      const t = rows[0]
+      // Only the task this PR belongs to: a task already pointing at a newer PR stays live.
+      const t = rows[0] && (!rows[0].dispatch_pr_url || rows[0].dispatch_pr_url === v.url) ? rows[0] : undefined
       taskId = t ? String(t.id) : null
       if (t && String(t.done ?? "0") === "0" && t.dispatch_status !== "done" && t.dispatch_status !== "cancelled") {
         await fullDeps.exec("UPDATE tasks SET dispatch_status = 'cancelled' WHERE id = ? AND done = 0", [taskId])

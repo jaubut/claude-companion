@@ -219,4 +219,30 @@ describe("bin/pr-close gate", () => {
     expect(closes(tursoDownWorld.calls)).toHaveLength(1)
     expect(tursoDownWorld.events).toEqual(["Closed o/r#7 via PR Gate card"])
   })
+
+  const human = { repo: "o/r", pr: 7, reason: "Closed via A2UI PR Gate card", humanApproved: true }
+
+  test("humanApproved: closing a superseded PR leaves the task (already on a newer PR) live", async () => {
+    const w = world(open({ title: "t" }), `INSERT INTO tasks VALUES ('abcd1234-0000', 0, 'pr', 'https://github.com/o/r/pull/9');`)
+    const out = await closeDeadPr({ ...human, expectedTitle: "t", expectedUrl: URL }, w.deps)
+    expect(out.status).toBe(200)
+    const t = w.db.query("SELECT dispatch_status FROM tasks WHERE id = 'abcd1234-0000'").get() as Row
+    expect(t.dispatch_status).toBe("pr")
+    const act = w.db.query("SELECT target_kind FROM agent_activity WHERE action = ?").get(PR_CLOSE_ACTION) as Row
+    expect(act.target_kind).toBe("pr")
+  })
+
+  test("humanApproved: a short dispatch/<slug> branch never prefix-matches a short task id", async () => {
+    const w = world(open({ headRefName: "dispatch/abc", title: "t" }), `INSERT INTO tasks (id, done, dispatch_status) VALUES ('abc', 0, 'running');`)
+    expect((await closeDeadPr({ ...human, expectedTitle: "t", expectedUrl: URL }, w.deps)).status).toBe(200)
+    expect((w.db.query("SELECT dispatch_status FROM tasks WHERE id = 'abc'").get() as Row).dispatch_status).toBe("running")
+  })
+
+  test("humanApproved: a null expected title/url (card lost them) fails closed as stale", async () => {
+    const w = world(open({ title: "t" }))
+    const out = await closeDeadPr({ ...human, expectedTitle: null, expectedUrl: null }, w.deps)
+    expect(out.status).toBe(409)
+    expect(out.body.error).toBe("pr_metadata_stale")
+    expect(closes(w.calls)).toHaveLength(0)
+  })
 })
