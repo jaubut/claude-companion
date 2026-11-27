@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { hostname, networkInterfaces } from "node:os"
 import { getAuthToken } from "./auth"
 import { clientOrigin, isWireGuard, keyCommandGate, recordPeer } from "./vault-guard"
-import { funnelRequestAllowed, hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf } from "./request-gate"
+import { _resetTailscaleNameForTest, funnelRequestAllowed, hookCallerAllowed, hostAllowed, refreshTailscaleName, tailscaleNameOf, watchTailscaleName } from "./request-gate"
 
 // Every /hooks/* route the server answers (routes/hooks.ts, brain.ts, gauge.ts, copy-jobs.ts).
 const HOOK_PATHS = [
@@ -111,6 +111,23 @@ test("funnelRequestAllowed admits public Funnel and Cloudflare Tunnel traffic ON
     expect([path, funnelRequestAllowed(new Request(`http://127.0.0.1:4245${path}`, { headers: funnel }), path)]).toEqual([path, false])
     expect([path, funnelRequestAllowed(new Request(`http://127.0.0.1:4245${path}`, { headers: cf }), path)]).toEqual([path, false])
     expect([path, funnelRequestAllowed(new Request(`http://127.0.0.1:4245${path}`), path)]).toEqual([path, true])
+  }
+})
+
+test("watchTailscaleName retries quickly until tailscaled reports a name, then settles", async () => {
+  _resetTailscaleNameForTest()
+  let calls = 0
+  const stop = watchTailscaleName(60_000, async () => {
+    calls += 1
+    if (calls < 2) return ""
+    return JSON.stringify({ Self: { DNSName: "fast-wake.tailfc45f2.ts.net." } })
+  }, 15)
+  try {
+    await new Promise((r) => setTimeout(r, 80))
+    expect(calls).toBeGreaterThanOrEqual(2)
+    expect(hostAllowed("fast-wake.tailfc45f2.ts.net")).toBe(true)
+  } finally {
+    stop()
   }
 })
 

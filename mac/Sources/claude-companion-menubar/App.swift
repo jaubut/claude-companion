@@ -365,12 +365,14 @@ enum ServerStatus: Equatable {
     case unknown
     case offline
     case noToken
-    case running(clients: Int, pending: Int)
+    case running(clients: Int, pending: Int, fallbackHost: String? = nil)
 
     var iconName: String {
         switch self {
-        case .running:
+        case .running(_, _, nil):
             return "antenna.radiowaves.left.and.right.circle.fill"
+        case .running(_, _, .some):
+            return "antenna.radiowaves.left.and.right.circle"
         case .offline, .unknown:
             return "antenna.radiowaves.left.and.right.slash"
         case .noToken:
@@ -383,13 +385,14 @@ enum ServerStatus: Equatable {
         case .unknown: return "Checking…"
         case .offline: return "Server offline"
         case .noToken: return "No pairing token"
-        case .running: return "Server running"
+        case .running(_, _, nil): return "Server running"
+        case .running(_, _, let host?): return "Local offline · \(host) fallback"
         }
     }
 
     var detail: String? {
         switch self {
-        case .running(let clients, let pending):
+        case .running(let clients, let pending, _):
             var parts: [String] = ["\(clients) client\(clients == 1 ? "" : "s")"]
             if pending > 0 {
                 parts.append("\(pending) pending")
@@ -408,35 +411,56 @@ private let session: URLSession = {
     return URLSession(configuration: cfg)
 }()
 
+// Ordered candidate hosts: Mac loopback primary, then Zettlab fallback so the
+// menubar stays informative when the local Mac server is restarting or down.
+func alternateHosts() -> [(base: URL, fallbackLabel: String?)] {
+    var hosts: [(URL, String?)] = [
+        (URL(string: "http://127.0.0.1:4245")!, nil),
+    ]
+    let env = ProcessInfo.processInfo.environment
+    let rawFallback = env["COMPANION_PEER_ZETTLAB_URL"]
+        ?? env["COMPANION_BODY_PEER"]
+        ?? "https://zettlab.tailfc45f2.ts.net"
+    let trimmed = rawFallback.trimmingCharacters(in: CharacterSet(charactersIn: "/ \t\n"))
+    if let fallbackURL = URL(string: trimmed) {
+        let label = fallbackURL.host?.split(separator: ".").first.map(String.init) ?? "Zettlab"
+        hosts.append((fallbackURL, label))
+    }
+    return hosts
+}
+
 func fetchStatus() async -> ServerStatus {
-    let healthURL = URL(string: "http://127.0.0.1:4245/health")!
-    do {
-        let (_, resp) = try await session.data(from: healthURL)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            return .offline
+    for candidate in alternateHosts() {
+        let healthURL = candidate.base.appendingPathComponent("health")
+        do {
+            let (_, resp) = try await session.data(from: healthURL)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                continue
+            }
+        } catch {
+            continue
         }
-    } catch {
-        return .offline
-    }
 
-    guard let token = readToken() else { return .noToken }
+        guard let token = readToken() else { return .noToken }
 
-    var req = URLRequest(url: URL(string: "http://127.0.0.1:4245/api/status")!)
-    req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    do {
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            return .running(clients: 0, pending: 0)
+        var req = URLRequest(url: candidate.base.appendingPathComponent("api/status"))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, resp) = try await session.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                return .running(clients: 0, pending: 0, fallbackHost: candidate.fallbackLabel)
+            }
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let clients = (json?["clients"] as? Int) ?? 0
+            let pending = (json?["pending"] as? Int) ?? 0
+            return .running(clients: clients, pending: pending, fallbackHost: candidate.fallbackLabel)
+        } catch {
+            // /health was up but /api/status timed out — still report as running
+            // so the user doesn't see a flicker between green and red.
+            return .running(clients: 0, pending: 0, fallbackHost: candidate.fallbackLabel)
         }
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let clients = (json?["clients"] as? Int) ?? 0
-        let pending = (json?["pending"] as? Int) ?? 0
-        return .running(clients: clients, pending: pending)
-    } catch {
-        // /health was up but /api/status timed out — still report as running
-        // so the user doesn't see a flicker between green and red.
-        return .running(clients: 0, pending: 0)
     }
+    return .offline
 }
 
 func readToken() -> String? {

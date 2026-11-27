@@ -151,11 +151,11 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/native-tool-executor.ts` | 203 | lib | 13 |  |
 | `routes/triage.ts` | 203 | lib | 2 |  |
 | `wiring/repo-view.ts` | 203 | lib | 7 | state: let live |
+| `ws.ts` | 203 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `lib/dashboard-client.ts` | 202 | lib | 34 |  |
 | `lib/session-summaries.ts` | 200 | lib | 10 |  |
 | `lib/trip-dashboard.ts` | 199 | lib | 17 |  |
 | `wiring/desk-deliver.ts` | 199 | lib | 3 | emits: inject_error |
-| `ws.ts` | 198 | lib | 1 | emits: init, brain, brain_trace, approval, question, resolved, key_saved, inject_error, pong, resolve_failed |
 | `routes/trips.ts` | 196 | lib | 5 |  |
 | `lib/command-offpane-herdr.ts` | 193 | lib | 4 | state: scrapes: Map |
 | `lib/agent-notifications.ts` | 191 | lib | 9 | state: SEVERITY_SET: Set |
@@ -173,6 +173,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/receipt-capture.ts` | 173 | lib | 13 |  |
 | `lib/triage-store.ts` | 171 | lib | 9 |  |
 | `wiring/body-agent.ts` | 171 | lib | 3 | state: let deps, starting: Set · emits: orchestrator_channel |
+| `lib/request-gate.ts` | 170 | lib | 7 | state: NAMES: Set, let tailscaleName, let refreshInFlight, let lastRefreshAt, let activeReader |
 | `lib/jev-route-log.ts` | 168 | lib | 15 |  |
 | `lib/turso.ts` | 168 | lib | 10 | state: let agentToken, let agentEnvRead |
 | `lib/tool-format.ts` | 166 | lib | 6 |  |
@@ -229,7 +230,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/skill-types.ts` | 112 | lib | 8 | state: CATEGORY_SET: Set |
 | `lib/brain-store.ts` | 111 | lib | 15 |  |
 | `lib/model-prices.ts` | 110 | lib | 8 |  |
-| `lib/request-gate.ts` | 110 | lib | 6 | state: NAMES: Set, let tailscaleName |
 | `wiring/body-investigate.ts` | 110 | lib | 8 | state: let applier, let live |
 | `wiring/takeover-liveness.ts` | 110 | lib | 7 |  |
 | `lib/auth.ts` | 109 | lib | 5 | state: let cached |

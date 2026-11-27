@@ -5384,19 +5384,23 @@
         },
         {
           "path": "lib/request-gate.ts",
-          "lines": 110,
+          "lines": 170,
           "kind": "lib",
           "exports": [
             "hostAllowed",
             "tailscaleNameOf",
             "refreshTailscaleName",
+            "_resetTailscaleNameForTest",
             "watchTailscaleName",
             "hookCallerAllowed",
             "funnelRequestAllowed"
           ],
           "state": [
             "NAMES: Set",
-            "let tailscaleName"
+            "let tailscaleName",
+            "let refreshInFlight",
+            "let lastRefreshAt",
+            "let activeReader"
           ],
           "emits": [],
           "consumes": [],
@@ -11304,7 +11308,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 198,
+          "lines": 203,
           "kind": "lib",
           "exports": [
             "websocket"
