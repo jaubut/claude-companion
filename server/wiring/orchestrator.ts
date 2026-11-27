@@ -33,9 +33,14 @@ import { type DispatchWiring, dispatchWiring } from "./dispatch"
 // clients so the one always-open chat stays live on every device.
 // Internal wake events in the brain thread (`[from ...]`, stuck PRs, worker receipts)
 // are for the brain's outbox only and never broadcast as fake Brain chat bubbles.
-export function orchEmit(turn: OrchTurn): void {
+export function orchEmit(turn: OrchTurn, extra?: { draftTurnId?: string | null }): void {
   if (isBrainInternalEvent(turn)) return
-  broadcast({ type: "orchestrator", turn })
+  const draftTurnId = typeof extra?.draftTurnId === "string" && extra.draftTurnId.trim() ? extra.draftTurnId.trim() : null
+  broadcast({
+    type: "orchestrator",
+    turn: draftTurnId ? { ...turn, draftTurnId } : turn,
+    ...(draftTurnId ? { draftTurnId } : {}),
+  })
 }
 
 // Broadcast a task's current state on every transition (proposed → dispatched →

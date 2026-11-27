@@ -729,3 +729,262 @@ describe("event triage & mid-day rollover", () => {
     }
   })
 })
+
+describe("WebSocket live delta streaming & stable draftTurnId reconciliation (#1)", () => {
+  test("streams multi-block text across interleaved tool calls with one stable draftTurnId and reconciles in-place on done without duplicate bubbles", async () => {
+    const { reconcileBrainStream } = await import("../lib/brain-stream")
+    const h = harness()
+    await upBrain(h)
+
+    const u = userTurn("check the PR and deploy status")
+    h.w.enqueue(u)
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(1)
+
+    const turnState = h.w.activeTurnState()
+    expect(turnState).not.toBeNull()
+    expect(turnState!.trigger).toBe("user")
+    const draftId = turnState!.draftTurnId
+
+    // Client thread state starts with the user turn
+    let clientTurns: Array<ReturnType<typeof userTurn>> = [u]
+
+    // Block 0: two incremental deltas before a tool call
+    h.w.onTextDelta("sid-brain", "Checking PR #380", true)
+    h.w.onTextDelta("sid-brain", " and CI status...", true)
+
+    // Interleaved read-only tool call
+    h.w.noteActivity("sid-brain", {
+      phase: "pre",
+      tool: "Bash",
+      input: { command: "./bin/thread --q 380" },
+      toolUseId: "tu-1",
+    })
+    h.w.noteActivity("sid-brain", {
+      phase: "post",
+      tool: "Bash",
+      input: { command: "./bin/thread --q 380" },
+      toolUseId: "tu-1",
+    })
+
+    // Block 1: text after tool call (shares the exact same draftTurnId!)
+    h.w.onTextDelta("sid-brain", "CI is green and ready to merge.", true)
+
+    // Reconnecting WebSocket client sees the active draft frame
+    const activeSnap = h.w.activeDraftFrame()
+    expect(activeSnap).toMatchObject({
+      type: "brain_stream",
+      op: "delta",
+      threadId: "brain",
+      draftTurnId: draftId,
+      text: "Checking PR #380 and CI status...\n\nCI is green and ready to merge.",
+      blockIndex: 1,
+    })
+
+    const deltaFrames = h.frames.filter((f) => f.type === "brain_stream" && f.op === "delta")
+    expect(deltaFrames).toHaveLength(3)
+    expect(new Set(deltaFrames.map((f) => f.draftTurnId))).toEqual(new Set([draftId]))
+    expect(deltaFrames[0]!.blockIndex).toBe(0)
+    expect(deltaFrames[1]!.blockIndex).toBe(0)
+    expect(deltaFrames[2]!.blockIndex).toBe(1)
+    expect(deltaFrames[2]!.text).toBe("Checking PR #380 and CI status...\n\nCI is green and ready to merge.")
+
+    for (const f of deltaFrames) {
+      clientTurns = reconcileBrainStream(clientTurns, f)
+    }
+    // Only ONE assistant bubble exists in the client thread across both blocks and the interleaved tool call
+    expect(clientTurns.filter((t) => t.role === "orchestrator")).toHaveLength(1)
+    expect(clientTurns.find((t) => t.role === "orchestrator")).toMatchObject({
+      id: draftId,
+      text: "Checking PR #380 and CI status...\n\nCI is green and ready to merge.",
+    })
+
+    // Turn finishes: final event only repeats the last block, but accumulator preserves full multi-block text
+    await h.w.onStop("sid-brain", "CI is green and ready to merge.", draftId)
+    expect(h.w.activeDraftFrame()).toBeNull()
+
+    const doneFrames = h.frames.filter((f) => f.type === "brain_stream" && f.op === "done")
+    expect(doneFrames).toHaveLength(1)
+    expect(doneFrames[0]!.draftTurnId).toBe(draftId)
+
+    // Persisted turn in SQLite uses draftTurnId as its id and preserves multi-block text
+    const persisted = chat.getTurn(draftId)
+    expect(persisted).not.toBeNull()
+    expect(persisted!.id).toBe(draftId)
+    expect(persisted!.text).toBe("Checking PR #380 and CI status...\n\nCI is green and ready to merge.")
+
+    // Reconciling the done frame (and/or orchestrator frame) swaps the draft in-place without duplicating
+    clientTurns = reconcileBrainStream(clientTurns, doneFrames[0]!)
+    expect(clientTurns.filter((t) => t.role === "orchestrator")).toHaveLength(1)
+    expect(clientTurns.find((t) => t.role === "orchestrator")).toMatchObject({
+      id: draftId,
+      text: "Checking PR #380 and CI status...\n\nCI is green and ready to merge.",
+    })
+  })
+
+  test("emits a clean clear signal on QUIET_REPLY ('noted') so no ghost 'noted' bubble remains in the thread", async () => {
+    const { reconcileBrainStream } = await import("../lib/brain-stream")
+    const h = harness()
+    await upBrain(h)
+
+    const ev = chat.appendTurn("orchestrator", "[from lead-repoA] routine update", null, "brain")
+    h.w.onTurn(ev)
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(1)
+
+    const draftId = h.w.activeTurnState()!.draftTurnId
+    let clientTurns: Array<ReturnType<typeof userTurn>> = []
+
+    // Stream a draft delta, then finish with QUIET_REPLY ("noted")
+    h.w.onTextDelta("sid-brain", "noted", true)
+    const deltaFrame = h.frames.find((f) => f.type === "brain_stream" && f.op === "delta")!
+    clientTurns = reconcileBrainStream(clientTurns, deltaFrame)
+    expect(clientTurns).toHaveLength(1)
+
+    await h.w.onStop("sid-brain", "noted", draftId)
+
+    const clearFrame = h.frames.find((f) => f.type === "brain_stream" && f.op === "clear")
+    expect(clearFrame).toMatchObject({
+      type: "brain_stream",
+      op: "clear",
+      threadId: "brain",
+      draftTurnId: draftId,
+      reason: "quiet_reply",
+    })
+
+    // Reconciling the clear frame removes the draft bubble completely; SQLite has no persisted turn for draftId
+    clientTurns = reconcileBrainStream(clientTurns, clearFrame!)
+    expect(clientTurns).toHaveLength(0)
+    expect(chat.getTurn(draftId)).toBeNull()
+  })
+})
+
+describe("Side-effect-safe [event] turn preemption & guaranteed event re-queueing (#5)", () => {
+  test("preempts an in-flight [event] turn when only read-only tools have run, emits draft clear, and 100% re-queues the [event] payload", async () => {
+    const h = harness()
+    await upBrain(h)
+
+    // 1. An [event] turn (e.g. a PR Gate / green-PR wakeup) starts executing
+    const ev1 = chat.appendTurn("orchestrator", "[from lead-claude-companion] PR #380 is green and ready to merge", null, "brain")
+    h.w.onTurn(ev1)
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(1)
+    expect(h.delivered[0]!.text).toContain(`[event ${ev1.id}]`)
+    expect(h.w.activeTurnState()).toMatchObject({
+      trigger: "event",
+      sideEffectFired: false,
+      turnIds: [ev1.id],
+    })
+
+    // 2. Brain runs read-only inspection tools and streams a partial draft delta
+    h.w.noteActivity("sid-brain", {
+      phase: "pre",
+      tool: "Bash",
+      input: { command: "./bin/thread --q 380" },
+      toolUseId: "tu-read-1",
+    })
+    h.w.noteActivity("sid-brain", {
+      phase: "pre",
+      tool: "Bash",
+      input: { command: "./bin/worker list" },
+      toolUseId: "tu-read-2",
+    })
+    h.w.noteActivity("sid-brain", {
+      phase: "pre",
+      tool: "mcp__tls__execute",
+      input: { code: "SELECT id, dispatch_status FROM tasks LIMIT 5" },
+      toolUseId: "tu-read-3",
+    })
+    h.w.onTextDelta("sid-brain", "Inspecting PR #380...", true)
+    expect(h.w.activeTurnState()!.sideEffectFired).toBe(false)
+
+    // 3. Jeremie sends a real user message while the [event] turn is still in flight (0 side effects)
+    const u1 = userTurn("hold off on merging, what is on my calendar?")
+    h.w.enqueue(u1)
+    await Bun.sleep(10)
+
+    // The [event] turn was interrupted immediately
+    expect(h.set.interrupts).toBe(1)
+    // Draft bubble was cleared with reason "preempted"
+    expect(h.frames.some((f) => f.type === "brain_stream" && f.op === "clear" && f.reason === "preempted")).toBe(true)
+
+    // Both the user turn AND the re-queued [event] turn are delivered in the next prompt (zero dropped events!)
+    expect(h.delivered).toHaveLength(2)
+    expect(h.delivered[1]!.text).toContain(`[turn ${u1.id}] hold off on merging, what is on my calendar?`)
+    expect(h.delivered[1]!.text).toContain(`[event ${ev1.id}] [from lead-claude-companion] PR #380 is green and ready to merge`)
+  })
+
+  test("does NOT preempt an [event] turn once a mutating side effect (ui, pr-merge, propose, dispatch, worker dispatch, email) has fired", async () => {
+    const h = harness()
+    await upBrain(h)
+
+    const ev = chat.appendTurn("orchestrator", "[from lead-claude-companion] PR #380 ready", null, "brain")
+    h.w.onTurn(ev)
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(1)
+
+    // Brain invokes a mutating tool (`./bin/pr-merge`) -> side-effect gate locks
+    h.w.noteActivity("sid-brain", {
+      phase: "pre",
+      tool: "Bash",
+      input: { command: "./bin/pr-merge --repo jaubut/claude-companion --pr 380 --reason 'routine green'" },
+      toolUseId: "tu-mut-1",
+    })
+    expect(h.w.activeTurnState()).toMatchObject({
+      trigger: "event",
+      sideEffectFired: true,
+      sideEffectReason: "bin/pr-merge",
+    })
+
+    // User message arrives after side effect fired: must NOT interrupt the in-flight merge turn
+    const u = userTurn("hey brain")
+    h.w.enqueue(u)
+    await Bun.sleep(10)
+    expect(h.set.interrupts).toBe(0)
+    expect(h.delivered).toHaveLength(1)
+
+    // Once the [event] turn finishes normally, the queued user turn is delivered immediately
+    await h.w.onStop("sid-brain", "Merged #380.")
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(2)
+    expect(h.delivered[1]!.text).toBe(`[turn ${u.id}] hey brain`)
+  })
+
+  test("never preempts a turn answering a user [turn <id>], [boot], [rollover], or [flush]", async () => {
+    const h = harness()
+    // 1. Fresh spawn triggers a [boot] seed turn
+    await h.w.tick()
+    h.set.alive = true
+    h.set.sessions = [session()]
+    h.w.onSessionStart(session())
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(1)
+    expect(h.delivered[0]!.text).toContain("[boot]")
+    expect(h.w.activeTurnState()!.trigger).toBe("boot")
+
+    // User message during [boot] must not preempt [boot]
+    const u1 = userTurn("first user question")
+    h.w.enqueue(u1)
+    await Bun.sleep(5)
+    expect(h.set.interrupts).toBe(0)
+    await h.w.onStop("sid-brain", "Booted.")
+    await Bun.sleep(5)
+
+    // 2. Now answering user turn u1 (`trigger === "user"`)
+    expect(h.delivered).toHaveLength(2)
+    expect(h.delivered[1]!.text).toContain(`[turn ${u1.id}]`)
+    expect(h.w.activeTurnState()!.trigger).toBe("user")
+
+    // Second user message arrives while u1 is still running (even with 0 side effects): never preempts a user turn
+    const u2 = userTurn("follow-up question")
+    h.w.enqueue(u2)
+    await Bun.sleep(5)
+    expect(h.set.interrupts).toBe(0)
+    expect(h.delivered).toHaveLength(2)
+
+    await h.w.onStop("sid-brain", "Answered first question.")
+    await Bun.sleep(5)
+    expect(h.delivered).toHaveLength(3)
+    expect(h.delivered[2]!.text).toContain(`[turn ${u2.id}] follow-up question`)
+  })
+})

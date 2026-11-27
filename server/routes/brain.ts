@@ -10,7 +10,8 @@ import type { OutboundSender, OutboundStore } from "../lib/outbound"
 import { type Session, listSessions } from "../lib/sessions"
 import type { GhFn } from "../lib/triage-pr"
 import { clientOrigin, peerOf } from "../lib/vault-guard"
-import { REPO_NAME_RE } from "../lib/worker-invocation"
+import { REPO_NAME_RE, TASK_ID_RE } from "../lib/worker-invocation"
+import type { WorkerMcpHandler } from "../lib/worker-mcp"
 import { type BrainWiring, brainWiring, getBrainDeliver } from "../wiring/brain"
 import { addBrainHandoff } from "../wiring/brain-handoff"
 import { addBrainTodo } from "../wiring/brain-todo"
@@ -22,6 +23,7 @@ import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
 import { type BrainLead, brainLead, leadCheckout, relayToBrainThread } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
+import { workerMcp } from "../wiring/worker-mcp"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
@@ -92,6 +94,8 @@ export interface BrainRouteDeps {
   emailSender?: OutboundSender
   /** Persistence + broadcast seam for A2UI surface tests. */
   a2uiEngine?: A2UIEngineDeps
+  /** Worker MCP handler for atomic `/hooks/brain/dispatch` (default: workerMcp). */
+  workerMcp?: WorkerMcpHandler
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -120,7 +124,93 @@ function proposeRefusal(req: Request, deps: BrainRouteDeps): Response | null {
   return null
 }
 
-async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
+async function runAtomicBrainDispatch(
+  body: Record<string, unknown>,
+  deps: BrainRouteDeps,
+  parsed: { noteId: string; prompt: string; sourceTurnId: string; title: string; reasoning: string; taskId?: string },
+): Promise<Response> {
+  const rawRepo = typeof body.repo === "string" ? body.repo.trim() : ""
+  if (!REPO_NAME_RE.test(rawRepo)) return fail(400, "invalid_repo")
+  const repo = rawRepo.toLowerCase()
+  const family = str(body.family, 32) ?? undefined
+  const agent = str(body.agent, 64) ?? undefined
+  const model = str(body.model, 128) ?? undefined
+  const mode = str(body.mode, 32) ?? "auto"
+  const host = str(body.host, 32) ?? "local"
+  const handoffOut = await (deps.handoff ?? addBrainHandoff)({
+    title: parsed.title,
+    prompt: parsed.prompt,
+    noteId: parsed.noteId,
+    reasoning: parsed.reasoning,
+    sourceTurnId: parsed.sourceTurnId,
+    repo,
+    ...(parsed.taskId ? { taskId: parsed.taskId } : {}),
+  })
+  if (handoffOut.body.ok !== true) {
+    return Response.json(handoffOut.body, { status: handoffOut.status })
+  }
+  const resolvedTaskId = String(handoffOut.body.taskId ?? parsed.taskId ?? "")
+  const claim = typeof handoffOut.body.claim === "string" ? handoffOut.body.claim : undefined
+  const mcp = deps.workerMcp ?? workerMcp
+  const rpcOut = await mcp.handleRpc({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "dispatch_task",
+      arguments: {
+        task_id: resolvedTaskId,
+        repo,
+        prompt: parsed.prompt,
+        title: parsed.title,
+        mode,
+        host,
+        ...(family ? { family } : {}),
+        ...(agent ? { agent } : {}),
+        ...(model ? { model } : {}),
+        ...(claim ? { claim } : {}),
+      },
+    },
+  })
+  const structured = ((rpcOut?.result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent) ?? {}
+  if (structured.ok !== true) {
+    if (handoffOut.body.replay === true && structured.error === "task_already_running") {
+      const existingOut = await mcp.handleRpc({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "get_task", arguments: { task_id: resolvedTaskId, host } },
+      })
+      const existing = ((existingOut?.result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent) ?? {}
+      return Response.json({
+        ...handoffOut.body,
+        dispatched: true,
+        replay: true,
+        host: existing.host ?? host,
+        task: existing.task ?? null,
+      }, { status: 200, headers: { "Idempotent-Replayed": "true" } })
+    }
+    const status = typeof structured.status === "number" ? structured.status : 502
+    return Response.json({
+      ...handoffOut.body,
+      ok: false,
+      dispatched: false,
+      error: typeof structured.error === "string" ? structured.error : "dispatch_failed",
+    }, { status })
+  }
+  return Response.json({
+    ...handoffOut.body,
+    dispatched: true,
+    claimStatus: structured.claim ?? (claim ? "verified" : "absent"),
+    host: structured.host ?? host,
+    task: structured.task ?? null,
+  }, {
+    status: 200,
+    headers: handoffOut.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
+  })
+}
+
+async function propose(req: Request, deps: BrainRouteDeps, forceDispatch = false): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) {
     companionLog(`[brain] propose refused (peer=${peerOf(req) ?? "?"})`)
@@ -134,18 +224,40 @@ async function propose(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (!prompt) return fail(400, "prompt required")
   const sourceTurnId = typeof body.sourceTurnId === "string" && TURN_ID.test(body.sourceTurnId) ? body.sourceTurnId : null
   if (!sourceTurnId) return fail(400, "sourceTurnId required")
+  const rawTaskId = typeof body.taskId === "string" && body.taskId.trim() ? body.taskId.trim() : undefined
+  if (rawTaskId !== undefined && !TASK_ID_RE.test(rawTaskId)) return fail(400, "invalid_task_id")
   const title = str(body.title, TITLE_MAX) ?? prompt.split("\n")[0]!.slice(0, TITLE_MAX)
   const agent = body.agent === undefined || body.agent === null ? null : str(body.agent, 64)
   if (body.agent !== undefined && body.agent !== null && !agent) return fail(400, "unknown_agent")
   const reasoning = str(body.reasoning, REASONING_MAX) ?? ""
+  if (forceDispatch || body.dispatch === true) {
+    deps.wiring.noteSideEffect?.("dispatch")
+    return runAtomicBrainDispatch(body, deps, { noteId, prompt, sourceTurnId, title, reasoning, taskId: rawTaskId })
+  }
   if (body.handoff === true) {
+    deps.wiring.noteSideEffect?.("propose:handoff")
     // A bad or missing repo files the row without a claim, never a refusal: the handoff itself must not be blocked.
     const repo = typeof body.repo === "string" && REPO_NAME_RE.test(body.repo.trim()) ? body.repo.trim().toLowerCase() : undefined
-    const out = await (deps.handoff ?? addBrainHandoff)({ title, prompt, noteId, reasoning, sourceTurnId, ...(repo ? { repo } : {}) })
-    return Response.json(out.body, { status: out.status })
+    const out = await (deps.handoff ?? addBrainHandoff)({
+      title,
+      prompt,
+      noteId,
+      reasoning,
+      sourceTurnId,
+      ...(repo ? { repo } : {}),
+      ...(rawTaskId ? { taskId: rawTaskId } : {}),
+    })
+    return Response.json(out.body, {
+      status: out.status,
+      headers: out.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
+    })
   }
-  const out = await deps.wiring.propose({ title, prompt, noteId, agent, reasoning, sourceTurnId })
-  return Response.json(out.body, { status: out.status })
+  deps.wiring.noteSideEffect?.("propose")
+  const out = await deps.wiring.propose({ title, prompt, noteId, agent, reasoning, sourceTurnId, ...(rawTaskId ? { taskId: rawTaskId } : {}) })
+  return Response.json(out.body, {
+    status: out.status,
+    headers: out.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
+  })
 }
 
 async function thread(req: Request, deps: BrainRouteDeps): Promise<Response> {
@@ -176,6 +288,7 @@ async function todo(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (!sourceTurnId) return fail(400, "sourceTurnId required")
   const due = body.due === undefined || body.due === null || body.due === "" ? null : typeof body.due === "string" && DAY.test(body.due) ? body.due : undefined
   if (due === undefined) return fail(400, "due must be YYYY-MM-DD")
+  deps.wiring.noteSideEffect?.("todo")
   const out = await (deps.todo ?? addBrainTodo)({ text, noteId, due, sourceTurnId })
   return Response.json(out.body, { status: out.status })
 }
@@ -204,6 +317,7 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
     if (!leadTask && !brainOk) return fail(403, "forbidden")
     const msg = str(body.message, PROMPT_MAX)
     if (!msg) return fail(400, "message required")
+    if (brainOk && !leadTask) deps.wiring.noteSideEffect?.("sessions:tell-brain")
     const sender = leadTask ?? (str(body.sender, 64) ?? BRAIN_AGENT)
     relayToBrainThread(sender, msg)
     return Response.json({ ok: true, relayed: true, sender })
@@ -235,6 +349,7 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
     if (!found) return fail(404, "session_not_found")
     const deliver = deps.deliverSession !== undefined ? deps.deliverSession : getBrainDeliver()
     if (!deliver) return fail(503, "deliver_unavailable")
+    deps.wiring.noteSideEffect?.("sessions:send")
     const leadNote = found.taskId?.startsWith(LEAD_PREFIX)
       ? "\n(Do not send an ack or progress recap back to brain — only message brain when a PR is ready to merge/close or a real blocker/decision needs Jeremie.)"
       : ""
@@ -245,6 +360,7 @@ async function sessions(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (body.op === "close") {
     const ws = typeof body.workspaceId === "string" && WORKSPACE_ID.test(body.workspaceId) ? body.workspaceId : null
     if (!ws) return fail(400, "workspaceId required")
+    deps.wiring.noteSideEffect?.("sessions:close")
     const out = await workers.close(ws)
     companionLog(`[brain] sessions close ${ws} → ${out.status} ${String(out.body.error ?? "ok")}`)
     return Response.json(out.body, { status: out.status })
@@ -270,6 +386,7 @@ async function prAction(req: Request, deps: BrainRouteDeps, op: "pr-close" | "pr
   if (!pr) return fail(400, "pr must be a PR number")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
+  if (!leadTask) deps.wiring.noteSideEffect?.(op)
   const out = op === "pr-merge"
     ? await (deps.prMerge ?? mergeAgentPr)({ repo, pr, reason, signal: req.signal })
     : await (op === "pr-close" ? deps.prClose ?? closeDeadPr : op === "pr-resolve-conflicts" ? deps.prResolve ?? resolveAgentPrConflicts : deps.prUpdate ?? updateAgentPr)({ repo, pr, reason })
@@ -287,6 +404,7 @@ async function taskCancel(req: Request, deps: BrainRouteDeps): Promise<Response>
   if (!task) return fail(400, "task must be an id or 8-char prefix")
   const reason = str(body.reason, REASON_MAX)
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
+  deps.wiring.noteSideEffect?.("task-cancel")
   const out = await (deps.taskCancel ?? cancelAgentTask)({ task, reason })
   companionLog(`[brain] task-cancel ${task.slice(0, 8)} → ${out.status} ${String(out.body.error ?? "ok")}`)
   return Response.json(out.body, { status: out.status })
@@ -300,6 +418,7 @@ async function leadOp(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (!body) return fail(400, "bad_json")
   const repo = typeof body.repo === "string" && leadSlug(body.repo) && (deps.checkout ?? leadCheckout)(body.repo) ? body.repo : null
   if (!repo) return fail(404, "no_lead_for_repo")
+  deps.wiring.noteSideEffect?.("lead")
   const out = await (deps.lead ?? brainLead).ensure(repo, `${LEAD_PREFIX}${repo}`)
   return Response.json(out, { status: out.ok ? 200 : 502 })
 }
@@ -315,6 +434,7 @@ async function deploy(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (!reason) return fail(400, `reason required (≤ ${REASON_MAX} chars)`)
   const run = deps.deploy !== undefined ? deps.deploy : autoDeploy()?.deployNow ?? null
   if (!run) return fail(404, "deploy_disabled")
+  deps.wiring.noteSideEffect?.("deploy")
   const out = await run(body.repo)
   companionLog(`[brain] deploy ${body.repo} (${reason.slice(0, 80)}) → ${out.ok ? out.result : out.error}`)
   const status = out.ok ? 200 : out.error === "deploy_in_progress" ? 409 : out.error === "repo_not_allowed" ? 400 : ["fetch_failed", "sync_start_failed", "restart_failed", "install_failed"].includes(out.error) ? 502 : 409
@@ -341,6 +461,7 @@ async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
   if (refused) return refused
   const body = await readJson(req)
   if (!body) return fail(400, "bad_json")
+  deps.wiring.noteSideEffect?.("ui")
   const out = await executeA2UIMacro(body, {
     gh: deps.gh,
     prMerge: deps.prMerge,
@@ -381,7 +502,12 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
     if (p === "/hooks/brain/propose") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
-      return propose(req, deps)
+      return propose(req, deps, false)
+    }
+    if (p === "/hooks/brain/dispatch") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return propose(req, deps, true)
     }
     if (p === "/hooks/brain/thread") {
       if (req.method !== "POST") return fail(405, "method_not_allowed")

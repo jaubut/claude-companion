@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, statSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
@@ -174,7 +174,12 @@ describe("brain family and Gemini 4 resolution", () => {
   })
 
   test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and ./bin/ui before -- prompt", () => {
-    expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual(["Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+    expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual([
+      "Bash(bin/ui:*)",
+      "Bash(./bin/ui:*)",
+      "Bash(bin/dispatch:*)",
+      "Bash(./bin/dispatch:*)",
+    ])
     const args = buildBrainClaudeArgs({
       prompt: "render card",
       sessionId: "sid-123",
@@ -182,7 +187,13 @@ describe("brain family and Gemini 4 resolution", () => {
       mode: "auto",
       model: "claude-opus-5-5",
     })
-    expect(args.slice(0, 3)).toEqual(["--allowedTools", "Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+    expect(args.slice(0, 5)).toEqual([
+      "--allowedTools",
+      "Bash(bin/ui:*)",
+      "Bash(./bin/ui:*)",
+      "Bash(bin/dispatch:*)",
+      "Bash(./bin/dispatch:*)",
+    ])
     expect(args.slice(-2)).toEqual(["--", "render card"])
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui email --to <addr>")
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui pr --repo <owner/name> --pr <n>")
@@ -372,5 +383,94 @@ describe("warm persistent Antigravity Brain session & CLI fallback", () => {
 
     await runner.stopAgent()
     setKv("brain_model", "auto")
+  })
+
+  test("streams live text deltas from agy step_update events and transcript PLANNER_RESPONSE steps with a stable draftTurnId across tool calls and fallback", async () => {
+    const savedHome = process.env.HOME
+    const tempHome = mkdtempSync(join(tmpdir(), "cc-agy-stream-home-"))
+    process.env.HOME = tempHome
+    try {
+      setKv("brain_model", "gemini-4-argon-low")
+      setKv("agy_conversation_id", "")
+      const convId = "agy-stream-conv-42"
+      const transcriptDir = join(tempHome, ".gemini", "antigravity-cli", "brain", convId, ".system_generated", "logs")
+      mkdirSync(transcriptDir, { recursive: true })
+      writeFileSync(
+        join(transcriptDir, "transcript.jsonl"),
+        [
+          JSON.stringify({ step_index: 1, type: "CORTEX_STEP_TYPE_PLANNER_RESPONSE", planner_response: { modified_response: "First block before tool." } }),
+          JSON.stringify({ step_index: 3, type: "CORTEX_STEP_TYPE_PLANNER_RESPONSE", planner_response: { response: "Second block after tool." } }),
+        ].join("\n") + "\n",
+      )
+
+      const deltas: Array<{ sid: string; draftTurnId: string; delta: string; text: string; blockIndex: number }> = []
+      const stops: Array<{ sid: string; reply: string; draftTurnId?: string }> = []
+      let persistentOpts: SpawnWorkerOpts | null = null
+
+      const runner = createHeadlessBrainRunner({
+        noteActivity: () => {},
+        onTextDelta: (sid, ev) => { deltas.push({ sid, ...ev }) },
+        onStop: async (sid, reply, draftTurnId) => { stops.push({ sid, reply, draftTurnId }) },
+        spawnPersistentWorker: (opts): SpawnedPersistentWorkerHandle => {
+          persistentOpts = opts
+          return {
+            pid: 9191,
+            writeLine() { return true },
+            closeInput() {},
+            kill() {},
+          }
+        },
+        log: () => {},
+      })
+
+      await runner.spawn("stream-brain-sid")
+      await runner.deliver("stream two blocks")
+
+      // Step 1: agent_response step_update resolved from transcript.jsonl
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 1, step_type: "agent_response", state: "DONE" },
+      }))
+      // Step 2: tool step_update in between
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 2, step_type: "tool", state: "ACTIVE", tool_name: "run_command", tool_info: { parameters: { CommandLine: "bin/thread --q test" } } },
+      }))
+      // Step 3: second agent_response step_update after the tool call
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 3, step_type: "agent_response", state: "DONE" },
+      }))
+      // Result event completes the turn
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "result",
+        result: { conversation_id: convId, status: "SUCCESS", response: "Second block after tool." },
+      }))
+      await Bun.sleep(5)
+
+      expect(deltas).toHaveLength(2)
+      const draftTurnId = deltas[0]!.draftTurnId
+      expect(draftTurnId).toBeTruthy()
+      expect(deltas[1]!.draftTurnId).toBe(draftTurnId)
+      expect(deltas[0]!.blockIndex).toBe(0)
+      expect(deltas[0]!.text).toBe("First block before tool.")
+      expect(deltas[1]!.blockIndex).toBe(1)
+      expect(deltas[1]!.text).toBe("First block before tool.\n\nSecond block after tool.")
+
+      expect(stops).toEqual([{
+        sid: expect.any(String),
+        reply: "First block before tool.\n\nSecond block after tool.",
+        draftTurnId,
+      }])
+
+      await runner.stopAgent()
+      setKv("brain_model", "auto")
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME
+      else process.env.HOME = savedHome
+    }
   })
 })

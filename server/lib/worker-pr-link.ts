@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { isLocalHandoffPendingSync } from "./brain-store"
 import { verifyHandoffClaim } from "./handoff-claim"
 import { companionLog } from "./log"
 import type { GhFn } from "./triage-pr"
@@ -70,6 +71,7 @@ async function attempt(deps: LinkDeps, t: LinkTarget, write: boolean): Promise<L
 export async function bindWorkerTask(exec: ExecFn, taskId: string, repo: string, claim: unknown): Promise<true | string | null> {
   const refused = claimRefusal({ taskId, repo, claim })
   if (refused) return refused
+  if (isLocalHandoffPendingSync(taskId)) return true
   try {
     return (await exec(`SELECT 1 FROM tasks WHERE ${OWNABLE}`, [taskId])).rows.length > 0 || "not_ownable"
   } catch {

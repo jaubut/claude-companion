@@ -1,74 +1,33 @@
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
+import {
+  BrainTurnAccumulator,
+  type SpawnedPersistentWorkerHandle,
+  defaultSpawnPersistentWorker,
+  extractStreamToolCall,
+  readAgyStepText,
+} from "../lib/brain-stream"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { companionLog } from "../lib/log"
 import { transcriptPath } from "../lib/session-titles"
 import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "../lib/sessions"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
-import { defaultKillPid } from "../lib/worker-pid"
 import { type SpawnWorkerOpts, type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
 import { DEFAULT_GEMINI_BRAIN_MODEL, agyBin, agyBrainSettings, buildHeadlessGeminiArgs, buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
 import { brainWorkers } from "./brain-workers"
 import { commandCatalog } from "../lib/command-catalog"
 
-export interface SpawnedPersistentWorkerHandle extends SpawnedWorkerHandle {
-  writeLine(line: string): boolean
-  closeInput(): void
-}
-
-export function defaultSpawnPersistentWorker(opts: SpawnWorkerOpts): SpawnedPersistentWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "pipe"], detached: true })
-  let outBuf = "", errBuf = "", closed = false
-  child.stdin?.on("error", () => { closed = true })
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
-  })
-  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
-  })
-  child.on("error", (err) => { closed = true; opts.onStderrLine(err.message); opts.onExit(1, null) })
-  child.on("close", (code, sig) => {
-    closed = true
-    if (outBuf.trim()) opts.onStdoutLine(outBuf)
-    if (errBuf.trim()) opts.onStderrLine(errBuf)
-    opts.onExit(code, sig)
-  })
-  return {
-    pid: child.pid ?? 0,
-    writeLine(line: string): boolean {
-      if (closed || !child.stdin || child.stdin.destroyed || !child.stdin.writable) return false
-      try {
-        child.stdin.write(line.endsWith("\n") ? line : `${line}\n`, "utf8")
-        return true
-      } catch {
-        closed = true
-        return false
-      }
-    },
-    closeInput() {
-      closed = true
-      try { child.stdin?.end() } catch { /* ignore */ }
-    },
-    kill(sig: NodeJS.Signals) {
-      closed = true
-      try { child.stdin?.destroy() } catch { /* ignore */ }
-      if (child.pid) defaultKillPid(child.pid, sig)
-    },
-  }
-}
+export { type SpawnedPersistentWorkerHandle, defaultSpawnPersistentWorker }
 
 /** The brain's cwd: its CLAUDE.md + .claude/settings.json (repo `brain/`, or COMPANION_BRAIN_DIR). */
 export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
 export const HEADLESS_BRAIN_PANE = "headless:brain"
 /** Runtime-injected --allowedTools for headless Brain CLI tools added without touching human-merge brain/.claude/settings.json. */
-export const BRAIN_RUNTIME_ALLOWED_TOOLS = ["Bash(bin/ui:*)", "Bash(./bin/ui:*)"] as const
+export const BRAIN_RUNTIME_ALLOWED_TOOLS = ["Bash(bin/ui:*)", "Bash(./bin/ui:*)", "Bash(bin/dispatch:*)", "Bash(./bin/dispatch:*)"] as const
 
 export function buildBrainClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string; mcpConfig?: string }): string[] {
   return ["--allowedTools", ...BRAIN_RUNTIME_ALLOWED_TOOLS, ...buildHeadlessClaudeArgs(opts)]
@@ -136,36 +95,17 @@ export const AGY_BOOT_PREFIX =
   "(3) NEVER call `schedule` or `sleep` (CI and worker completions wake you automatically via `[event]`). " +
   "(4) Delegate repo file grepping/archaeology to headless builders (`bin/worker dispatch`) — inspect only what is required to understand Jeremie's intent (e.g. Canvas screenshot) so Brain turns finish in 1 tool pass.]\n\n"
 
-function extractToolCall(line: string): { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string } | undefined {
-  try {
-    const raw = JSON.parse(line) as {
-      event?: string
-      step_update?: { step_type?: string; state?: string; tool_name?: string; step_index?: number; tool_info?: { name?: string; parameters?: Record<string, unknown> } }
-      message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> }
-    }
-    const tu = Array.isArray(raw.message?.content) ? raw.message.content.find((b) => b?.type === "tool_use" && typeof b.name === "string") : undefined
-    if (tu?.name) {
-      return { phase: "pre", tool: tu.name, input: (tu.input && typeof tu.input === "object" ? tu.input : {}), toolUseId: tu.id || `tu_${Date.now()}` }
-    }
-    if (raw.event === "step_update" && raw.step_update?.step_type === "tool" && raw.step_update.state === "ACTIVE") {
-      const tool = raw.step_update.tool_name || raw.step_update.tool_info?.name
-      const params = raw.step_update.tool_info?.parameters
-      if (typeof tool === "string" && tool) {
-        return {
-          phase: "pre",
-          tool,
-          input: (params && typeof params === "object" && !Array.isArray(params) ? params : {}),
-          toolUseId: `agy_tu_${raw.step_update.step_index ?? Date.now()}`,
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return undefined
+export interface BrainDeltaEvent {
+  draftTurnId: string
+  delta: string
+  text: string
+  blockIndex: number
 }
 
 export function createHeadlessBrainRunner(hooks: {
   noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void
-  onStop(sid: string, reply: string): Promise<void>
+  onTextDelta?(sid: string, ev: BrainDeltaEvent): void
+  onStop(sid: string, reply: string, draftTurnId?: string): Promise<void>
   spawnWorker?: (opts: SpawnWorkerOpts) => SpawnedWorkerHandle
   spawnPersistentWorker?: (opts: SpawnWorkerOpts) => SpawnedPersistentWorkerHandle
   prewarm?: boolean
@@ -181,6 +121,7 @@ export function createHeadlessBrainRunner(hooks: {
   let sessionStarted = false
   let brainAlive = false
   let activeHandle: SpawnedWorkerHandle | null = null
+  let activeOneShot: { acc: BrainTurnAccumulator; cancelled: boolean } | null = null
   let activePid: number | null = null
   let delivering = false
   let turnInFlight = false
@@ -188,7 +129,21 @@ export function createHeadlessBrainRunner(hooks: {
   let sweptLegacyHerdr = false
   let mcpConfig = ""
   let warmAgy: { handle: SpawnedPersistentWorkerHandle; model: string } | null = null
-  let activeWarmTurn: { prompt: string; turnModel: string; settled: boolean; cancelReason: "interrupt" | "stop" | null } | null = null
+  let activeWarmTurn: { prompt: string; turnModel: string; acc: BrainTurnAccumulator; settled: boolean; cancelReason: "interrupt" | "stop" | null } | null = null
+
+  function emitTurnText(acc: BrainTurnAccumulator, rawText: string, isDelta = false): void {
+    const pushed = acc.pushText(rawText, isDelta)
+    lastTurnReply = acc.currentText()
+    sessionStarted = true
+    if (pushed) {
+      hooks.onTextDelta?.(currentSessionId, {
+        draftTurnId: acc.draftTurnId,
+        delta: pushed.delta,
+        text: pushed.text,
+        blockIndex: pushed.blockIndex,
+      })
+    }
+  }
 
   function purgeStaleBrainSessions(): void {
     for (const s of listSessions()) {
@@ -251,7 +206,7 @@ export function createHeadlessBrainRunner(hooks: {
     }
   }
 
-  function startOneShotTurn(prompt: string, turnModel: string, family: BrainFamily): Response {
+  function startOneShotTurn(prompt: string, turnModel: string, family: BrainFamily, acc = new BrainTurnAccumulator()): Response {
     let tempPromptDir: string | null = null
     const cleanupPromptDir = (): void => {
       if (!tempPromptDir) return
@@ -263,9 +218,13 @@ export function createHeadlessBrainRunner(hooks: {
     const args = family === "gemini"
       ? buildHeadlessGeminiArgs({ prompt, sessionId: agyConversationId, resume: !!agyConversationId, mode: "auto", model: turnModel, settings: agyBrainSettings(), onTempDir: (d) => { tempPromptDir = d } })
       : buildBrainClaudeArgs({ prompt, sessionId: currentSessionId, resume: sessionStarted, mode: "auto", model: turnModel, mcpConfig: mcpConfig || undefined })
+    acc.resetBlocks()
     lastTurnReply = ""
     turnInFlight = true
+    const oneShotState = { acc, cancelled: false }
+    activeOneShot = oneShotState
     let settled = false
+    let resultReply = ""
     try {
       const handle = spawnOneShot({
         cmd,
@@ -274,7 +233,7 @@ export function createHeadlessBrainRunner(hooks: {
         env: { ...process.env, COMPANION_TASK_ID: BRAIN_AGENT, DISPATCH_HEADLESS: "1", COMPANION_BOARD_CALLER: "brain" },
         onStdoutLine(line) {
           commandCatalog.noteLine(BRAIN_DIR, line)
-          if (settled) return
+          if (settled || oneShotState.cancelled) return
           const ev = parseStreamJsonLine(line)
           if (!ev) return
           if (ev.sessionId) {
@@ -286,20 +245,24 @@ export function createHeadlessBrainRunner(hooks: {
             }
             sessionStarted = true
           }
-          if (ev.assistantText) {
-            lastTurnReply = ev.assistantText
-            sessionStarted = true
-          }
+          const chunk = ev.textDelta ?? ev.assistantText ?? (
+            family === "gemini" && ev.stepType === "agent_response" && typeof ev.stepIndex === "number"
+              ? readAgyStepText(agyConversationId, ev.stepIndex)
+              : null
+          )
+          if (chunk) emitTurnText(acc, chunk, !!ev.textDelta)
           if (ev.resultText) {
-            lastTurnReply = ev.resultText
+            resultReply = ev.resultText
+            lastTurnReply = acc.finalReply(ev.resultText)
             sessionStarted = true
           }
           if (ev.step) {
-            hooks.noteActivity(currentSessionId, extractToolCall(line))
+            acc.noteTool()
+            hooks.noteActivity(currentSessionId, extractStreamToolCall(line))
           }
         },
         onStderrLine() {
-          if (!settled) hooks.noteActivity(currentSessionId)
+          if (!settled && !oneShotState.cancelled) hooks.noteActivity(currentSessionId)
         },
         onExit(code, sig) {
           cleanupPromptDir()
@@ -308,14 +271,19 @@ export function createHeadlessBrainRunner(hooks: {
           delivering = false
           turnInFlight = false
           activeHandle = null
+          if (activeOneShot === oneShotState) activeOneShot = null
           activePid = null
+          if (oneShotState.cancelled) {
+            syncSession()
+            return
+          }
           if (code === 0 && !sig) sessionStarted = true
           syncSession()
           const sid = currentSessionId
-          const captured = lastTurnReply
+          const captured = acc.finalReply(resultReply || lastTurnReply)
           void (async () => {
             const reply = captured || await extractLastAssistantMessage(transcriptPath(BRAIN_DIR, sid)).catch(() => "")
-            await hooks.onStop(sid, reply)
+            await hooks.onStop(sid, reply, acc.draftTurnId)
           })()
         },
       })
@@ -332,6 +300,7 @@ export function createHeadlessBrainRunner(hooks: {
       delivering = false
       turnInFlight = false
       activeHandle = null
+      if (activeOneShot === oneShotState) activeOneShot = null
       activePid = null
       syncSession()
       return Response.json({ ok: false, error: (err as Error)?.message ?? String(err) }, { status: 500 })
@@ -366,16 +335,19 @@ export function createHeadlessBrainRunner(hooks: {
           const turn = activeWarmTurn
           if (!turn || turn.settled) return
           if (ev.sessionId) sessionStarted = true
-          if (ev.assistantText) {
-            lastTurnReply = ev.assistantText
-            sessionStarted = true
-          }
+          const chunk = ev.textDelta ?? ev.assistantText ?? (
+            ev.stepType === "agent_response" && typeof ev.stepIndex === "number"
+              ? readAgyStepText(agyConversationId, ev.stepIndex)
+              : null
+          )
+          if (chunk) emitTurnText(turn.acc, chunk, !!ev.textDelta)
           if (ev.resultText && !ev.isError) {
-            lastTurnReply = ev.resultText
+            lastTurnReply = turn.acc.finalReply(ev.resultText)
             sessionStarted = true
           }
           if (ev.step) {
-            hooks.noteActivity(currentSessionId, extractToolCall(line))
+            turn.acc.noteTool()
+            hooks.noteActivity(currentSessionId, extractStreamToolCall(line))
           }
           if (ev.done) {
             turn.settled = true
@@ -383,7 +355,7 @@ export function createHeadlessBrainRunner(hooks: {
             if (ev.isError && !lastTurnReply) {
               log(`[brain] warm agy turn error (${ev.resultText || "unknown"}), falling back to agy --print`)
               stopWarmAgy("stop")
-              startOneShotTurn(turn.prompt, turn.turnModel, "gemini")
+              startOneShotTurn(turn.prompt, turn.turnModel, "gemini", turn.acc)
               return
             }
             delivering = false
@@ -391,10 +363,10 @@ export function createHeadlessBrainRunner(hooks: {
             sessionStarted = true
             syncSession(turn.turnModel)
             const sid = currentSessionId
-            const captured = lastTurnReply
+            const captured = turn.acc.finalReply( (!ev.isError ? ev.resultText : undefined) || lastTurnReply)
             void (async () => {
               const reply = captured || await extractLastAssistantMessage(transcriptPath(BRAIN_DIR, sid)).catch(() => "")
-              await hooks.onStop(sid, reply)
+              await hooks.onStop(sid, reply, turn.acc.draftTurnId)
             })()
           }
         },
@@ -422,7 +394,7 @@ export function createHeadlessBrainRunner(hooks: {
             return
           }
           log(`[brain] warm agy exited mid-turn (code=${code ?? "null"} sig=${sig ?? "none"}), falling back to agy --print`)
-          startOneShotTurn(turn.prompt, turn.turnModel, "gemini")
+          startOneShotTurn(turn.prompt, turn.turnModel, "gemini", turn.acc)
         },
       })
       spawnedHandle = handle
@@ -511,6 +483,7 @@ export function createHeadlessBrainRunner(hooks: {
     async stopAgent(): Promise<void> {
       brainAlive = false
       stopWarmAgy("stop")
+      if (activeOneShot) { activeOneShot.cancelled = true; activeOneShot = null }
       const h = activeHandle
       activeHandle = null
       activePid = null
@@ -520,6 +493,7 @@ export function createHeadlessBrainRunner(hooks: {
     },
     async interrupt(): Promise<void> {
       stopWarmAgy("interrupt")
+      if (activeOneShot) { activeOneShot.cancelled = true; activeOneShot = null }
       const h = activeHandle
       activeHandle = null
       activePid = null
@@ -557,10 +531,11 @@ export function createHeadlessBrainRunner(hooks: {
         const prompt = agyBootPrefixSent ? text : `${AGY_BOOT_PREFIX}${text}`
         agyBootPrefixSent = true
         lastTurnReply = ""
+        const acc = new BrainTurnAccumulator()
         const warmHandle = ensureWarmAgy(turnModel)
         if (warmHandle) {
           turnInFlight = true
-          activeWarmTurn = { prompt, turnModel, settled: false, cancelReason: null }
+          activeWarmTurn = { prompt, turnModel, acc, settled: false, cancelReason: null }
           if (warmHandle.writeLine(formatGeminiStreamInput(prompt))) {
             clearWarmWatchdog()
             const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
@@ -570,12 +545,12 @@ export function createHeadlessBrainRunner(hooks: {
                 warmTurnWatchdog = null
                 if (!activeWarmTurn || activeWarmTurn !== watchedTurn || activeWarmTurn.settled) return
                 log(`[brain] warm agy turn exceeded ${maxTurnMs}ms watchdog — aborting stuck turn`)
-                const captured = lastTurnReply
+                const captured = watchedTurn.acc.finalReply(lastTurnReply)
                 stopWarmAgy("interrupt")
                 turnInFlight = false
                 delivering = false
                 syncSession()
-                void hooks.onStop(turnSid, captured || "")
+                void hooks.onStop(turnSid, captured || "", watchedTurn.acc.draftTurnId)
               }, maxTurnMs)
               warmTurnWatchdog.unref?.()
             }
@@ -587,7 +562,7 @@ export function createHeadlessBrainRunner(hooks: {
           log("[brain] warm agy stdin write failed, falling back to agy --print")
           stopWarmAgy("stop")
         }
-        return startOneShotTurn(prompt, turnModel, "gemini")
+        return startOneShotTurn(prompt, turnModel, "gemini", acc)
       }
       return startOneShotTurn(text, turnModel, "claude")
     },

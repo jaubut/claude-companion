@@ -18,10 +18,10 @@ import type { AgentLookup } from "./takeover-liveness"
 export const leadArgs = (name: string): string[] => ["--name", name, "--remote-control", name, "--model", "claude-sonnet-5-5", "--permission-mode", "auto", "--disallowedTools", "EnterPlanMode", "ExitPlanMode", "Edit", "Write", "MultiEdit", "NotebookEdit"]
 
 /** A lead works in its own clone: the sandbox limits its Bash to this tree, so the live checkout and brain/ stay out of reach. */
-export const leadDir = (repo: string, home = homedir()): string => join(home, "leads", repo)
+export const leadDir = (repo: string, home = process.env.HOME || homedir()): string => join(home, "leads", repo)
 
 /** A checkout this host can lead from: the lead's own clone, one the worker supervisor resolves (incl. the dispatch-repos cache), or a REPO_MAP checkout of that GitHub name (what the first spawn clones from). */
-export const leadCheckout = (repo: string, home = homedir(), entries = repoEntriesSafe()): boolean =>
+export const leadCheckout = (repo: string, home = process.env.HOME || homedir(), entries = repoEntriesSafe()): boolean =>
   isDir(leadDir(repo, home)) || defaultResolveRepoDir(repo, home) !== null || entries.some((e) => githubName(e)?.toLowerCase() === repo.toLowerCase() && isDir(e.path))
 
 const settingsFile = (dir: string): string => join(dir, ".claude", "settings.local.json")

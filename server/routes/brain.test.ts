@@ -98,7 +98,7 @@ afterAll(() => {
 beforeEach(() => {
   turso.exec("DELETE FROM tasks; DELETE FROM agent_activity; DELETE FROM notes")
   turso.query("INSERT INTO notes (id, folder, title, ref_code, status) VALUES ('projects/dash', 'projects', 'TLS Dashboard', 'PRJ-WCLS', 'active')").run()
-  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent; DELETE FROM brain_outbox")
+  sqlite.exec("DELETE FROM brain_proposals; DELETE FROM brain_consent; DELETE FROM brain_outbox; DELETE FROM brain_handoffs; DELETE FROM brain_sync_outbox")
 })
 
 async function call(method: string, path: string, body?: unknown, opts: { peer?: string; headers?: Record<string, string> } = {}) {
@@ -701,5 +701,211 @@ describe("POST /hooks/brain/lead", () => {
       const r = await call("POST", "/hooks/brain/lead", { repo }, { headers: AUTH })
       expect([r.status, r.json.error]).toEqual([404, "no_lead_for_repo"])
     }
+  })
+})
+
+describe("POST /hooks/brain/dispatch & atomic <20ms local handoff + async tls-sqld outbox sync (#3)", () => {
+  test("persists handoff locally and dispatches worker in <20ms even when tls-sqld has 250ms RTT, binds worker claim immediately, and is idempotent on retry", async () => {
+    const { addBrainHandoff, flushBrainSyncOutbox } = await import("../wiring/brain-handoff")
+    const { bindWorkerTask } = await import("../lib/worker-pr-link")
+    const { detectColumns } = await import("../lib/dispatch-tasks")
+    const cols = await detectColumns(query)
+
+    // Simulated slow tls-sqld (250ms network RTT per query/exec)
+    const slowExec: ExecFn = async (sql, args) => {
+      await Bun.sleep(250)
+      return exec(sql, args)
+    }
+    const slowQuery: QueryFn = async (sql, args) => (await slowExec(sql, args)).rows
+    const slowDispatch = { query: slowQuery, exec: slowExec, columns: async () => cols } as unknown as DispatchWiring
+
+    const dispatchedCalls: Array<Record<string, unknown>> = []
+    let taskRunning = false
+    const fakeWorkerMcp = {
+      async handleRpc(rpc: Record<string, unknown>) {
+        const params = rpc.params as { name: string; arguments: Record<string, unknown> }
+        if (params.name === "dispatch_task") {
+          if (taskRunning) {
+            return {
+              jsonrpc: "2.0" as const,
+              id: 1,
+              result: {
+                content: [],
+                structuredContent: { ok: false, error: "task_already_running", status: 409 },
+              },
+            }
+          }
+          taskRunning = true
+          dispatchedCalls.push(params.arguments)
+          // Verify bindWorkerTask succeeds immediately (<1ms) while slowExec (250ms) is still in flight!
+          const bound = await bindWorkerTask(
+            slowExec,
+            String(params.arguments.task_id),
+            String(params.arguments.repo),
+            String(params.arguments.claim ?? ""),
+          )
+          expect(bound).toBe(true)
+          return {
+            jsonrpc: "2.0" as const,
+            id: 1,
+            result: {
+              content: [],
+              structuredContent: {
+                ok: true,
+                host: "local",
+                claim: "verified",
+                task: { taskId: params.arguments.task_id, repo: params.arguments.repo, status: "running" },
+              },
+            },
+          }
+        }
+        if (params.name === "get_task") {
+          return {
+            jsonrpc: "2.0" as const,
+            id: 2,
+            result: {
+              content: [],
+              structuredContent: {
+                ok: true,
+                host: "local",
+                task: { taskId: params.arguments.task_id, repo: "claude-companion", status: "running" },
+              },
+            },
+          }
+        }
+        return null
+      },
+    }
+
+    const fastRoute = route.createBrainRoute({
+      wiring: harnessWiring,
+      sessions: () => sessions,
+      enabled: () => true,
+      handoff: (p) => addBrainHandoff({ ...p, syncBudgetMs: 5 }, slowDispatch),
+      workerMcp: fakeWorkerMcp as unknown as NonNullable<Parameters<typeof route.createBrainRoute>[0]>["workerMcp"],
+    })
+
+    const t = voiceTurn()
+    sqlite.query("INSERT OR REPLACE INTO brain_outbox (turn_id, state, created_at, updated_at) VALUES (?, 'typed', 0, 0)").run(t.id)
+
+    const t0 = performance.now()
+    const req1 = new Request("http://localhost:4245/hooks/brain/dispatch", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...AUTH },
+      body: JSON.stringify({
+        sourceTurnId: t.id,
+        noteId: "projects/dash",
+        repo: "claude-companion",
+        title: "Fast dispatch test",
+        prompt: "Build atomic local dispatch",
+        reasoning: "latency budget <20ms",
+        family: "gemini",
+      }),
+    })
+    recordPeer(req1, "127.0.0.1")
+    const res1 = (await fastRoute(req1, new URL(req1.url)))!
+    const elapsedMs = performance.now() - t0
+    const json1 = await res1.json() as Record<string, unknown>
+
+    // Returned in <20ms despite 250ms remote tls-sqld RTT
+    expect(elapsedMs).toBeLessThan(20)
+    expect(res1.status).toBe(200)
+    expect(json1).toMatchObject({
+      ok: true,
+      origin: "jeremie",
+      dispatched: true,
+      claimStatus: "verified",
+      replay: false,
+      sync: "pending",
+    })
+    expect(dispatchedCalls).toHaveLength(1)
+
+    // Idempotent retry while running returns 200 with Idempotent-Replayed: true and does NOT re-dispatch
+    const req2 = new Request("http://localhost:4245/hooks/brain/dispatch", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...AUTH },
+      body: JSON.stringify({
+        sourceTurnId: t.id,
+        noteId: "projects/dash",
+        repo: "claude-companion",
+        title: "Fast dispatch test",
+        prompt: "Build atomic local dispatch",
+        reasoning: "latency budget <20ms",
+        family: "gemini",
+      }),
+    })
+    recordPeer(req2, "127.0.0.1")
+    const res2 = (await fastRoute(req2, new URL(req2.url)))!
+    const json2 = await res2.json() as Record<string, unknown>
+    expect(res2.status).toBe(200)
+    expect(res2.headers.get("Idempotent-Replayed")).toBe("true")
+    expect(json2).toMatchObject({
+      ok: true,
+      taskId: json1.taskId,
+      claim: json1.claim,
+      dispatched: true,
+      replay: true,
+    })
+    expect(dispatchedCalls).toHaveLength(1)
+
+    // Wait for background sync to finish and verify row landed in turso
+    await Bun.sleep(600)
+    await flushBrainSyncOutbox(slowDispatch)
+    const syncedRow = turso.query("SELECT id, origin, assignee FROM tasks WHERE id = ?").get(String(json1.taskId))
+    expect(syncedRow).toEqual({
+      id: String(json1.taskId),
+      origin: "jeremie",
+      assignee: "handoff",
+    })
+  })
+
+  test("durable outbox recovers when tls-sqld fails transiently during handoff and syncs on retry", async () => {
+    const { addBrainHandoff, flushBrainSyncOutbox } = await import("../wiring/brain-handoff")
+    const { detectColumns } = await import("../lib/dispatch-tasks")
+    const cols = await detectColumns(query)
+
+    let failCount = 1
+    const flakyExec: ExecFn = async (sql, args) => {
+      if (/INSERT\s+OR\s+IGNORE\s+INTO\s+tasks/i.test(sql) && failCount > 0) {
+        failCount--
+        throw new Error("tls-sqld transient 503")
+      }
+      return exec(sql, args)
+    }
+    const flakyQuery: QueryFn = async (sql, args) => (await flakyExec(sql, args)).rows
+    const flakyDispatch = { query: flakyQuery, exec: flakyExec, columns: async () => cols } as unknown as DispatchWiring
+
+    const t = voiceTurn()
+    sqlite.query("INSERT OR REPLACE INTO brain_outbox (turn_id, state, created_at, updated_at) VALUES (?, 'typed', 0, 0)").run(t.id)
+
+    const out = await addBrainHandoff({
+      title: "Outbox retry task",
+      prompt: "Verify durable outbox retry",
+      noteId: "projects/dash",
+      reasoning: "outbox test",
+      sourceTurnId: t.id,
+      repo: "claude-companion",
+      taskId: "custom-task-id-0001",
+    }, flakyDispatch)
+
+    // Local handoff succeeds immediately with sync: "pending" while queued in brain_sync_outbox
+    expect(out.status).toBe(200)
+    expect(out.body).toMatchObject({
+      ok: true,
+      taskId: "custom-task-id-0001",
+      origin: "jeremie",
+      replay: false,
+      sync: "pending",
+    })
+    expect(turso.query("SELECT COUNT(*) AS n FROM tasks WHERE id = 'custom-task-id-0001'").get()).toEqual({ n: 0 })
+
+    // Flushing the outbox after transient error clears syncs the row to tls-sqld
+    const syncedCount = await flushBrainSyncOutbox(flakyDispatch, Date.now() + 5_000)
+    expect(syncedCount).toBe(1)
+    expect(turso.query("SELECT id, origin, assignee FROM tasks WHERE id = 'custom-task-id-0001'").get()).toEqual({
+      id: "custom-task-id-0001",
+      origin: "jeremie",
+      assignee: "handoff",
+    })
   })
 })

@@ -16,7 +16,7 @@
 # the pid of the brain's claude process (found by walking up the parent chain).
 set -euo pipefail
 
-TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT="" HANDOFF="" REPO=""
+TURN="" NOTE="" TITLE="" PROMPT="" WHY="" AGENT="" HANDOFF="" REPO="" TASK_ID="" DISPATCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --turn) TURN="$2"; shift 2 ;;
@@ -26,7 +26,9 @@ while [ $# -gt 0 ]; do
     --why) WHY="$2"; shift 2 ;;
     --agent) AGENT="$2"; shift 2 ;;
     --handoff) HANDOFF=1; shift ;;
+    --dispatch) DISPATCH=1; shift ;;
     --repo) REPO="$2"; shift 2 ;;
+    --task) TASK_ID="$2"; shift 2 ;;
     *) echo "propose: unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -35,27 +37,29 @@ if [ -z "$TURN" ] || [ -z "$NOTE" ] || [ -z "$PROMPT" ]; then
   exit 2
 fi
 
-# The claude process this command runs under: walk PPID until a `claude` command.
+# The agent process this command runs under: walk PPID until a `claude`, `codex`, `gemini` or `agy` command.
 claude_pid() {
   local pid=$PPID comm
   for _ in $(seq 1 12); do
     [ -z "$pid" ] || [ "$pid" -le 1 ] && break
     comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
     case "$comm" in
-      *claude*) echo "$pid"; return 0 ;;
+      *claude*|*codex*|*gemini*|*agy*) echo "$pid"; return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
   done
   echo "${PPID}"
 }
 
-BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" HANDOFF="$HANDOFF" REPO="$REPO" python3 -c '
+BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" AGENT="$AGENT" HANDOFF="$HANDOFF" DISPATCH="$DISPATCH" REPO="$REPO" TASK_ID="$TASK_ID" python3 -c '
 import json, os
 b = {"sourceTurnId": os.environ["TURN"], "noteId": os.environ["NOTE"], "prompt": os.environ["PROMPT"],
      "title": os.environ["TITLE"], "reasoning": os.environ["WHY"]}
 if os.environ["AGENT"]: b["agent"] = os.environ["AGENT"]
 if os.environ["HANDOFF"]: b["handoff"] = True
+if os.environ["DISPATCH"]: b["dispatch"] = True
 if os.environ["REPO"]: b["repo"] = os.environ["REPO"]
+if os.environ["TASK_ID"]: b["taskId"] = os.environ["TASK_ID"]
 print(json.dumps(b))')
 
 curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/propose" \

@@ -13,7 +13,7 @@ import { workerMcp } from "../wiring/worker-mcp"
 export interface WorkerMcpRouteDeps {
   mcp?: WorkerMcpHandler
   enabled?: () => boolean
-  wiring?: Pick<BrainWiring, "status">
+  wiring?: Pick<BrainWiring, "status"> & Partial<Pick<BrainWiring, "noteSideEffect">>
   sessions?: () => Array<Pick<Session, "key" | "sessionId" | "pid" | "taskId">>
 }
 
@@ -82,6 +82,13 @@ export function createWorkerMcpRoute(deps: WorkerMcpRouteDeps = {}) {
     const tool = (body.params as { name?: unknown } | undefined)?.name
     if (url.pathname !== "/api/mcp/workers" && typeof tool === "string" && RECEIPT_TOOLS.has(tool)) {
       return Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+    }
+    if (
+      url.pathname === "/hooks/brain/workers-mcp" &&
+      req.headers.get("x-companion-task-id")?.trim() === BRAIN_AGENT &&
+      (tool === "dispatch_task" || tool === "interrupt_task")
+    ) {
+      ;(deps.wiring ?? brainWiring).noteSideEffect?.(`worker:${tool}`)
     }
 
     const res = await mcp.handleRpc(body)
