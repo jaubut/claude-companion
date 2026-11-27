@@ -1554,7 +1554,7 @@
         },
         {
           "path": "lib/brain-turn-harness.ts",
-          "lines": 389,
+          "lines": 416,
           "kind": "lib",
           "exports": [
             "SpawnedPersistentWorkerHandle",
@@ -1569,6 +1569,7 @@
             "preserveModelTurnThoughtSignatures",
             "sanitizeGemini4GenerationConfig",
             "PreparedBrainTurn",
+            "sanitizeInteractiveBatchText",
             "prepareBrainTurn",
             "TurnMetricsTracker",
             "startBrainTurnMetrics"
@@ -1582,8 +1583,10 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/context-pruning.ts",
             "lib/feature-flags.ts",
             "lib/orchestrator-telemetry.ts",
+            "lib/session-summaries.ts",
             "lib/skill-loader.ts",
             "lib/skill-prompt.ts",
             "lib/skill-retrieval.ts",
@@ -2251,6 +2254,37 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/context-pruning.ts",
+          "lines": 224,
+          "kind": "lib",
+          "exports": [
+            "Message",
+            "PrunedContextResult",
+            "HOT_WINDOW_TURNS",
+            "WARM_WINDOW_END_TURNS",
+            "WARM_TOOL_COMPACT_CHAR_THRESHOLD",
+            "DEFAULT_CONTEXT_TOKEN_CEILING",
+            "stripStackTraces",
+            "isOperationalEventText",
+            "filterInteractiveMessages",
+            "turnsToInteractiveMessages",
+            "pruneContext"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/orchestrator-chat.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4123,7 +4157,7 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 278,
+          "lines": 308,
           "kind": "lib",
           "exports": [
             "BrainDecision",
@@ -4142,8 +4176,12 @@
           "apiCalls": [],
           "imports": [
             "lib/brain.ts",
+            "lib/context-pruning.ts",
+            "lib/feature-flags.ts",
             "lib/orchestrator-chat.ts",
-            "lib/cli-json.ts"
+            "lib/orchestrator-db.ts",
+            "lib/cli-json.ts",
+            "lib/session-summaries.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5702,6 +5740,35 @@
           "apiCalls": [],
           "imports": [
             "lib/sessions.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/session-summaries.ts",
+          "lines": 200,
+          "kind": "lib",
+          "exports": [
+            "DEFAULT_COLD_SUMMARIZER_MODEL",
+            "SessionSummaryRecord",
+            "ensureSessionSummariesTable",
+            "upsertSessionSummary",
+            "getSessionSummarySync",
+            "getSessionSummary",
+            "ColdTurnSummaryInput",
+            "ColdSummarizerFn",
+            "buildDeterministicColdSummary",
+            "foldColdSessionSummary"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9564,7 +9631,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 567,
+          "lines": 568,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -11902,6 +11969,7 @@
             "lib/a2ui-actions.ts",
             "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
+            "lib/context-pruning.ts",
             "lib/dispatch-poller.ts",
             "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
@@ -12026,6 +12094,7 @@
             "lib/a2ui.ts",
             "lib/brain-event-triage.ts",
             "lib/brain-workers.ts",
+            "lib/context-pruning.ts",
             "routes/brain.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
@@ -13722,6 +13791,7 @@
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
+            "lib/session-summaries.ts",
             "wiring/brain-headless.ts"
           ]
         },
@@ -13803,10 +13873,24 @@
             "lib/brain-turn-harness.ts"
           ]
         },
+        "isOperationalEventText": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
         "getFeatureFlags": {
           "module": "lib/feature-flags.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "getSessionSummarySync": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/orchestrator-brain.ts"
           ]
         },
         "loadStaticBrainRules": {
@@ -14281,6 +14365,31 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "wiring/pane-mirror.ts"
+          ]
+        },
+        "ModelTurnPart": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/context-pruning.ts"
+          ]
+        },
+        "isBrainInternalEvent": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/context-pruning.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "brainText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/context-pruning.ts",
+            "lib/front-door.ts",
+            "lib/orchestrator-brain.ts",
+            "routes/brain.ts",
+            "wiring/brain.ts"
           ]
         },
         "readSecretValue": {
@@ -14840,15 +14949,6 @@
           "module": "lib/jev-route-log.ts",
           "callers": [
             "lib/front-door.ts"
-          ]
-        },
-        "brainText": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "lib/front-door.ts",
-            "lib/orchestrator-brain.ts",
-            "routes/brain.ts",
-            "wiring/brain.ts"
           ]
         },
         "RouteDecision": {
@@ -15508,6 +15608,30 @@
           "callers": [
             "lib/ops-triage.ts",
             "wiring/brain-headless.ts"
+          ]
+        },
+        "turnsToInteractiveMessages": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "pruneContext": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "buildDeterministicColdSummary": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "upsertSessionSummary": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
           ]
         },
         "parseCliResult": {
@@ -16729,6 +16853,12 @@
             "routes/hooks.ts",
             "routes/hooks.ts#POST /hooks/session-end",
             "wiring/brain-headless.ts"
+          ]
+        },
+        "PostgresSqlTag": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/session-summaries.ts"
           ]
         },
         "WaitingKind": {
@@ -19942,14 +20072,6 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/orchestrator.ts"
-          ]
-        },
-        "isBrainInternalEvent": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "listPipeline": {

@@ -518,6 +518,7 @@ export function createHeadlessBrainRunner(hooks: {
         bootPrefixSent: bootSent,
         legacyAgyBootPrefix: AGY_BOOT_PREFIX,
         brainDir: BRAIN_DIR,
+        sessionId: turnSid,
         alreadyInjectedSkillIds: sessionInjectedSkills,
         registry: hooks.skillRegistry,
         env: hooks.env,

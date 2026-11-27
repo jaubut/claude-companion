@@ -1,5 +1,7 @@
+import type { Database } from "bun:sqlite"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { isOperationalEventText } from "./context-pruning"
 import { getFeatureFlags } from "./feature-flags"
 import {
   type ExtractedUsageMetrics,
@@ -11,6 +13,7 @@ import {
   recordTurnMetrics,
   sanitizeThinkingLevel,
 } from "./orchestrator-telemetry"
+import { getSessionSummarySync } from "./session-summaries"
 import { defaultSkillsDir, loadSkillManifests } from "./skill-loader"
 import { buildBaselineStaticSystemPrompt, buildDynamicSystemPrompt, loadStaticBrainRules, renderFullSkillBlock } from "./skill-prompt"
 import { DynamicSkillRegistry } from "./skill-retrieval"
@@ -230,12 +233,23 @@ export interface PreparedBrainTurn {
   routeTier: string
 }
 
+/** Strip mixed operational `[event ...]` lines when a batch carries interactive user `[turn ...]` lines. */
+export function sanitizeInteractiveBatchText(rawText: string): string {
+  const lines = rawText.split("\n")
+  const hasUserTurnLine = lines.some((l) => /^\s*\[turn\s+[^\]]+\]/.test(l))
+  if (!hasUserTurnLine) return rawText
+  const kept = lines.filter((l) => !isOperationalEventText(l))
+  return kept.join("\n").trim() || rawText
+}
+
 export function prepareBrainTurn(opts: {
   userText: string
   family: "claude" | "gemini"
   bootPrefixSent: boolean
   legacyAgyBootPrefix: string
   brainDir: string
+  sessionId?: string
+  summaryDb?: Database
   alreadyInjectedSkillIds?: ReadonlySet<string>
   historySummary?: string[]
   registry?: DynamicSkillRegistry
@@ -243,11 +257,24 @@ export function prepareBrainTurn(opts: {
 }): PreparedBrainTurn {
   const flags = getFeatureFlags(opts.env)
   const registry = opts.registry ?? getSharedSkillRegistry(defaultSkillsDir(opts.env))
+  const effectiveUserText = flags.ENABLE_CONTEXT_PRUNING
+    ? sanitizeInteractiveBatchText(opts.userText)
+    : opts.userText
+  const cleanHistory = flags.ENABLE_CONTEXT_PRUNING
+    ? (opts.historySummary ?? []).filter((h) => !isOperationalEventText(h))
+    : opts.historySummary
+  const coldSummary = flags.ENABLE_CONTEXT_PRUNING && !opts.bootPrefixSent && opts.sessionId
+    ? getSessionSummarySync(opts.summaryDb, opts.sessionId)
+    : null
+  const coldBlock = coldSummary?.summaryMarkdown
+    ? `### Cold Session Summary\n${coldSummary.summaryMarkdown}\n\n`
+    : ""
 
   if (!flags.ENABLE_DYNAMIC_SKILLS) {
+    const baseText = `${coldBlock}${effectiveUserText}`
     const promptToSend = opts.family === "gemini" && !opts.bootPrefixSent
-      ? `${opts.legacyAgyBootPrefix}${opts.userText}`
-      : opts.userText
+      ? `${opts.legacyAgyBootPrefix}${baseText}`
+      : baseText
     const staticRules = loadStaticBrainRules(opts.brainDir)
     const baseline = buildBaselineStaticSystemPrompt({
       staticRules,
@@ -256,9 +283,9 @@ export function prepareBrainTurn(opts: {
     return {
       promptToSend,
       injectedSkillCount: baseline.injectedSkillCount,
-      estimatedPromptTokens: baseline.totalPromptTokens + estimateTokens(opts.userText),
+      estimatedPromptTokens: baseline.totalPromptTokens + estimateTokens(baseText),
       newlyInjectedSkillIds: [],
-      routeTier: "baseline",
+      routeTier: flags.ENABLE_CONTEXT_PRUNING ? "context_pruning_p2" : "baseline",
     }
   }
 
@@ -266,18 +293,18 @@ export function prepareBrainTurn(opts: {
   const built = buildDynamicSystemPrompt({
     staticRules,
     registry,
-    currentInput: opts.userText,
-    historySummary: opts.historySummary,
+    currentInput: effectiveUserText,
+    historySummary: cleanHistory,
   })
 
   if (!opts.bootPrefixSent) {
-    const promptToSend = `${built.fullPrompt}\n\n---\n\n${opts.userText}`
+    const promptToSend = `${built.fullPrompt}\n\n---\n\n${coldBlock}${effectiveUserText}`
     return {
       promptToSend,
       injectedSkillCount: built.injectedSkillCount,
-      estimatedPromptTokens: built.totalPromptTokens + estimateTokens(opts.userText),
+      estimatedPromptTokens: built.totalPromptTokens + estimateTokens(`${coldBlock}${effectiveUserText}`),
       newlyInjectedSkillIds: built.selection.activeSkills.map((s) => s.id),
-      routeTier: "dynamic_skills_p1",
+      routeTier: flags.ENABLE_CONTEXT_PRUNING ? "dynamic_p1_pruned_p2" : "dynamic_skills_p1",
     }
   }
 
@@ -288,14 +315,14 @@ export function prepareBrainTurn(opts: {
   const deltaSuffix = deltaSkills.length > 0
     ? `[Active Turn Skills]\n${deltaSkills.map(renderFullSkillBlock).join("\n\n")}\n\n`
     : ""
-  const promptToSend = `${deltaSuffix}${opts.userText}`
+  const promptToSend = `${deltaSuffix}${effectiveUserText}`
 
   return {
     promptToSend,
     injectedSkillCount: built.injectedSkillCount,
-    estimatedPromptTokens: built.totalPromptTokens + estimateTokens(opts.userText),
+    estimatedPromptTokens: built.totalPromptTokens + estimateTokens(effectiveUserText),
     newlyInjectedSkillIds: deltaSkills.map((s) => s.id),
-    routeTier: "dynamic_skills_p1",
+    routeTier: flags.ENABLE_CONTEXT_PRUNING ? "dynamic_p1_pruned_p2" : "dynamic_skills_p1",
   }
 }
 
