@@ -45,7 +45,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `lib/brain-turn-harness.ts` | 446 | lib | 16 | state: let defaultRegistry, let defaultRegistryDir |
+| `lib/brain-turn-harness.ts` | 449 | lib | 16 | state: let defaultRegistry, let defaultRegistryDir |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
@@ -279,6 +279,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/merge-gate.test-util.ts` | 65 | lib | 13 |  |
 | `lib/session-pane.ts` | 64 | lib | 4 |  |
 | `wiring/shell-sessions.ts` | 64 | lib | 5 | state: bridges: WeakMap, attaches: Map · emits: sessions · listens: onShellSessions |
+| `lib/feature-flags.ts` | 63 | lib | 6 |  |
 | `wiring/dispatch.ts` | 63 | lib | 3 | state: polledListeners: Set · emits: brain_trace |
 | `lib/auto-compact-guard.ts` | 61 | lib | 5 |  |
 | `lib/herdr-workspace.ts` | 61 | lib | 3 | state: releasing: Set |
@@ -286,7 +287,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/dispatch-worker.ts` | 60 | lib | 6 | state: cache: Map |
 | `lib/herdr-socket.ts` | 60 | lib | 3 | state: let seq |
 | `lib/session-identity.ts` | 59 | lib | 6 |  |
-| `lib/feature-flags.ts` | 58 | lib | 6 |  |
 | `wiring/brain-handoff.ts` | 58 | lib | 3 |  |
 | `lib/handoff-claim.ts` | 57 | lib | 4 |  |
 | `lib/session-archive.ts` | 57 | lib | 5 |  |

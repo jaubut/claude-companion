@@ -1644,7 +1644,7 @@
         },
         {
           "path": "lib/brain-turn-harness.ts",
-          "lines": 446,
+          "lines": 449,
           "kind": "lib",
           "exports": [
             "SpawnedPersistentWorkerHandle",
@@ -2921,7 +2921,7 @@
         },
         {
           "path": "lib/feature-flags.ts",
-          "lines": 58,
+          "lines": 63,
           "kind": "lib",
           "exports": [
             "FeatureFlags",
