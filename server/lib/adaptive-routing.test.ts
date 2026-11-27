@@ -469,7 +469,12 @@ describe("Spec §5 Final Definition of Done (All 4 Feature Flags Enabled)", () =
       legacyAgyBootPrefix: "[System]\n",
       brainDir,
       registry,
-      env: { ENABLE_DYNAMIC_SKILLS: "false" },
+      env: {
+        ENABLE_DYNAMIC_SKILLS: "false",
+        ENABLE_CONTEXT_PRUNING: "false",
+        ENABLE_LANE_ISOLATION: "false",
+        ENABLE_ADAPTIVE_ROUTING: "false",
+      },
     })
     const upgradedPrepared = prepareBrainTurn({
       userText: "What is our deployment status?",

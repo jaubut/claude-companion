@@ -269,6 +269,8 @@ describe("Phase 1: DynamicSkillRegistry, Prefix-Invariant Prompt & >= 60% Token 
         env: {
           COMPANION_BRAIN_FAMILY: "gemini",
           ENABLE_DYNAMIC_SKILLS: enableDynamic ? "true" : "false",
+          ENABLE_CONTEXT_PRUNING: "false",
+          ENABLE_ADAPTIVE_ROUTING: "false",
         },
         now: () => clock,
         spawnPersistentWorker: (opts: SpawnWorkerOpts): SpawnedPersistentWorkerHandle => ({
