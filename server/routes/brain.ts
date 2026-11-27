@@ -2,10 +2,17 @@ import type { A2UIEngineDeps } from "../lib/a2ui"
 import { executeA2UIMacro, handleA2UIAction } from "../lib/a2ui-macros"
 import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
-import { runBrainLoadSkill } from "../lib/brain-turn-harness"
+import { getSharedSkillRegistry, runBrainLoadSkill } from "../lib/brain-turn-harness"
 import { latestRows, rowsSince } from "../lib/brain-trace"
+import {
+  type Gemini4StreamTransport,
+  createFetchGemini4Transport,
+  createOrchestratorSseResponse,
+  runGemini4OrchestratorTurn,
+} from "../lib/gemini4-orchestrator-client"
 import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
+import { createNativeLoadSkillTool } from "../lib/native-tool-executor"
 import { searchThread } from "../lib/orchestrator-chat"
 import type { OutboundSender, OutboundStore } from "../lib/outbound"
 import { type Session, listSessions } from "../lib/sessions"
@@ -95,6 +102,8 @@ export interface BrainRouteDeps {
   a2uiEngine?: A2UIEngineDeps
   /** Stage 2 dynamic skill loader seam for `bin/load-skill` (`POST /hooks/brain/load-skill`). */
   loadSkill?: typeof runBrainLoadSkill
+  /** Gemini 4 SSE stream transport seam for `POST /api/brain/stream`. */
+  streamTransport?: Gemini4StreamTransport
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -391,6 +400,27 @@ async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response>
   })
 }
 
+async function streamBrainTurn(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const prompt = str(body.prompt, PROMPT_MAX)
+  if (!prompt) return fail(400, "prompt required")
+  const sessionId = str(body.sessionId, 128) ?? deps.wiring.status().sessionKey ?? "brain_sse"
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? ""
+  const transport = deps.streamTransport ?? (apiKey ? createFetchGemini4Transport({ apiKey }) : null)
+  if (!transport) return fail(503, "gemini_transport_unavailable")
+  const registry = getSharedSkillRegistry()
+  return createOrchestratorSseResponse(
+    runGemini4OrchestratorTurn({
+      sessionId,
+      userPrompt: prompt,
+      tools: [createNativeLoadSkillTool(registry)],
+      transport,
+      signal: req.signal,
+    }),
+  )
+}
+
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
   return async (req: Request, url: URL): Promise<Response | null> => {
     const p = url.pathname
@@ -478,6 +508,7 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       return Response.json({ ok: true, mode: s.mode, sessions: s.sessions, foreign: s.foreign })
     }
     if (req.method !== "POST") return fail(405, "method_not_allowed")
+    if (p === "/api/brain/stream") return streamBrainTurn(req, deps)
     if (p === "/api/brain/a2ui/action") return a2uiAction(req, deps)
     if (p === "/api/brain/pause") return Response.json({ ok: true, brain: deps.wiring.pause() })
     if (p === "/api/brain/resume") return Response.json({ ok: true, brain: deps.wiring.resume() })

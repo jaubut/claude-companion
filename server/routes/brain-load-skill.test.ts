@@ -80,3 +80,52 @@ describe("POST /hooks/brain/load-skill", () => {
     })
   })
 })
+
+describe("POST /api/brain/stream", () => {
+  test("streams Spec §4 OrchestratorEvent SSE frames behind Bearer auth", async () => {
+    const { getAuthToken } = await import("../lib/auth")
+    const { parseOrchestratorSseChunk } = await import("../lib/gemini4-orchestrator-client")
+    const token = getAuthToken()
+
+    const sseRoute = createBrainRoute({
+      wiring: {
+        status: () => ({ state: "up", sessionKey: "headless:brain", since: 1, restarts: 0, host: "test", activity: null }),
+      } as unknown as BrainWiring,
+      enabled: () => true,
+      sessions: () => [],
+      streamTransport: async function* () {
+        yield {
+          parts: [
+            { thought: true, text: "Evaluating query..." },
+            { text: "System is healthy." },
+          ],
+          usage: { promptTokens: 512, cachedPromptTokens: 0, outputTokens: 12 },
+        }
+      },
+    })
+
+    const unauthReq = new Request("http://127.0.0.1:4245/api/brain/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "Health check?" }),
+    })
+    expect((await sseRoute(unauthReq, new URL(unauthReq.url)))?.status).toBe(401)
+
+    const authReq = new Request("http://127.0.0.1:4245/api/brain/stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt: "Health check?", sessionId: "sse_route_test" }),
+    })
+    const res = await sseRoute(authReq, new URL(authReq.url))
+    expect(res?.status).toBe(200)
+    expect(res?.headers.get("Content-Type")).toContain("text/event-stream")
+
+    const bodyText = await res!.text()
+    const events = parseOrchestratorSseChunk(bodyText)
+    expect(events.map((e) => e.event)).toEqual(["thinking_delta", "text_delta", "done"])
+  })
+})
+

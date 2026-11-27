@@ -359,6 +359,34 @@
           "externals": []
         },
         {
+          "path": "lib/adaptive-routing.ts",
+          "lines": 155,
+          "kind": "lib",
+          "exports": [
+            "GEMINI4_UNIFIED_CONTEXT_WINDOW",
+            "GEMINI4_DEFAULT_SYNC_OUTPUT_LIMIT",
+            "TIER1_TIMEOUT_MS",
+            "TIER2_TIMEOUT_MS",
+            "TIER3_MIN_TIMEOUT_MS",
+            "RouteTier",
+            "Gemini4ThinkingLevel",
+            "AdaptiveRouteDecision",
+            "classifyPromptRoute",
+            "resolveTierTimeoutMs"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-telemetry.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/agent-notifications.ts",
           "lines": 191,
           "kind": "lib",
@@ -1616,7 +1644,7 @@
         },
         {
           "path": "lib/brain-turn-harness.ts",
-          "lines": 416,
+          "lines": 446,
           "kind": "lib",
           "exports": [
             "SpawnedPersistentWorkerHandle",
@@ -1645,6 +1673,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/adaptive-routing.ts",
             "lib/context-pruning.ts",
             "lib/feature-flags.ts",
             "lib/orchestrator-telemetry.ts",
@@ -3070,6 +3099,39 @@
           "externals": []
         },
         {
+          "path": "lib/gemini4-orchestrator-client.ts",
+          "lines": 531,
+          "kind": "lib",
+          "exports": [
+            "OrchestratorEvent",
+            "formatOrchestratorSseEvent",
+            "parseOrchestratorSseChunk",
+            "createOrchestratorSseResponse",
+            "Gemini4NativeRequestPayload",
+            "buildGemini4NativeRequest",
+            "Gemini4StreamChunk",
+            "Gemini4StreamTransport",
+            "createFetchGemini4Transport",
+            "agyStreamLineToOrchestratorEvents"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/adaptive-routing.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/feature-flags.ts",
+            "lib/native-tool-executor.ts",
+            "lib/orchestrator-telemetry.ts",
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/git-config-lock.ts",
           "lines": 83,
           "kind": "lib",
@@ -4146,6 +4208,39 @@
             "lib/triage.ts",
             "lib/triage-engine.ts",
             "lib/turso.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/native-tool-executor.ts",
+          "lines": 203,
+          "kind": "lib",
+          "exports": [
+            "MAX_TOOL_SCHEMA_RETRIES",
+            "ToolSchema",
+            "InferToolSchema",
+            "ToolExecutionResult",
+            "GeminiFunctionDeclaration",
+            "NativeToolDefinition",
+            "ExecutableNativeTool",
+            "defineNativeTool",
+            "executeNativeTool",
+            "FieldRule",
+            "defineObjectToolSchema",
+            "buildGeminiFunctionDeclarations",
+            "createNativeLoadSkillTool"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts",
+            "lib/skill-retrieval.ts",
+            "lib/skill-tools.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7685,7 +7780,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 591,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -8456,7 +8551,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 493,
+          "lines": 524,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -8475,8 +8570,10 @@
             "lib/brain.ts",
             "lib/brain-turn-harness.ts",
             "lib/brain-trace.ts",
+            "lib/gemini4-orchestrator-client.ts",
             "lib/link-media.ts",
             "lib/log.ts",
+            "lib/native-tool-executor.ts",
             "lib/orchestrator-chat.ts",
             "lib/outbound.ts",
             "lib/sessions.ts",
@@ -9693,7 +9790,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 568,
+          "lines": 573,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -12617,6 +12714,14 @@
             "lib/activity.ts"
           ]
         },
+        "sanitizeThinkingLevel": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/adaptive-routing.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
         "companionDbPath": {
           "module": "lib/db-path.ts",
           "callers": [
@@ -12640,6 +12745,7 @@
             "lib/agent-notifications.ts",
             "lib/brain-lane-isolation.ts",
             "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
             "lib/session-summaries.ts",
             "wiring/brain-headless.ts",
             "wiring/brain.ts"
@@ -13959,7 +14065,8 @@
         "ExtractedUsageMetrics": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "TurnMetricRecord": {
@@ -13971,31 +14078,29 @@
         "extractUsageMetrics": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "isGemini4Model": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "logTurnMetrics": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "recordTurnMetrics": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
-          ]
-        },
-        "sanitizeThinkingLevel": {
-          "module": "lib/orchestrator-telemetry.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "defaultKillPid": {
@@ -14011,6 +14116,7 @@
           "module": "lib/skill-retrieval.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
+            "lib/native-tool-executor.ts",
             "lib/skill-prompt.ts",
             "lib/skill-tools.ts",
             "wiring/brain-headless.ts"
@@ -14037,7 +14143,8 @@
         "executeLoadSkill": {
           "module": "lib/skill-tools.ts",
           "callers": [
-            "lib/brain-turn-harness.ts"
+            "lib/brain-turn-harness.ts",
+            "lib/native-tool-executor.ts"
           ]
         },
         "isOperationalEventText": {
@@ -14050,6 +14157,7 @@
           "module": "lib/feature-flags.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
             "lib/orchestrator-brain.ts",
             "wiring/brain.ts"
           ]
@@ -14059,6 +14167,13 @@
           "callers": [
             "lib/brain-turn-harness.ts",
             "lib/orchestrator-brain.ts"
+          ]
+        },
+        "classifyPromptRoute": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "loadStaticBrainRules": {
@@ -14077,6 +14192,7 @@
           "module": "lib/skill-types.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
             "lib/skill-loader.ts",
             "lib/skill-prompt.ts"
           ]
@@ -14538,7 +14654,8 @@
         "ModelTurnPart": {
           "module": "lib/brain-turn-harness.ts",
           "callers": [
-            "lib/context-pruning.ts"
+            "lib/context-pruning.ts",
+            "lib/gemini4-orchestrator-client.ts"
           ]
         },
         "isBrainInternalEvent": {
@@ -15157,6 +15274,78 @@
             "lib/front-door.ts"
           ]
         },
+        "AdaptiveRouteDecision": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "GEMINI4_DEFAULT_SYNC_OUTPUT_LIMIT": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "GEMINI4_UNIFIED_CONTEXT_WINDOW": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "Gemini4ThinkingLevel": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "RouteTier": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "resolveTierTimeoutMs": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "ModelTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "preserveModelTurnThoughtSignatures": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "sanitizeGemini4GenerationConfig": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "ExecutableNativeTool": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "MAX_TOOL_SCHEMA_RETRIES": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "buildGeminiFunctionDeclarations": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
         "WorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -15687,6 +15876,26 @@
           "callers": [
             "lib/mytask-triage.ts",
             "routes/my-tasks.ts#* /api/tasks/mine"
+          ]
+        },
+        "SafeParseResult": {
+          "module": "lib/feature-flags.ts",
+          "callers": [
+            "lib/native-tool-executor.ts",
+            "lib/skill-tools.ts",
+            "lib/skill-types.ts"
+          ]
+        },
+        "loadSkillToolDefinition": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/native-tool-executor.ts"
+          ]
+        },
+        "LoadSkillInputSchema": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/native-tool-executor.ts"
           ]
         },
         "fetchNoteImage": {
@@ -17173,13 +17382,6 @@
           "module": "lib/skill-types.ts",
           "callers": [
             "lib/skill-retrieval.ts"
-          ]
-        },
-        "SafeParseResult": {
-          "module": "lib/feature-flags.ts",
-          "callers": [
-            "lib/skill-tools.ts",
-            "lib/skill-types.ts"
           ]
         },
         "oneLine": {
@@ -19113,6 +19315,24 @@
             "routes/body.ts#POST /api/body/investigate"
           ]
         },
+        "Gemini4StreamTransport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "createFetchGemini4Transport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "createOrchestratorSseResponse": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "BrainWiring": {
           "module": "wiring/brain.ts",
           "callers": [
@@ -19252,6 +19472,18 @@
         },
         "executeA2UIMacro": {
           "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "getSharedSkillRegistry": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "createNativeLoadSkillTool": {
+          "module": "lib/native-tool-executor.ts",
           "callers": [
             "routes/brain.ts"
           ]

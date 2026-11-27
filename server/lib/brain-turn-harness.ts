@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { classifyPromptRoute } from "./adaptive-routing"
 import { isOperationalEventText } from "./context-pruning"
 import { getFeatureFlags } from "./feature-flags"
 import {
@@ -231,6 +232,9 @@ export interface PreparedBrainTurn {
   estimatedPromptTokens: number
   newlyInjectedSkillIds: string[]
   routeTier: string
+  routedModelId?: string
+  thinkingLevel?: string
+  timeoutMs?: number
 }
 
 /** Strip mixed operational `[event ...]` lines when a batch carries interactive user `[turn ...]` lines. */
@@ -269,6 +273,9 @@ export function prepareBrainTurn(opts: {
   const coldBlock = coldSummary?.summaryMarkdown
     ? `### Cold Session Summary\n${coldSummary.summaryMarkdown}\n\n`
     : ""
+  const adaptive = flags.ENABLE_ADAPTIVE_ROUTING
+    ? classifyPromptRoute(effectiveUserText, { env: opts.env })
+    : null
 
   if (!flags.ENABLE_DYNAMIC_SKILLS) {
     const baseText = `${coldBlock}${effectiveUserText}`
@@ -285,7 +292,14 @@ export function prepareBrainTurn(opts: {
       injectedSkillCount: baseline.injectedSkillCount,
       estimatedPromptTokens: baseline.totalPromptTokens + estimateTokens(baseText),
       newlyInjectedSkillIds: [],
-      routeTier: flags.ENABLE_CONTEXT_PRUNING ? "context_pruning_p2" : "baseline",
+      routeTier: adaptive?.tier ?? (flags.ENABLE_CONTEXT_PRUNING ? "context_pruning_p2" : "baseline"),
+      ...(adaptive
+        ? {
+            routedModelId: adaptive.cliModelFlag,
+            thinkingLevel: adaptive.thinkingLevel,
+            timeoutMs: adaptive.timeoutMs,
+          }
+        : {}),
     }
   }
 
@@ -296,6 +310,7 @@ export function prepareBrainTurn(opts: {
     currentInput: effectiveUserText,
     historySummary: cleanHistory,
   })
+  const fallbackTier = flags.ENABLE_CONTEXT_PRUNING ? "dynamic_p1_pruned_p2" : "dynamic_skills_p1"
 
   if (!opts.bootPrefixSent) {
     const promptToSend = `${built.fullPrompt}\n\n---\n\n${coldBlock}${effectiveUserText}`
@@ -304,7 +319,14 @@ export function prepareBrainTurn(opts: {
       injectedSkillCount: built.injectedSkillCount,
       estimatedPromptTokens: built.totalPromptTokens + estimateTokens(`${coldBlock}${effectiveUserText}`),
       newlyInjectedSkillIds: built.selection.activeSkills.map((s) => s.id),
-      routeTier: flags.ENABLE_CONTEXT_PRUNING ? "dynamic_p1_pruned_p2" : "dynamic_skills_p1",
+      routeTier: adaptive?.tier ?? fallbackTier,
+      ...(adaptive
+        ? {
+            routedModelId: adaptive.cliModelFlag,
+            thinkingLevel: adaptive.thinkingLevel,
+            timeoutMs: adaptive.timeoutMs,
+          }
+        : {}),
     }
   }
 
@@ -322,7 +344,14 @@ export function prepareBrainTurn(opts: {
     injectedSkillCount: built.injectedSkillCount,
     estimatedPromptTokens: built.totalPromptTokens + estimateTokens(effectiveUserText),
     newlyInjectedSkillIds: deltaSkills.map((s) => s.id),
-    routeTier: flags.ENABLE_CONTEXT_PRUNING ? "dynamic_p1_pruned_p2" : "dynamic_skills_p1",
+    routeTier: adaptive?.tier ?? fallbackTier,
+    ...(adaptive
+      ? {
+          routedModelId: adaptive.cliModelFlag,
+          thinkingLevel: adaptive.thinkingLevel,
+          timeoutMs: adaptive.timeoutMs,
+        }
+      : {}),
   }
 }
 
@@ -336,6 +365,7 @@ export function startBrainTurnMetrics(opts: {
   sessionId: string
   routeTier: string
   modelId: string
+  thinkingLevel?: string
   injectedSkillCount: number
   estimatedPromptTokens: number
   now?: () => number
@@ -394,7 +424,7 @@ export function startBrainTurnMetrics(opts: {
         sessionId: opts.sessionId,
         routeTier: opts.routeTier,
         modelId: opts.modelId,
-        thinkingLevel: sanitizeThinkingLevel(opts.modelId),
+        thinkingLevel: sanitizeThinkingLevel(opts.modelId, opts.thinkingLevel),
         injectedSkillCount: opts.injectedSkillCount,
         promptTokens: usage?.promptTokens ?? opts.estimatedPromptTokens,
         cachedPromptTokens: usage?.cachedPromptTokens ?? 0,

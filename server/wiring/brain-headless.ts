@@ -202,6 +202,7 @@ export function createHeadlessBrainRunner(hooks: {
       sessionId: sid,
       routeTier: prepared.routeTier,
       modelId: turnModel,
+      thinkingLevel: prepared.thinkingLevel,
       injectedSkillCount: prepared.injectedSkillCount,
       estimatedPromptTokens: prepared.estimatedPromptTokens,
       now: hooks.now,
@@ -524,17 +525,21 @@ export function createHeadlessBrainRunner(hooks: {
         env: hooks.env,
       })
       for (const sid of prepared.newlyInjectedSkillIds) sessionInjectedSkills.add(sid)
+      const effectiveModel = family === "gemini" && prepared.routedModelId && getKv("brain_model_explicit_effort") !== "1"
+        ? prepared.routedModelId
+        : turnModel
       if (family === "gemini") {
         const prompt = prepared.promptToSend
         agyBootPrefixSent = true
         lastTurnReply = ""
-        const warmHandle = ensureWarmAgy(turnModel)
+        const warmHandle = ensureWarmAgy(effectiveModel)
         if (warmHandle) {
           turnInFlight = true
-          activeWarmTurn = { prompt, turnModel, prepared, metrics: newMetrics(turnSid, turnModel, prepared), settled: false, cancelReason: null }
+          activeWarmTurn = { prompt, turnModel: effectiveModel, prepared, metrics: newMetrics(turnSid, effectiveModel, prepared), settled: false, cancelReason: null }
           if (warmHandle.writeLine(formatGeminiStreamInput(prompt))) {
             clearWarmWatchdog()
-            const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
+            const baseMaxMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
+            const maxTurnMs = baseMaxMs > 0 && prepared.timeoutMs ? Math.max(baseMaxMs, prepared.timeoutMs) : baseMaxMs
             if (maxTurnMs > 0) {
               const watchedTurn = activeWarmTurn
               warmTurnWatchdog = setTimeout(() => {
@@ -553,15 +558,15 @@ export function createHeadlessBrainRunner(hooks: {
             }
             delivering = false
             activePid = warmHandle.pid > 1 ? warmHandle.pid : null
-            syncSession(turnModel)
+            syncSession(effectiveModel)
             return Response.json({ ok: true })
           }
           log("[brain] warm agy stdin write failed, falling back to agy --print")
           stopWarmAgy("stop")
         }
-        return startOneShotTurn(prompt, turnModel, "gemini", prepared)
+        return startOneShotTurn(prompt, effectiveModel, "gemini", prepared)
       }
-      return startOneShotTurn(prepared.promptToSend, turnModel, "claude", prepared)
+      return startOneShotTurn(prepared.promptToSend, effectiveModel, "claude", prepared)
     },
   }
 }
