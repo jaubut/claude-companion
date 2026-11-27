@@ -1,74 +1,42 @@
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
+import {
+  type PreparedBrainTurn,
+  type SpawnedPersistentWorkerHandle,
+  type TurnMetricsTracker,
+  defaultSpawnPersistentWorker,
+  extractBrainStreamToolCall,
+  prepareBrainTurn,
+  startBrainTurnMetrics,
+} from "../lib/brain-turn-harness"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { companionLog } from "../lib/log"
+import type { TelemetrySink } from "../lib/orchestrator-telemetry"
 import { transcriptPath } from "../lib/session-titles"
 import { type Session, listSessions, recordSession, removeSessionByKey, setSessionModel } from "../lib/sessions"
+import type { DynamicSkillRegistry } from "../lib/skill-retrieval"
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
-import { defaultKillPid } from "../lib/worker-pid"
 import { type SpawnWorkerOpts, type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
 import { DEFAULT_GEMINI_BRAIN_MODEL, agyBin, agyBrainSettings, buildHeadlessGeminiArgs, buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
 import { brainWorkers } from "./brain-workers"
 import { commandCatalog } from "../lib/command-catalog"
 
-export interface SpawnedPersistentWorkerHandle extends SpawnedWorkerHandle {
-  writeLine(line: string): boolean
-  closeInput(): void
-}
-
-export function defaultSpawnPersistentWorker(opts: SpawnWorkerOpts): SpawnedPersistentWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "pipe"], detached: true })
-  let outBuf = "", errBuf = "", closed = false
-  child.stdin?.on("error", () => { closed = true })
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
-  })
-  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
-  })
-  child.on("error", (err) => { closed = true; opts.onStderrLine(err.message); opts.onExit(1, null) })
-  child.on("close", (code, sig) => {
-    closed = true
-    if (outBuf.trim()) opts.onStdoutLine(outBuf)
-    if (errBuf.trim()) opts.onStderrLine(errBuf)
-    opts.onExit(code, sig)
-  })
-  return {
-    pid: child.pid ?? 0,
-    writeLine(line: string): boolean {
-      if (closed || !child.stdin || child.stdin.destroyed || !child.stdin.writable) return false
-      try {
-        child.stdin.write(line.endsWith("\n") ? line : `${line}\n`, "utf8")
-        return true
-      } catch {
-        closed = true
-        return false
-      }
-    },
-    closeInput() {
-      closed = true
-      try { child.stdin?.end() } catch { /* ignore */ }
-    },
-    kill(sig: NodeJS.Signals) {
-      closed = true
-      try { child.stdin?.destroy() } catch { /* ignore */ }
-      if (child.pid) defaultKillPid(child.pid, sig)
-    },
-  }
-}
+export { type SpawnedPersistentWorkerHandle, defaultSpawnPersistentWorker }
 
 /** The brain's cwd: its CLAUDE.md + .claude/settings.json (repo `brain/`, or COMPANION_BRAIN_DIR). */
 export const BRAIN_DIR = process.env.COMPANION_BRAIN_DIR?.trim() || join(import.meta.dir, "..", "..", "brain")
 export const HEADLESS_BRAIN_PANE = "headless:brain"
 /** Runtime-injected --allowedTools for headless Brain CLI tools added without touching human-merge brain/.claude/settings.json. */
-export const BRAIN_RUNTIME_ALLOWED_TOOLS = ["Bash(bin/ui:*)", "Bash(./bin/ui:*)"] as const
+export const BRAIN_RUNTIME_ALLOWED_TOOLS = [
+  "Bash(bin/ui:*)",
+  "Bash(./bin/ui:*)",
+  "Bash(bin/load-skill:*)",
+  "Bash(./bin/load-skill:*)",
+] as const
 
 export function buildBrainClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string; mcpConfig?: string }): string[] {
   return ["--allowedTools", ...BRAIN_RUNTIME_ALLOWED_TOOLS, ...buildHeadlessClaudeArgs(opts)]
@@ -136,33 +104,6 @@ export const AGY_BOOT_PREFIX =
   "(3) NEVER call `schedule` or `sleep` (CI and worker completions wake you automatically via `[event]`). " +
   "(4) Delegate repo file grepping/archaeology to headless builders (`bin/worker dispatch`) — inspect only what is required to understand Jeremie's intent (e.g. Canvas screenshot) so Brain turns finish in 1 tool pass.]\n\n"
 
-function extractToolCall(line: string): { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string } | undefined {
-  try {
-    const raw = JSON.parse(line) as {
-      event?: string
-      step_update?: { step_type?: string; state?: string; tool_name?: string; step_index?: number; tool_info?: { name?: string; parameters?: Record<string, unknown> } }
-      message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> }
-    }
-    const tu = Array.isArray(raw.message?.content) ? raw.message.content.find((b) => b?.type === "tool_use" && typeof b.name === "string") : undefined
-    if (tu?.name) {
-      return { phase: "pre", tool: tu.name, input: (tu.input && typeof tu.input === "object" ? tu.input : {}), toolUseId: tu.id || `tu_${Date.now()}` }
-    }
-    if (raw.event === "step_update" && raw.step_update?.step_type === "tool" && raw.step_update.state === "ACTIVE") {
-      const tool = raw.step_update.tool_name || raw.step_update.tool_info?.name
-      const params = raw.step_update.tool_info?.parameters
-      if (typeof tool === "string" && tool) {
-        return {
-          phase: "pre",
-          tool,
-          input: (params && typeof params === "object" && !Array.isArray(params) ? params : {}),
-          toolUseId: `agy_tu_${raw.step_update.step_index ?? Date.now()}`,
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return undefined
-}
-
 export function createHeadlessBrainRunner(hooks: {
   noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void
   onStop(sid: string, reply: string): Promise<void>
@@ -170,6 +111,10 @@ export function createHeadlessBrainRunner(hooks: {
   spawnPersistentWorker?: (opts: SpawnWorkerOpts) => SpawnedPersistentWorkerHandle
   prewarm?: boolean
   log?: (msg: string) => void
+  telemetrySink?: TelemetrySink
+  skillRegistry?: DynamicSkillRegistry
+  env?: Record<string, string | undefined>
+  now?: () => number
 }) {
   const spawnOneShot = hooks.spawnWorker ?? defaultSpawnWorker
   const spawnPersistent = hooks.spawnPersistentWorker ?? defaultSpawnPersistentWorker
@@ -187,8 +132,9 @@ export function createHeadlessBrainRunner(hooks: {
   let lastTurnReply = ""
   let sweptLegacyHerdr = false
   let mcpConfig = ""
+  const sessionInjectedSkills = new Set<string>()
   let warmAgy: { handle: SpawnedPersistentWorkerHandle; model: string } | null = null
-  let activeWarmTurn: { prompt: string; turnModel: string; settled: boolean; cancelReason: "interrupt" | "stop" | null } | null = null
+  let activeWarmTurn: { prompt: string; turnModel: string; prepared: PreparedBrainTurn; metrics: TurnMetricsTracker; settled: boolean; cancelReason: "interrupt" | "stop" | null } | null = null
 
   function purgeStaleBrainSessions(): void {
     for (const s of listSessions()) {
@@ -210,7 +156,7 @@ export function createHeadlessBrainRunner(hooks: {
 
   function syncSession(activeTurnModel?: string): Session | null {
     if (!brainAlive || !currentSessionId) return null
-    const model = activeTurnModel || sessionModel || resolveBrainSessionModel(getBrainModel())
+    const model = activeTurnModel || sessionModel || resolveBrainSessionModel(getBrainModel(hooks.env), hooks.env)
     const family = brainFamilyForModel(model)
     const s = recordSession({
       cwd: BRAIN_DIR,
@@ -251,7 +197,19 @@ export function createHeadlessBrainRunner(hooks: {
     }
   }
 
-  function startOneShotTurn(prompt: string, turnModel: string, family: BrainFamily): Response {
+  function newMetrics(sid: string, turnModel: string, prepared: PreparedBrainTurn): TurnMetricsTracker {
+    return startBrainTurnMetrics({
+      sessionId: sid,
+      routeTier: prepared.routeTier,
+      modelId: turnModel,
+      thinkingLevel: prepared.thinkingLevel,
+      injectedSkillCount: prepared.injectedSkillCount,
+      estimatedPromptTokens: prepared.estimatedPromptTokens,
+      now: hooks.now,
+    })
+  }
+
+  function startOneShotTurn(prompt: string, turnModel: string, family: BrainFamily, prepared: PreparedBrainTurn): Response {
     let tempPromptDir: string | null = null
     const cleanupPromptDir = (): void => {
       if (!tempPromptDir) return
@@ -265,6 +223,7 @@ export function createHeadlessBrainRunner(hooks: {
       : buildBrainClaudeArgs({ prompt, sessionId: currentSessionId, resume: sessionStarted, mode: "auto", model: turnModel, mcpConfig: mcpConfig || undefined })
     lastTurnReply = ""
     turnInFlight = true
+    const metrics = newMetrics(currentSessionId, turnModel, prepared)
     let settled = false
     try {
       const handle = spawnOneShot({
@@ -275,6 +234,7 @@ export function createHeadlessBrainRunner(hooks: {
         onStdoutLine(line) {
           commandCatalog.noteLine(BRAIN_DIR, line)
           if (settled) return
+          metrics.noteStreamLine(line)
           const ev = parseStreamJsonLine(line)
           if (!ev) return
           if (ev.sessionId) {
@@ -295,7 +255,7 @@ export function createHeadlessBrainRunner(hooks: {
             sessionStarted = true
           }
           if (ev.step) {
-            hooks.noteActivity(currentSessionId, extractToolCall(line))
+            hooks.noteActivity(currentSessionId, extractBrainStreamToolCall(line))
           }
         },
         onStderrLine() {
@@ -313,6 +273,7 @@ export function createHeadlessBrainRunner(hooks: {
           syncSession()
           const sid = currentSessionId
           const captured = lastTurnReply
+          void metrics.finish({ isError: code !== 0 || !!sig, telemetrySink: hooks.telemetrySink }).catch(() => undefined)
           void (async () => {
             const reply = captured || await extractLastAssistantMessage(transcriptPath(BRAIN_DIR, sid)).catch(() => "")
             await hooks.onStop(sid, reply)
@@ -365,6 +326,7 @@ export function createHeadlessBrainRunner(hooks: {
           }
           const turn = activeWarmTurn
           if (!turn || turn.settled) return
+          turn.metrics.noteStreamLine(line)
           if (ev.sessionId) sessionStarted = true
           if (ev.assistantText) {
             lastTurnReply = ev.assistantText
@@ -375,7 +337,7 @@ export function createHeadlessBrainRunner(hooks: {
             sessionStarted = true
           }
           if (ev.step) {
-            hooks.noteActivity(currentSessionId, extractToolCall(line))
+            hooks.noteActivity(currentSessionId, extractBrainStreamToolCall(line))
           }
           if (ev.done) {
             turn.settled = true
@@ -383,7 +345,7 @@ export function createHeadlessBrainRunner(hooks: {
             if (ev.isError && !lastTurnReply) {
               log(`[brain] warm agy turn error (${ev.resultText || "unknown"}), falling back to agy --print`)
               stopWarmAgy("stop")
-              startOneShotTurn(turn.prompt, turn.turnModel, "gemini")
+              startOneShotTurn(turn.prompt, turn.turnModel, "gemini", turn.prepared)
               return
             }
             delivering = false
@@ -392,6 +354,7 @@ export function createHeadlessBrainRunner(hooks: {
             syncSession(turn.turnModel)
             const sid = currentSessionId
             const captured = lastTurnReply
+            void turn.metrics.finish({ isError: !!ev.isError, telemetrySink: hooks.telemetrySink }).catch(() => undefined)
             void (async () => {
               const reply = captured || await extractLastAssistantMessage(transcriptPath(BRAIN_DIR, sid)).catch(() => "")
               await hooks.onStop(sid, reply)
@@ -422,7 +385,7 @@ export function createHeadlessBrainRunner(hooks: {
             return
           }
           log(`[brain] warm agy exited mid-turn (code=${code ?? "null"} sig=${sig ?? "none"}), falling back to agy --print`)
-          startOneShotTurn(turn.prompt, turn.turnModel, "gemini")
+          startOneShotTurn(turn.prompt, turn.turnModel, "gemini", turn.prepared)
         },
       })
       spawnedHandle = handle
@@ -444,7 +407,7 @@ export function createHeadlessBrainRunner(hooks: {
       if (!m) return
       const prevModel = sessionModel
       const prevFamily = sessionModel ? brainFamilyForModel(sessionModel) : null
-      const nextModel = resolveBrainSessionModel(m)
+      const nextModel = resolveBrainSessionModel(m, hooks.env)
       const nextFamily = brainFamilyForModel(nextModel)
       setKv("brain_model", m)
       setKv("brain_model_explicit_effort", /(?:-high|\(high\))$/i.test(m) ? "1" : "")
@@ -453,11 +416,10 @@ export function createHeadlessBrainRunner(hooks: {
         stopWarmAgy("stop")
       }
       if (prevFamily && prevFamily !== nextFamily) {
-        // Family switched (Claude <-> Gemini): start a fresh CLI conversation without
-        // breaking brain.ts's adopted sessionId or leaking a Claude UUID into agy.
         stopWarmAgy("stop")
         agyConversationId = ""
         agyBootPrefixSent = false
+        sessionInjectedSkills.clear()
         setKv("agy_conversation_id", "")
         sessionStarted = false
       }
@@ -481,15 +443,14 @@ export function createHeadlessBrainRunner(hooks: {
       stopWarmAgy("stop")
       ensureFolderTrusted(BRAIN_DIR)
       mcpConfig = writeBrainMcpConfig()
-      sessionModel = resolveBrainSessionModel(getBrainModel())
+      sessionModel = resolveBrainSessionModel(getBrainModel(hooks.env), hooks.env)
       const family = brainFamilyForModel(sessionModel)
       const savedAgyConv = resume ? (getKv("agy_conversation_id") || "").trim() : ""
       const hasResumeTranscript = family === "gemini"
         ? !!savedAgyConv
         : !!resume && existsSync(transcriptPath(BRAIN_DIR, resume))
+      sessionInjectedSkills.clear()
       if (!hasResumeTranscript) {
-        // Purge stale brain sessions from the in-memory registry so tick() never
-        // re-adopts the previous session id after a rollover or fresh restart.
         purgeStaleBrainSessions()
         agyConversationId = ""
         agyBootPrefixSent = false
@@ -544,26 +505,41 @@ export function createHeadlessBrainRunner(hooks: {
       }
       delivering = true
       const turnSid = currentSessionId
-      // Keep one consistent model for the lifetime of a session so Anthropic's
-      // per-model prompt cache stays warm (no Opus <-> Sonnet mid-session thrashing).
-      const turnModel = sessionModel ?? resolveBrainSessionModel(getBrainModel())
+      const turnModel = sessionModel ?? resolveBrainSessionModel(getBrainModel(hooks.env), hooks.env)
       sessionModel = turnModel
       const family = brainFamilyForModel(turnModel)
       if (!brainAlive || currentSessionId !== turnSid) {
         delivering = false
         return Response.json({ ok: false, error: "brain_not_running" }, { status: 503 })
       }
+      const bootSent = family === "gemini" ? agyBootPrefixSent : sessionStarted
+      const prepared = prepareBrainTurn({
+        userText: text,
+        family,
+        bootPrefixSent: bootSent,
+        legacyAgyBootPrefix: AGY_BOOT_PREFIX,
+        brainDir: BRAIN_DIR,
+        sessionId: turnSid,
+        alreadyInjectedSkillIds: sessionInjectedSkills,
+        registry: hooks.skillRegistry,
+        env: hooks.env,
+      })
+      for (const sid of prepared.newlyInjectedSkillIds) sessionInjectedSkills.add(sid)
+      const effectiveModel = family === "gemini" && prepared.routedModelId && getKv("brain_model_explicit_effort") !== "1"
+        ? prepared.routedModelId
+        : turnModel
       if (family === "gemini") {
-        const prompt = agyBootPrefixSent ? text : `${AGY_BOOT_PREFIX}${text}`
+        const prompt = prepared.promptToSend
         agyBootPrefixSent = true
         lastTurnReply = ""
-        const warmHandle = ensureWarmAgy(turnModel)
+        const warmHandle = ensureWarmAgy(effectiveModel)
         if (warmHandle) {
           turnInFlight = true
-          activeWarmTurn = { prompt, turnModel, settled: false, cancelReason: null }
+          activeWarmTurn = { prompt, turnModel: effectiveModel, prepared, metrics: newMetrics(turnSid, effectiveModel, prepared), settled: false, cancelReason: null }
           if (warmHandle.writeLine(formatGeminiStreamInput(prompt))) {
             clearWarmWatchdog()
-            const maxTurnMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
+            const baseMaxMs = Number(process.env.COMPANION_BRAIN_TURN_MAX_MS ?? 300_000)
+            const maxTurnMs = baseMaxMs > 0 && prepared.timeoutMs ? Math.max(baseMaxMs, prepared.timeoutMs) : baseMaxMs
             if (maxTurnMs > 0) {
               const watchedTurn = activeWarmTurn
               warmTurnWatchdog = setTimeout(() => {
@@ -571,6 +547,7 @@ export function createHeadlessBrainRunner(hooks: {
                 if (!activeWarmTurn || activeWarmTurn !== watchedTurn || activeWarmTurn.settled) return
                 log(`[brain] warm agy turn exceeded ${maxTurnMs}ms watchdog — aborting stuck turn`)
                 const captured = lastTurnReply
+                void watchedTurn.metrics.finish({ isError: true, telemetrySink: hooks.telemetrySink }).catch(() => undefined)
                 stopWarmAgy("interrupt")
                 turnInFlight = false
                 delivering = false
@@ -581,15 +558,15 @@ export function createHeadlessBrainRunner(hooks: {
             }
             delivering = false
             activePid = warmHandle.pid > 1 ? warmHandle.pid : null
-            syncSession(turnModel)
+            syncSession(effectiveModel)
             return Response.json({ ok: true })
           }
           log("[brain] warm agy stdin write failed, falling back to agy --print")
           stopWarmAgy("stop")
         }
-        return startOneShotTurn(prompt, turnModel, "gemini")
+        return startOneShotTurn(prompt, effectiveModel, "gemini", prepared)
       }
-      return startOneShotTurn(text, turnModel, "claude")
+      return startOneShotTurn(prepared.promptToSend, effectiveModel, "claude", prepared)
     },
   }
 }

@@ -173,8 +173,13 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(persistentArgs.slice(-2)).toEqual(["--settings", raw])
   })
 
-  test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and ./bin/ui before -- prompt", () => {
-    expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual(["Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+  test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and bin/load-skill before -- prompt", () => {
+    expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual([
+      "Bash(bin/ui:*)",
+      "Bash(./bin/ui:*)",
+      "Bash(bin/load-skill:*)",
+      "Bash(./bin/load-skill:*)",
+    ])
     const args = buildBrainClaudeArgs({
       prompt: "render card",
       sessionId: "sid-123",
@@ -182,7 +187,13 @@ describe("brain family and Gemini 4 resolution", () => {
       mode: "auto",
       model: "claude-opus-5-5",
     })
-    expect(args.slice(0, 3)).toEqual(["--allowedTools", "Bash(bin/ui:*)", "Bash(./bin/ui:*)"])
+    expect(args.slice(0, 5)).toEqual([
+      "--allowedTools",
+      "Bash(bin/ui:*)",
+      "Bash(./bin/ui:*)",
+      "Bash(bin/load-skill:*)",
+      "Bash(./bin/load-skill:*)",
+    ])
     expect(args.slice(-2)).toEqual(["--", "render card"])
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui email --to <addr>")
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui pr --repo <owner/name> --pr <n>")

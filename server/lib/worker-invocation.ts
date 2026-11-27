@@ -472,14 +472,19 @@ export function buildHeadlessCodexArgs(opts: { prompt: string; sessionId: string
 export function normalizeAgyCliModelFlag(raw: string): string {
   const trimmed = raw.trim()
   const lower = trimmed.toLowerCase()
-  if (/^gemini-(?:4-(?:hydrogen|carbon|argon)-(?:x?high|medium|low)|3\.8-flash-(?:high|medium|low)|pro-orchestrator(?:-argon)?)$/.test(lower)) return lower
+  if (/^gemini-(?:4-(?:hydrogen|neon|carbon|argon)-(?:x?high|medium|low)|3\.8-flash-(?:high|medium|low)|pro-orchestrator(?:-argon)?)$/.test(lower)) return lower
   const map: Record<string, string> = {
     "orchestrator (carbon)": "gemini-pro-orchestrator", "orchestrator": "gemini-pro-orchestrator",
     "orchestrator (argon)": "gemini-pro-orchestrator-argon",
     "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high", "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
     "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium", "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
+    "gemini 4 neon (xhigh)": "gemini-4-neon-xhigh", "gemini 4 neon (high)": "gemini-4-neon-high",
+    "gemini 4 neon (medium)": "gemini-4-neon-medium", "gemini 4 neon (low)": "gemini-4-neon-low",
+    "gemini 4 neon": "gemini-4-neon-high", "gemini-4-neon": "gemini-4-neon-high",
+    "gemini 4 carbon (xhigh)": "gemini-4-carbon-xhigh",
     "gemini 4 carbon (high)": "gemini-4-carbon-high", "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
     "gemini 4 carbon (low)": "gemini-4-carbon-low", "gemini 4 carbon": "gemini-4-carbon-high", "gemini-4-carbon": "gemini-4-carbon-high",
+    "gemini 4 argon (xhigh)": "gemini-4-argon-xhigh",
     "gemini 4 argon (high)": "gemini-4-argon-high", "gemini 4 argon (medium)": "gemini-4-argon-medium",
     "gemini 4 argon (low)": "gemini-4-argon-low", "gemini 4 argon": "gemini-4-argon-high", "gemini-4-argon": "gemini-4-argon-high",
     "gemini 3.8 flash (high)": "gemini-3.8-flash-high", "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium", "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
