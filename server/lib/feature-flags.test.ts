@@ -1,35 +1,35 @@
 import { describe, expect, test } from "bun:test"
 import { FeatureFlagsSchema, getFeatureFlags, parseFeatureFlags } from "./feature-flags"
 
-describe("FeatureFlagsSchema & parseFeatureFlags (Step 4 Rollout)", () => {
-  test("defaults Steps 2-4 (skills, context pruning, lane isolation) to true and Step 5 strictly to false when unset", () => {
+describe("FeatureFlagsSchema & parseFeatureFlags (Step 5 Full Rollout)", () => {
+  test("defaults all four harness flags to true when unset on full Step 5 rollout", () => {
     expect(FeatureFlagsSchema.parse({})).toEqual({
       ENABLE_DYNAMIC_SKILLS: true,
       ENABLE_CONTEXT_PRUNING: true,
       ENABLE_LANE_ISOLATION: true,
-      ENABLE_ADAPTIVE_ROUTING: false,
+      ENABLE_ADAPTIVE_ROUTING: true,
     })
     expect(parseFeatureFlags({})).toEqual({
       ENABLE_DYNAMIC_SKILLS: true,
       ENABLE_CONTEXT_PRUNING: true,
       ENABLE_LANE_ISOLATION: true,
-      ENABLE_ADAPTIVE_ROUTING: false,
+      ENABLE_ADAPTIVE_ROUTING: true,
     })
   })
 
-  test("allows explicit 'false' rollback on Steps 2-4 and treats only 'true' as enabled on Step 5", () => {
+  test("allows explicit case-insensitive 'false' rollback on every flag independently", () => {
     expect(
       getFeatureFlags({
         ENABLE_DYNAMIC_SKILLS: "false",
-        ENABLE_CONTEXT_PRUNING: "false",
-        ENABLE_LANE_ISOLATION: "false",
-        ENABLE_ADAPTIVE_ROUTING: "TRUE",
+        ENABLE_CONTEXT_PRUNING: "FALSE",
+        ENABLE_LANE_ISOLATION: "0",
+        ENABLE_ADAPTIVE_ROUTING: "false",
       }),
     ).toEqual({
       ENABLE_DYNAMIC_SKILLS: false,
       ENABLE_CONTEXT_PRUNING: false,
       ENABLE_LANE_ISOLATION: false,
-      ENABLE_ADAPTIVE_ROUTING: true,
+      ENABLE_ADAPTIVE_ROUTING: false,
     })
   })
 
