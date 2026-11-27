@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseTriageVerdict, triageOpsEvents } from "./ops-triage"
+import { OPS_TRIAGE_AGY_SETTINGS, parseTriageVerdict, triageOpsEvents } from "./ops-triage"
 
 describe("parseTriageVerdict", () => {
   test("parses strict JSON and strips markdown code fences", () => {
@@ -40,7 +40,15 @@ describe("triageOpsEvents", () => {
       },
     )
     expect(seenArgs).toContain("gemini-3.8-flash-low")
+    expect(seenArgs).toContain("--mode")
+    expect(seenArgs).toContain("plan")
+    expect(seenArgs).toContain("--effort")
+    expect(seenArgs).toContain("low")
     expect(seenArgs).toContain("--disable-slash-commands")
+    expect(seenArgs).toContain("--settings")
+    expect(seenArgs).toContain(OPS_TRIAGE_AGY_SETTINGS)
+    const parsedSettings = JSON.parse(OPS_TRIAGE_AGY_SETTINGS) as { permissions: { deny: string[] } }
+    expect(parsedSettings.permissions.deny).toEqual(expect.arrayContaining(["mcp(*)", "command(*)", "read_file(*)", "write_file(*)", "schedule"]))
     expect(res).toMatchObject({
       action: "ignore",
       verdict: "ignore",

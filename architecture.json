@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-26",
+  "generatedAt": "2026-11-27",
   "repo": "claude-companion",
   "intent": "Claude Companion server: an always-on Bun service on each host (macOS, Linux) that turns Claude Code hook calls into a curated phone experience — approvals, questions and dialogs routed to the iPhone, live activity and feed over WebSocket, keystroke injection back into tmux sessions, and the single-thread orchestrator that dispatches worker sessions. Clients: the native iOS app (the only client — the browser PWA was retired 2026-09-24) and other companion hosts. Correctness bar: a hook must never block Claude longer than the phone takes to answer; every frame shape is a contract with a shipped iOS build.",
   "targets": [
@@ -4018,7 +4018,7 @@
         },
         {
           "path": "lib/ops-triage.ts",
-          "lines": 331,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "OPS_TRIAGE_TIMEOUT_MS",
@@ -4028,6 +4028,7 @@
             "DEFAULT_OPENROUTER_MODEL",
             "GEMINI_API_BASE",
             "OPENROUTER_ENDPOINT",
+            "OPS_TRIAGE_AGY_SETTINGS",
             "OpsTriageMode",
             "OpsTriageAction",
             "OpsTriageProvider",
@@ -7330,7 +7331,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 586,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -7368,8 +7369,10 @@
             "normalizeAgyCliModelFlag",
             "agyBin",
             "DEFAULT_GEMINI_WORKER_MODEL",
+            "DEFAULT_GEMINI_BRAIN_MODEL",
             "GEMINI_INLINE_PROMPT_MAX",
             "agyWorkerSettings",
+            "agyBrainSettings",
             "buildHeadlessGeminiArgs",
             "buildPersistentGeminiArgs",
             "formatGeminiStreamInput",
@@ -8610,7 +8613,7 @@
         },
         {
           "path": "routes/model.ts",
-          "lines": 322,
+          "lines": 331,
           "kind": "route-host",
           "exports": [
             "handleModelRoute"
@@ -9335,7 +9338,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 570,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "SpawnedPersistentWorkerHandle",
@@ -9345,6 +9348,8 @@
             "BRAIN_RUNTIME_ALLOWED_TOOLS",
             "buildBrainClaudeArgs",
             "writeBrainMcpConfig",
+            "BrainEffortTier",
+            "resolveBrainEffortDefault",
             "getBrainModel",
             "BrainFamily",
             "brainFamilyForModel",
@@ -9592,10 +9597,14 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 277,
+          "lines": 514,
           "kind": "lib",
           "exports": [
+            "GREEN_POLL_MS",
             "StuckEventsDeps",
+            "sanitizePrWakeReason",
+            "needsPrMergeCard",
+            "greenPrWakeLine",
             "stuckLine",
             "createStuckEvents",
             "emitStuckPrGateCard",
@@ -9611,6 +9620,7 @@
           "imports": [
             "lib/a2ui.ts",
             "lib/a2ui-macros.ts",
+            "lib/a2ui-pr-state.ts",
             "lib/brain.ts",
             "lib/brain-store.ts",
             "lib/log.ts",
@@ -9725,7 +9735,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 667,
+          "lines": 680,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -11597,7 +11607,8 @@
           "module": "lib/a2ui-pr-state.ts",
           "callers": [
             "lib/a2ui-actions.ts",
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "resolveOutboundStore": {
@@ -11957,7 +11968,8 @@
         "GhCheck": {
           "module": "lib/a2ui-pr-state.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "GhComment": {
@@ -11999,7 +12011,8 @@
         "computeCiState": {
           "module": "lib/a2ui-pr-state.ts",
           "callers": [
-            "lib/a2ui-macros.ts"
+            "lib/a2ui-macros.ts",
+            "wiring/brain-stuck-events.ts"
           ]
         },
         "computeReviewState": {
@@ -12220,6 +12233,7 @@
           "module": "lib/worker-invocation.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/ops-triage.ts",
             "lib/worker-supervisor.ts"
           ]
         },
@@ -20335,6 +20349,12 @@
             "wiring/brain-headless.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "agyBrainSettings": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
           ]
         },
         "setKv": {

@@ -32,9 +32,12 @@ const HEADLESS_MODELS: HeadlessModelEntry[] = [
   { id: "gemini-pro-orchestrator", family: "gemini", text: "Orchestrator (Carbon) · Multi-agent /boost engine", aliases: ["gemini-pro-orchestrator", "orchestrator", "orchestrator (carbon)"] },
   { id: "gemini-pro-orchestrator-argon", family: "gemini", text: "Orchestrator (Argon) · Fast multi-agent /boost engine", aliases: ["gemini-pro-orchestrator-argon", "orchestrator (argon)"] },
   { id: "gemini-4-hydrogen-high", family: "gemini", text: "Gemini 4 Hydrogen (High) · Deepest reasoning", aliases: ["gemini-4-hydrogen-high", "gemini 4 hydrogen (high)", "hydrogen"] },
-  { id: "Gemini 4 Argon (Medium)", family: "gemini", text: "Gemini 4 Argon (Medium) · Antigravity default", aliases: ["gemini-4-argon-medium", "gemini 4 argon (medium)", "gemini 4 argon"] },
+  { id: "Gemini 4 Argon (Low)", family: "gemini", text: "Gemini 4 Argon (Low) · Fast low-effort Brain default", aliases: ["gemini-4-argon-low", "gemini 4 argon (low)", "gemini-4-argon", "gemini 4 argon"] },
+  { id: "Gemini 4 Argon (Medium)", family: "gemini", text: "Gemini 4 Argon (Medium) · Antigravity default", aliases: ["gemini-4-argon-medium", "gemini 4 argon (medium)"] },
   { id: "Gemini 4 Argon (High)", family: "gemini", text: "Gemini 4 Argon (High) · Deep reasoning", aliases: ["gemini-4-argon-high", "gemini 4 argon (high)"] },
-  { id: "Gemini 4 Carbon (High)", family: "gemini", text: "Gemini 4 Carbon (High) · Frontier multimodal", aliases: ["gemini-4-carbon-high", "gemini 4 carbon (high)", "gemini 4 carbon"] },
+  { id: "Gemini 4 Carbon (Low)", family: "gemini", text: "Gemini 4 Carbon (Low) · Fast low-effort frontier multimodal", aliases: ["gemini-4-carbon-low", "gemini 4 carbon (low)", "gemini-4-carbon", "gemini 4 carbon"] },
+  { id: "Gemini 4 Carbon (Medium)", family: "gemini", text: "Gemini 4 Carbon (Medium) · Balanced frontier multimodal", aliases: ["gemini-4-carbon-medium", "gemini 4 carbon (medium)"] },
+  { id: "Gemini 4 Carbon (High)", family: "gemini", text: "Gemini 4 Carbon (High) · Frontier multimodal", aliases: ["gemini-4-carbon-high", "gemini 4 carbon (high)"] },
   { id: "Gemini 3.8 Flash (High)", family: "gemini", text: "Gemini 3.8 Flash (High) · High-speed agentic", aliases: ["gemini-3.8-flash-high", "gemini 3.8 flash (high)", "gemini 3.8 flash"] },
   { id: "gemini-3.1-pro-preview", family: "gemini", text: "Gemini 3.1 Pro · Google flagship multimodal agent", aliases: ["gemini-3.1-pro-preview", "gemini"] },
 ]
@@ -61,7 +64,13 @@ function headlessCatalogFor(session: Session): HeadlessModelEntry[] {
 
 function buildHeadlessChoices(session: Session): ModelChoice[] {
   const catalog = headlessCatalogFor(session)
-  const fallbackModel = session.agent === "claude" ? "claude-opus-5-5" : session.agent === "codex" ? "gpt-5.4" : "gemini-4-argon-high"
+  const fallbackModel = session.agent === "claude"
+    ? "claude-opus-5-5"
+    : session.agent === "codex"
+      ? "gpt-5.4"
+      : session.taskId === "brain"
+        ? "gemini-4-argon-low"
+        : "gemini-4-argon-high"
   const rawCurrent = (
     session.taskId === "brain"
       ? (session.model || getBrainModel())

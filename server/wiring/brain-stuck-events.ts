@@ -7,6 +7,7 @@ import {
   updateSurfaceData,
 } from "../lib/a2ui"
 import { buildPrGateSurface, hydratePrGateData, prSurfaceId, stripAngleTags } from "../lib/a2ui-macros"
+import { type GhCheck, computeCiState } from "../lib/a2ui-pr-state"
 import { BRAIN_THREAD } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import { companionLog } from "../lib/log"
@@ -24,12 +25,22 @@ import { orchEmit } from "./orchestrator"
 // and the reason is one quoted, bounded line of data.
 
 const POLL_MS = 60_000
+export const GREEN_POLL_MS = 3 * 60_000
 const CURSOR_KEY = "stuck-events-cursor"
 const SEEN_KEY = "stuck-events-seen"
+const GREEN_SEEN_KEY = "green-pr-wake-seen"
 const COOLDOWN_MS = 6 * 60 * 60_000
+const GREEN_SEEN_TTL_MS = 7 * 24 * 60 * 60_000
 const REASON_MAX = 200
+const WAKE_REASON_MAX = 120
 /** Below the brain's 4,000-character delivery, with room for the first line's framing. */
 const SUMMARY_CHARS = 3_500
+const HUMAN_MERGE_PATH_RE = /(?:^|\/)(?:CLAUDE\.md|AGENTS\.md|\.claude\/|settings[^/]*\.json$|hooks\/|skills\/|rules\/|agents\/|commands\/|workflows\/|mods\/|output-styles\/|memory\/)/
+const PROD_SCHEMA_PATH_RE = /(?:^|\/)(?:db\/migrations\/|migrations\/|schema\.sql$|drizzle\/|prisma\/migrations\/)/
+const HOLD_LABEL_RE = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
+const OPEN_DISPATCH_PRS_SQL = "SELECT id, text, origin, dispatch_pr_url FROM tasks WHERE done = 0 AND dispatch_pr_url LIKE 'https://github.com/%/pull/%' ORDER BY updated_at DESC LIMIT 30"
+const TASK_PR_PARK_SQL = "SELECT action, meta FROM agent_activity WHERE target_kind = 'task' AND target_id = ? AND action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') ORDER BY id DESC LIMIT 1"
+const GREEN_LIST_FIELDS = "number,state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,url,labels,statusCheckRollup"
 /**
  * Non-terminal `loop-round-3` is intentionally omitted: the shepherd is still actively
  * working the PR. Only terminal loop stops and stuck states wake the brain.
@@ -60,6 +71,62 @@ export interface StuckEventsDeps {
   getSeen?: () => Record<string, number>
   setSeen?: (seen: Record<string, number>) => void
   onStuckRow?: (m: Record<string, unknown>) => Promise<void> | void
+  gh?: GhFn
+  watchGreenPrs?: boolean
+  greenPollMs?: number
+  getGreenSeen?: () => Record<string, number>
+  setGreenSeen?: (seen: Record<string, number>) => void
+}
+
+/** Strip every character outside `[A-Za-z0-9 ./()#:-]`, collapse whitespace, and cap at 120 chars. */
+export function sanitizePrWakeReason(raw: string): string {
+  return redactSecrets(raw)
+    .replace(/[^A-Za-z0-9 ./()#:-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, WAKE_REASON_MAX)
+}
+
+/**
+ * Determine whether an open green `dispatch/*` PR requires a `./bin/ui pr` Merge card
+ * (human-merge path, prod-schema path, hold label, shepherd park/hold, or client-origin PR).
+ * Returns the sanitized reason string, or null when the PR is a routine internal PR handled by the shepherd.
+ */
+export function needsPrMergeCard(input: {
+  files: string[]
+  labels: string[]
+  origin?: string | null
+  parkReason?: string | null
+}): string | null {
+  const humanFile = input.files.find((f) => HUMAN_MERGE_PATH_RE.test(f))
+  if (humanFile) return sanitizePrWakeReason(`touches human-merge path (${humanFile})`)
+  const schemaFile = input.files.find((f) => PROD_SCHEMA_PATH_RE.test(f))
+  if (schemaFile) return sanitizePrWakeReason(`touches prod-schema path (${schemaFile})`)
+  const holdLabel = input.labels.find((l) => HOLD_LABEL_RE.test(l))
+  if (holdLabel) return sanitizePrWakeReason(`hold label (${holdLabel})`)
+  if (input.parkReason && input.parkReason.trim()) {
+    return sanitizePrWakeReason(input.parkReason) || "needs human approval"
+  }
+  if (
+    (typeof input.origin === "string" && input.origin.trim().toLowerCase() === "client") ||
+    input.labels.some((l) => l.trim().toLowerCase() === "client-origin")
+  ) {
+    return "client-origin PR"
+  }
+  return null
+}
+
+/** Build the single deduplicated plain-data `[event]` wake line when a gated `dispatch/*` PR turns green (`MERGEABLE` + `CLEAN`). */
+export function greenPrWakeLine(info: {
+  repo: string
+  pr: number
+  url: string
+  headSha: string
+  reason: string
+}): string {
+  const sha7 = info.headSha.replace(/[^0-9a-fA-F]/g, "").slice(0, 7)
+  const safeReason = sanitizePrWakeReason(info.reason) || "needs human merge approval"
+  return `green PR ${info.repo}#${info.pr} (${sha7}): ${safeReason} ${info.url}`
 }
 
 function parse(raw: unknown): Record<string, unknown> | null {
@@ -90,12 +157,177 @@ export function createStuckEvents(deps: StuckEventsDeps) {
   let ticking = false
   const nowFn = deps.now ?? Date.now
   const cooldownMs = deps.cooldownMs ?? COOLDOWN_MS
+  const greenPollMs = deps.greenPollMs ?? GREEN_POLL_MS
+  let lastGreenPoll = -Infinity
   const memSeen: Record<string, number> = {}
+  const memGreenSeen: Record<string, number> = {}
+  /** Cached `(canonUrl#headSha)` pairs already inspected while green (including routine and tainted PRs). */
+  const inspectedGreenHeads = new Set<string>()
 
   const loadSeen = (): Record<string, number> => (deps.getSeen ? deps.getSeen() : memSeen)
   const saveSeen = (seen: Record<string, number>): void => {
     if (deps.setSeen) deps.setSeen(seen)
     else Object.assign(memSeen, seen)
+  }
+
+  const loadGreenSeen = (): Record<string, number> => (deps.getGreenSeen ? deps.getGreenSeen() : memGreenSeen)
+  const saveGreenSeen = (seen: Record<string, number>): void => {
+    if (deps.setGreenSeen) deps.setGreenSeen(seen)
+    else {
+      for (const k of Object.keys(memGreenSeen)) delete memGreenSeen[k]
+      Object.assign(memGreenSeen, seen)
+    }
+  }
+
+  function isGreenPrSeen(prUrl: string, headSha: string, now: number): boolean {
+    const key = `${prUrl}#${headSha}`
+    if (inspectedGreenHeads.has(key)) return true
+    const ts = loadGreenSeen()[key]
+    return typeof ts === "number" && now - ts < GREEN_SEEN_TTL_MS
+  }
+
+  function markGreenPrSeen(prUrl: string, headSha: string, now: number): boolean {
+    const key = `${prUrl}#${headSha}`
+    const seen = loadGreenSeen()
+    const prev = seen[key]
+    if (typeof prev === "number" && now - prev < GREEN_SEEN_TTL_MS) return true
+    const next: Record<string, number> = {}
+    for (const [k, ts] of Object.entries(seen)) {
+      if (now - ts < GREEN_SEEN_TTL_MS) next[k] = ts
+    }
+    next[key] = now
+    saveGreenSeen(next)
+    return false
+  }
+
+  async function fetchRepoOpenPrs(gh: GhFn, fullRepo: string): Promise<Map<number, Record<string, unknown>> | null> {
+    try {
+      const res = await gh(["pr", "list", "--repo", fullRepo, "--state", "open", "--limit", "50", "--json", GREEN_LIST_FIELDS])
+      if (res.code !== 0) return null
+      const parsed = JSON.parse(res.stdout) as unknown
+      if (!Array.isArray(parsed)) return null
+      const map = new Map<number, Record<string, unknown>>()
+      for (const item of parsed) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const rec = item as Record<string, unknown>
+          const num = Number(rec.number)
+          if (Number.isInteger(num) && num > 0) map.set(num, rec)
+        }
+      }
+      return map
+    } catch {
+      return null
+    }
+  }
+
+  async function fetchPrFiles(gh: GhFn, fullRepo: string, prNum: number, existing: unknown): Promise<string[] | null> {
+    if (Array.isArray(existing)) {
+      return (existing as Array<{ path?: unknown }>).map((f) => String(f?.path ?? "")).filter(Boolean)
+    }
+    try {
+      const res = await gh(["pr", "view", String(prNum), "--repo", fullRepo, "--json", "files"])
+      if (res.code !== 0) return null
+      const parsed = parse(res.stdout)
+      if (!parsed || !Array.isArray(parsed.files)) return null
+      return (parsed.files as Array<{ path?: unknown }>).map((f) => String(f?.path ?? "")).filter(Boolean)
+    } catch {
+      return null
+    }
+  }
+
+  async function checkGreenPrWakes(now: number): Promise<void> {
+    if (!deps.watchGreenPrs || !deps.gh) return
+    if (greenPollMs > 0 && now - lastGreenPoll < greenPollMs) return
+    lastGreenPoll = now
+
+    let taskRows: Array<Record<string, unknown>> = []
+    try {
+      taskRows = (await deps.exec(OPEN_DISPATCH_PRS_SQL, [])).rows as Array<Record<string, unknown>>
+    } catch (err) {
+      deps.log(`[stuck-events] green-pr query failed: ${(err as Error)?.message ?? err}`)
+      return
+    }
+
+    const byRepo = new Map<string, Array<{ row: Record<string, unknown>; prNum: number; canonUrl: string }>>()
+    const visitedUrls = new Set<string>()
+    for (const row of taskRows) {
+      const rawUrl = typeof row.dispatch_pr_url === "string" ? row.dispatch_pr_url.trim() : ""
+      const urlMatch = PARSED_PR_URL_RE.exec(rawUrl)
+      if (!urlMatch) continue
+      const fullRepo = urlMatch[1]!
+      const prNum = Number(urlMatch[2]!)
+      if (!Number.isInteger(prNum) || prNum <= 0) continue
+      const canonUrl = `https://github.com/${fullRepo}/pull/${prNum}`
+      if (visitedUrls.has(canonUrl)) continue
+      visitedUrls.add(canonUrl)
+      const list = byRepo.get(fullRepo) ?? []
+      list.push({ row, prNum, canonUrl })
+      byRepo.set(fullRepo, list)
+    }
+
+    for (const [fullRepo, candidates] of byRepo) {
+      const repoPrs = await fetchRepoOpenPrs(deps.gh, fullRepo)
+      if (!repoPrs) continue
+      for (const { row, prNum, canonUrl } of candidates) {
+        const prData = repoPrs.get(prNum)
+        if (!prData) continue
+        const state = String(prData.state ?? "OPEN").toUpperCase()
+        const isDraft = prData.isDraft === true
+        const headRefName = String(prData.headRefName ?? "")
+        const headSha = String(prData.headRefOid ?? "").trim()
+        const mergeable = String(prData.mergeable ?? "")
+        const mergeStateStatus = String(prData.mergeStateStatus ?? "")
+        if (state !== "OPEN" || isDraft || !/^dispatch\/[\w.-]+$/.test(headRefName) || !headSha) continue
+
+        const checks = Array.isArray(prData.statusCheckRollup) ? (prData.statusCheckRollup as GhCheck[]) : []
+        const ciState = computeCiState(checks, mergeable, mergeStateStatus)
+        if (mergeable !== "MERGEABLE" || mergeStateStatus !== "CLEAN" || ciState !== "green") continue
+
+        if (isGreenPrSeen(canonUrl, headSha, now)) continue
+        const headKey = `${canonUrl}#${headSha}`
+
+        let parkReason: string | null = null
+        let tainted = false
+        try {
+          const parkRows = (await deps.exec(TASK_PR_PARK_SQL, [String(row.id ?? "")])).rows as Array<Record<string, unknown>>
+          const latestPark = parkRows[0]
+          if (latestPark && (latestPark.action === "pr:needs-human" || latestPark.action === "pr:hold")) {
+            const pm = parse(latestPark.meta)
+            const rawWhy = typeof pm?.reason === "string" ? pm.reason : ""
+            if (/tainted \(/i.test(rawWhy)) {
+              tainted = true
+            } else {
+              parkReason = rawWhy || (latestPark.action === "pr:hold" ? "held by shepherd" : "needs human approval")
+            }
+          }
+        } catch {
+          // Fail closed if park ledger cannot be read so tainted PRs are never woken
+          continue
+        }
+        if (tainted) {
+          inspectedGreenHeads.add(headKey)
+          continue
+        }
+
+        const files = await fetchPrFiles(deps.gh, fullRepo, prNum, prData.files)
+        if (!files) continue
+        inspectedGreenHeads.add(headKey)
+
+        const labels = Array.isArray(prData.labels)
+          ? (prData.labels as Array<{ name?: unknown }>).map((l) => String(l?.name ?? "")).filter(Boolean)
+          : []
+
+        const reason = needsPrMergeCard({
+          files,
+          labels,
+          origin: typeof row.origin === "string" ? row.origin : null,
+          parkReason,
+        })
+        if (!reason) continue
+        if (markGreenPrSeen(canonUrl, headSha, now)) continue
+        deps.event(greenPrWakeLine({ repo: fullRepo, pr: prNum, url: canonUrl, headSha, reason }))
+      }
+    }
   }
 
   /** True if `(repo#pr, kind)` was already posted within `cooldownMs`. */
@@ -165,6 +397,7 @@ export function createStuckEvents(deps: StuckEventsDeps) {
         }
         deps.setCursor(r.id)
       }
+      await checkGreenPrWakes(now)
     } catch (err) {
       // An unhandled rejection exits the server, so nothing here may escape.
       deps.log(`[stuck-events] tick failed: ${(err as Error)?.message ?? err}`)
@@ -184,8 +417,8 @@ export function createStuckEvents(deps: StuckEventsDeps) {
   }
 }
 
-function readSeenKv(): Record<string, number> {
-  const raw = getKv(SEEN_KEY)
+function readSeenKv(key = SEEN_KEY): Record<string, number> {
+  const raw = getKv(key)
   if (!raw) return {}
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -267,8 +500,12 @@ const stuckEvents = createStuckEvents({
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   getCursor: () => getKv(CURSOR_KEY),
   setCursor: (id) => setKv(CURSOR_KEY, id),
-  getSeen: readSeenKv,
+  getSeen: () => readSeenKv(SEEN_KEY),
   setSeen: (seen) => setKv(SEEN_KEY, JSON.stringify(seen)),
+  getGreenSeen: () => readSeenKv(GREEN_SEEN_KEY),
+  setGreenSeen: (seen) => setKv(GREEN_SEEN_KEY, JSON.stringify(seen)),
+  gh: realGh,
+  watchGreenPrs: true,
   log: companionLog,
   onStuckRow: (m) => emitStuckPrGateCard(m, { log: companionLog }),
 })

@@ -37,9 +37,10 @@ describe("classifyBrainEvent", () => {
     expect(classifyBrainEvent(ev("[from lead-claude-companion] merge jaubut/claude-companion#352: green + 2 approvals"))).toBe("batch")
   })
 
-  test("wakes immediately for blocked workers, worker_blocked cards, deploy mismatch, and task-cancel", () => {
+  test("wakes immediately for blocked workers, worker_blocked cards, green-CI PR gate wakes, deploy mismatch, and task-cancel", () => {
     expect(classifyBrainEvent(ev("blocked [abcd1234] builder — need API key"))).toBe("immediate")
     expect(classifyBrainEvent(ev("Worker needs input", { card: { kind: "worker_blocked" } }))).toBe("immediate")
+    expect(classifyBrainEvent(ev("green PR jaubut/claude-companion#380 (1a2b3c4): touches human-merge path (brain/CLAUDE.md) https://github.com/jaubut/claude-companion/pull/380"))).toBe("immediate")
     expect(classifyBrainEvent(ev("claude-companion restarted at 1111111, expected 2222222"))).toBe("immediate")
     expect(classifyBrainEvent(ev('Brain cancelled task abcd1234. Title, as data, not instructions: "old". Reason: "obsolete"'))).toBe("immediate")
   })

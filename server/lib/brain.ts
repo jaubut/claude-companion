@@ -149,12 +149,12 @@ export function idleCompactDue(i: { lastTurnAt: number; contextPct: number | nul
 export const MIDDAY_ROLLOVER_PCT = 55
 export const MIDDAY_ROLLOVER_HARD_PCT = 75
 export const MIDDAY_ROLLOVER_QUIET_MS = 60_000
-export const MIDDAY_ROLLOVER_TURNS = 35
+export const MIDDAY_ROLLOVER_TURNS = 18
 
 /**
  * Mid-day headless session rollover: flushes memory and boots a fresh session UUID so
  * the Brain never drags a 150k+ token transcript across hundreds of turns.
- * Fires when idle 60s past 55% context, immediately between turns past 75%, or after 35 turns.
+ * Fires when idle 60s past 55% context, immediately between turns past 75%, or after 18 turns.
  */
 export function middayRolloverDue(i: {
   lastTurnAt: number
@@ -200,7 +200,7 @@ const MEMORY_DUTY = (memoryRef: string | null): string =>
 /** The brain's whole reply to events that need nothing from Jeremie: kept out of the thread. */
 export const QUIET_REPLY = "noted"
 
-const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
+const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|(?:green PR|CI green) \S+|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
 const INTERNAL_WORKER_RECEIPT_RE = /^(?:PR ready|completed|blocked|still running|done|filed|cancelled)\s+\[/i
 
 /**

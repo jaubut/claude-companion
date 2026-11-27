@@ -12,7 +12,7 @@ import { type Session, listSessions, recordSession, removeSessionByKey, setSessi
 import { type SpawnResult, ensureFolderTrusted } from "../lib/spawn-session"
 import { defaultKillPid } from "../lib/worker-pid"
 import { type SpawnWorkerOpts, type SpawnedWorkerHandle, buildHeadlessClaudeArgs, defaultSpawnWorker, parseStreamJsonLine } from "../lib/worker-supervisor"
-import { agyBin, buildHeadlessGeminiArgs, buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
+import { DEFAULT_GEMINI_BRAIN_MODEL, agyBin, agyBrainSettings, buildHeadlessGeminiArgs, buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
 import { brainWorkers } from "./brain-workers"
 import { commandCatalog } from "../lib/command-catalog"
 
@@ -70,22 +70,11 @@ export const HEADLESS_BRAIN_PANE = "headless:brain"
 /** Runtime-injected --allowedTools for headless Brain CLI tools added without touching human-merge brain/.claude/settings.json. */
 export const BRAIN_RUNTIME_ALLOWED_TOOLS = ["Bash(bin/ui:*)", "Bash(./bin/ui:*)"] as const
 
-export function buildBrainClaudeArgs(opts: {
-  prompt: string
-  sessionId: string
-  resume: boolean
-  mode: string
-  model?: string
-  mcpConfig?: string
-}): string[] {
+export function buildBrainClaudeArgs(opts: { prompt: string; sessionId: string; resume: boolean; mode: string; model?: string; mcpConfig?: string }): string[] {
   return ["--allowedTools", ...BRAIN_RUNTIME_ALLOWED_TOOLS, ...buildHeadlessClaudeArgs(opts)]
 }
 
-/**
- * The brain's --mcp-config (canvas-board-sync A1): only `board`, on loopback,
- * the same definition as the user-scope entry (scripts/board-mcp-register.ts).
- * No token inside: the headersHelper reads it at connect time. Mode 0600.
- */
+/** The brain's --mcp-config (canvas-board-sync A1): only `board`, on loopback, mode 0600, no token inside. */
 export function writeBrainMcpConfig(dir = join(homedir(), ".claude-companion"), port = Number(process.env.COMPANION_PORT) || 4245): string {
   const path = join(dir, "brain-mcp.json")
   const headersHelper = join(import.meta.dir, "..", "..", "scripts", "board-mcp-headers.sh")
@@ -95,31 +84,57 @@ export function writeBrainMcpConfig(dir = join(homedir(), ".claude-companion"), 
   return path
 }
 
-export function getBrainModel(): string {
-  return getKv("brain_model") || "auto"
+export type BrainEffortTier = "low" | "medium" | "high"
+
+export function resolveBrainEffortDefault(env: Record<string, string | undefined> = process.env): BrainEffortTier {
+  const raw = env.COMPANION_BRAIN_EFFORT_DEFAULT?.trim().toLowerCase()
+  return raw === "medium" || raw === "high" || raw === "low" ? raw : "low"
+}
+
+function mapBareGeminiBrainModel(raw: string, effort: BrainEffortTier): string {
+  const lower = raw.trim().toLowerCase()
+  if (lower === "gemini-4-argon" || lower === "gemini 4 argon") return `gemini-4-argon-${effort}`
+  if (lower === "gemini-4-carbon" || lower === "gemini 4 carbon") return `gemini-4-carbon-${effort}`
+  return raw.trim()
+}
+
+export function getBrainModel(env: Record<string, string | undefined> = process.env): string {
+  const stored = (getKv("brain_model") || "").trim()
+  if (!stored) return "auto"
+  const effort = resolveBrainEffortDefault(env)
+  if (effort !== "high" && getKv("brain_model_explicit_effort") !== "1") {
+    const lower = stored.toLowerCase()
+    if (lower === "gemini-4-argon-high" || lower === "gemini 4 argon (high)") return `gemini-4-argon-${effort}`
+    if (lower === "gemini-4-carbon-high" || lower === "gemini 4 carbon (high)") return `gemini-4-carbon-${effort}`
+  }
+  return mapBareGeminiBrainModel(stored, effort)
 }
 
 export type BrainFamily = "claude" | "gemini"
 
 export function brainFamilyForModel(model: string): BrainFamily {
   const m = model.trim().toLowerCase()
-  if (m.startsWith("gemini") || m.startsWith("orchestrator")) return "gemini"
-  return "claude"
+  return m.startsWith("gemini") || m.startsWith("orchestrator") ? "gemini" : "claude"
 }
 
 export function resolveBrainSessionModel(configured: string, env: Record<string, string | undefined> = process.env): string {
-  const norm = configured.trim()
+  const effort = resolveBrainEffortDefault(env)
+  const norm = mapBareGeminiBrainModel(configured, effort)
   if (norm && norm.toLowerCase() !== "auto") return norm
   const envModel = env.COMPANION_BRAIN_DEFAULT_MODEL?.trim()
-  if (envModel) return envModel
-  if (env.COMPANION_BRAIN_FAMILY?.trim().toLowerCase() === "gemini") return "gemini-4-argon-high"
+  if (envModel) return mapBareGeminiBrainModel(envModel, effort)
+  if (env.COMPANION_BRAIN_FAMILY?.trim().toLowerCase() === "gemini") {
+    return effort === "low" ? DEFAULT_GEMINI_BRAIN_MODEL : `gemini-4-argon-${effort}`
+  }
   return "claude-opus-5-5"
 }
 
 export const AGY_BOOT_PREFIX =
   "[System: Read ./CLAUDE.md and ./AGENTS.md and follow them strictly. You are the read-only Brain: never edit or write files; use bin/* CLI tools and MCP servers. " +
   "A2UI v1.0 card rules: (1) Non-dictated outbound emails MUST be proposed with `./bin/ui email --to <addr> [--cc <csv>] [--account personal|hello] --subject \"<subj>\" --body \"<body>\" --why \"<why>\"` (tapping Send Email on the card sends directly via gmail.py with the toggled Cc list; use --dry-run only for demos). " +
-  "(2) Green PRs needing Jeremie's merge approval (prod-schema, human-merge-path, pr:needs-human, or review-quota holds) MUST be accompanied by `./bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] --reason \"<why>\"` so Jeremie gets a 1-tap Merge/Refresh card in the feed.]\n\n"
+  "(2) Green PRs needing Jeremie's merge approval (prod-schema, human-merge-path, pr:needs-human, or review-quota holds) MUST be accompanied by `./bin/ui pr --repo <owner/name> --pr <n> [--deploy-repo <name>] --reason \"<why>\"` so Jeremie gets a 1-tap Merge/Refresh card in the feed. " +
+  "(3) NEVER call `schedule` or `sleep` (CI and worker completions wake you automatically via `[event]`). " +
+  "(4) Delegate repo file grepping/archaeology to headless builders (`bin/worker dispatch`) — inspect only what is required to understand Jeremie's intent (e.g. Canvas screenshot) so Brain turns finish in 1 tool pass.]\n\n"
 
 function extractToolCall(line: string): { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string } | undefined {
   try {
@@ -246,22 +261,8 @@ export function createHeadlessBrainRunner(hooks: {
     }
     const cmd = family === "gemini" ? agyBin() : "claude"
     const args = family === "gemini"
-      ? buildHeadlessGeminiArgs({
-          prompt,
-          sessionId: agyConversationId,
-          resume: !!agyConversationId,
-          mode: "auto",
-          model: turnModel,
-          onTempDir: (d) => { tempPromptDir = d },
-        })
-      : buildBrainClaudeArgs({
-          prompt,
-          sessionId: currentSessionId,
-          resume: sessionStarted,
-          mode: "auto",
-          model: turnModel,
-          mcpConfig: mcpConfig || undefined,
-        })
+      ? buildHeadlessGeminiArgs({ prompt, sessionId: agyConversationId, resume: !!agyConversationId, mode: "auto", model: turnModel, settings: agyBrainSettings(), onTempDir: (d) => { tempPromptDir = d } })
+      : buildBrainClaudeArgs({ prompt, sessionId: currentSessionId, resume: sessionStarted, mode: "auto", model: turnModel, mcpConfig: mcpConfig || undefined })
     lastTurnReply = ""
     turnInFlight = true
     let settled = false
@@ -345,6 +346,7 @@ export function createHeadlessBrainRunner(hooks: {
       resume: !!agyConversationId,
       mode: "auto",
       model: turnModel,
+      settings: agyBrainSettings(),
     })
     try {
       let spawnedHandle: SpawnedPersistentWorkerHandle | null = null
@@ -445,6 +447,7 @@ export function createHeadlessBrainRunner(hooks: {
       const nextModel = resolveBrainSessionModel(m)
       const nextFamily = brainFamilyForModel(nextModel)
       setKv("brain_model", m)
+      setKv("brain_model_explicit_effort", /(?:-high|\(high\))$/i.test(m) ? "1" : "")
       sessionModel = nextModel
       if (prevModel && prevModel !== nextModel && !isBusy()) {
         stopWarmAgy("stop")

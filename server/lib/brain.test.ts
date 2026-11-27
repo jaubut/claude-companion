@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import {
   brainToolStep,
+  MIDDAY_ROLLOVER_TURNS,
   RESTART_WINDOW_MS, START_GRACE_MS,
-  bootSeed, brainEnabled, deliveryText, fitDelivery, DELIVERY_MAX, idleCompactDue, isBrainHook, isSupervisedTask,
-  leadSlug, rolloverDue, superviseStep,
+  bootSeed, brainEnabled, deliveryText, fitDelivery, DELIVERY_MAX, idleCompactDue, isBrainHook, isBrainInternalEvent, isSupervisedTask,
+  leadSlug, middayRolloverDue, rolloverDue, superviseStep,
 } from "./brain"
 
 // brain-v2 policy (lib/brain.ts): pure, so every rule is pinned here. The
@@ -57,6 +58,21 @@ test("idleCompactDue: only idle ≥ 15 min AND context > 60 %", () => {
   expect(idleCompactDue({ lastTurnAt: now - 16 * 60_000, contextPct: 60, now, busy: false })).toBe(false)
   expect(idleCompactDue({ lastTurnAt: now - 16 * 60_000, contextPct: null, now, busy: false })).toBe(false)
   expect(idleCompactDue({ lastTurnAt: now - 16 * 60_000, contextPct: 90, now, busy: true })).toBe(false)
+})
+
+test("middayRolloverDue: rolls over at 18 turns, or past 55% idle 60s, or immediately past 75%", () => {
+  const now = 100_000_000
+  expect(MIDDAY_ROLLOVER_TURNS).toBe(18)
+  expect(middayRolloverDue({ lastTurnAt: now, contextPct: 20, turnsSinceReset: 17, now, busy: false })).toBe(false)
+  expect(middayRolloverDue({ lastTurnAt: now, contextPct: 20, turnsSinceReset: 18, now, busy: false })).toBe(true)
+  expect(middayRolloverDue({ lastTurnAt: now, contextPct: 20, turnsSinceReset: 18, now, busy: true })).toBe(false)
+  expect(middayRolloverDue({ lastTurnAt: now - 61_000, contextPct: 55, turnsSinceReset: 3, now, busy: false })).toBe(true)
+  expect(middayRolloverDue({ lastTurnAt: now - 10_000, contextPct: 75, turnsSinceReset: 2, now, busy: false })).toBe(true)
+  expect(isBrainInternalEvent({
+    threadId: "brain",
+    role: "orchestrator",
+    text: "green PR jaubut/claude-companion#380 (1a2b3c4): touches human-merge path (brain/CLAUDE.md) https://github.com/jaubut/claude-companion/pull/380",
+  })).toBe(true)
 })
 
 test("deliveryText / bootSeed / rolloverDue", () => {
