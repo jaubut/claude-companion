@@ -184,8 +184,7 @@ describe("Phase 3: agent_notifications schema & bridge", () => {
 })
 
 describe("Phase 3: Lane A / Lane B Isolation under synthetic ops-triage load", () => {
-  test("sustains >= 10 background jobs/sec while keeping interactive TTFT < 1500ms and zero [event] leakage", async () => {
-    process.env.ENABLE_LANE_ISOLATION = "true"
+  test("sustains >= 10 background jobs/sec by default while keeping interactive TTFT < 1500ms and zero [event] leakage", async () => {
     const deliveredPrompts: string[] = []
     const interactiveTtftsMs: number[] = []
     let triageCallCount = 0

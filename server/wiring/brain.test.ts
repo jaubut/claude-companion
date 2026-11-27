@@ -58,7 +58,7 @@ interface Harness {
   }
 }
 
-function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean; triageEvents?: Parameters<typeof mod.createBrainWiring>[0]["triageEvents"] } = {}): Harness {
+function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean; laneIsolation?: boolean; triageEvents?: Parameters<typeof mod.createBrainWiring>[0]["triageEvents"] } = {}): Harness {
   const h: Harness = {
     delivered: [], frames: [], pushes: 0, spawns: 0, stops: 0,
     set: { alive: false, paused: false, sessions: [], reply: { status: 200, body: { ok: true } }, now: 1_000_000, spawn: { ok: true, app: "herdr", herdrPane: "p_brain", sessionName: "brain" }, agentPane: "", agentStatus: "", transcriptReply: "", resumes: [], interrupts: 0 },
@@ -87,6 +87,7 @@ function harness(opts: { eventCoalesceMs?: number; middayRollover?: boolean; tri
     eventCoalesceMs: opts.eventCoalesceMs,
     middayRollover: opts.middayRollover,
     triageEvents: opts.triageEvents,
+    laneIsolation: opts.laneIsolation ?? false,
   })
   return h
 }
