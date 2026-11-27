@@ -328,27 +328,58 @@ export function reconcileBrainStream(
   return [...turns]
 }
 
-/** Extract tool call metadata from a Claude or Antigravity `stream-json` line for `noteActivity`. */
-export function extractStreamToolCall(line: string): { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string } | undefined {
+export interface StreamToolCall {
+  phase: "pre" | "post"
+  tool: string
+  input: Record<string, unknown>
+  toolUseId: string
+  thoughtSignature?: string
+}
+
+/** Extract tool call metadata from a Claude or Antigravity `stream-json` line for `noteActivity`, preserving any `thoughtSignature` verbatim. */
+export function extractStreamToolCall(line: string): StreamToolCall | undefined {
   try {
     const raw = JSON.parse(line) as {
       event?: string
-      step_update?: { step_type?: string; state?: string; tool_name?: string; step_index?: number; tool_info?: { name?: string; parameters?: Record<string, unknown> } }
-      message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> }
+      thoughtSignature?: string
+      step_update?: {
+        step_type?: string
+        state?: string
+        tool_name?: string
+        step_index?: number
+        thoughtSignature?: string
+        tool_info?: { name?: string; parameters?: Record<string, unknown>; thoughtSignature?: string }
+      }
+      message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string }> }
     }
     const tu = Array.isArray(raw.message?.content) ? raw.message.content.find((b) => b?.type === "tool_use" && typeof b.name === "string") : undefined
     if (tu?.name) {
-      return { phase: "pre", tool: tu.name, input: (tu.input && typeof tu.input === "object" ? tu.input : {}), toolUseId: tu.id || `tu_${Date.now()}` }
+      const sig = typeof tu.thoughtSignature === "string" ? tu.thoughtSignature : undefined
+      return {
+        phase: "pre",
+        tool: tu.name,
+        input: (tu.input && typeof tu.input === "object" && !Array.isArray(tu.input) ? tu.input : {}),
+        toolUseId: tu.id || `tu_${Date.now()}`,
+        ...(sig !== undefined ? { thoughtSignature: sig } : {}),
+      }
     }
     if (raw.event === "step_update" && raw.step_update?.step_type === "tool" && raw.step_update.state === "ACTIVE") {
       const tool = raw.step_update.tool_name || raw.step_update.tool_info?.name
       const params = raw.step_update.tool_info?.parameters
       if (typeof tool === "string" && tool) {
+        const sig = typeof raw.step_update.tool_info?.thoughtSignature === "string"
+          ? raw.step_update.tool_info.thoughtSignature
+          : typeof raw.step_update.thoughtSignature === "string"
+            ? raw.step_update.thoughtSignature
+            : typeof raw.thoughtSignature === "string"
+              ? raw.thoughtSignature
+              : undefined
         return {
           phase: "pre",
           tool,
           input: (params && typeof params === "object" && !Array.isArray(params) ? params : {}),
           toolUseId: `agy_tu_${raw.step_update.step_index ?? Date.now()}`,
+          ...(sig !== undefined ? { thoughtSignature: sig } : {}),
         }
       }
     }

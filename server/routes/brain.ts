@@ -2,7 +2,9 @@ import type { A2UIEngineDeps } from "../lib/a2ui"
 import { executeA2UIMacro, handleA2UIAction } from "../lib/a2ui-macros"
 import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
+import { runBrainLoadSkill } from "../lib/brain-turn-harness"
 import { latestRows, rowsSince } from "../lib/brain-trace"
+import type { Gemini4StreamTransport } from "../lib/gemini4-orchestrator-client"
 import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
 import { searchThread } from "../lib/orchestrator-chat"
@@ -14,6 +16,7 @@ import { REPO_NAME_RE, TASK_ID_RE } from "../lib/worker-invocation"
 import type { WorkerMcpHandler } from "../lib/worker-mcp"
 import { type BrainWiring, brainWiring, getBrainDeliver } from "../wiring/brain"
 import { addBrainHandoff } from "../wiring/brain-handoff"
+import { createBrainSseTurnResponse, executeAtomicBrainDispatch } from "../wiring/brain-propose"
 import { addBrainTodo } from "../wiring/brain-todo"
 import { REASON_MAX, closeDeadPr } from "../wiring/brain-pr-close"
 import { mergeAgentPr } from "../wiring/brain-pr-merge"
@@ -23,13 +26,13 @@ import { TASK_REF, cancelAgentTask } from "../wiring/brain-task-cancel"
 import { type BrainLead, brainLead, leadCheckout, relayToBrainThread } from "../wiring/brain-lead"
 import { type DeployResult, autoDeploy, isDeployRepo } from "../wiring/auto-deploy"
 import { type BrainWorkers, brainWorkers } from "../wiring/brain-workers"
-import { workerMcp } from "../wiring/worker-mcp"
 
 // brain-v2 routes (docs/brain-api.md):
 //   GET  /api/brain                       → {ok, brain: {state, sessionKey, since, restarts, host}}
 //   GET  /api/brain/trace?since=<seq>     → {ok, rows: TraceRow[]}
 //   POST /api/brain/pause|resume|restart  → {ok, brain}; restart while paused → 409 paused
 //   POST /hooks/brain/propose             → bin/propose: {title, prompt, noteId, agent?, reasoning, sourceTurnId, handoff?}
+//   POST /hooks/brain/dispatch            → bin/dispatch: atomic local handoff + worker MCP dispatch_task
 //   POST /hooks/brain/thread              → bin/thread: {q, limit?} → {ok, turns: [{id, role, at, text}]} (brain thread, newest first)
 //   POST /hooks/brain/lead                → bin/lead: {repo} → {ok, name, state} (docs/brain-api.md § Repo leads)
 //   POST /hooks/brain/todo                → bin/todo: {text, noteId, due?, sourceTurnId} → {ok, taskId, replay} (a to-do for Jeremie)
@@ -41,7 +44,9 @@ import { workerMcp } from "../wiring/worker-mcp"
 //   POST /hooks/brain/task-cancel         → bin/task-cancel: {task, reason} → {ok, cancelled, from, pr?, prState?, note?} (queued, blocked, failed tasks the brain proposed)
 //   POST /hooks/brain/deploy              → bin/deploy: {repo, reason} → {ok, result, from, to} (claude-companion | claude-config, ff-only)
 //   POST /hooks/brain/media               → bin/media: {url} → {ok, kind, meta, palette, transcript, frames, contactSheet} | {ok:false, error, reason}
+//   POST /hooks/brain/load-skill          → bin/load-skill: {skillId} → {ok, skillId, content, output}
 //   GET  /api/brain/workers               → {ok, mode, sessions, foreign} (the reaper's dry run; never names foreign workspaces)
+//   POST /api/brain/stream                → SSE stream (`thinking_delta` | `tool_start` | `tool_result_summary` | `text_delta` | `done`)
 // /api/* is Bearer-gated by companion-server.ts; checked here too. The propose
 // hook is loopback only (a tailscale-serve hop is refused), and must carry the
 // brain session's pid with X-Companion-Task-Id: brain.
@@ -96,6 +101,10 @@ export interface BrainRouteDeps {
   a2uiEngine?: A2UIEngineDeps
   /** Worker MCP handler for atomic `/hooks/brain/dispatch` (default: workerMcp). */
   workerMcp?: WorkerMcpHandler
+  /** Stage 2 dynamic skill loader seam for `bin/load-skill` (`POST /hooks/brain/load-skill`). */
+  loadSkill?: typeof runBrainLoadSkill
+  /** Gemini 4 SSE stream transport seam for `POST /api/brain/stream`. */
+  streamTransport?: Gemini4StreamTransport
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -124,92 +133,6 @@ function proposeRefusal(req: Request, deps: BrainRouteDeps): Response | null {
   return null
 }
 
-async function runAtomicBrainDispatch(
-  body: Record<string, unknown>,
-  deps: BrainRouteDeps,
-  parsed: { noteId: string; prompt: string; sourceTurnId: string; title: string; reasoning: string; taskId?: string },
-): Promise<Response> {
-  const rawRepo = typeof body.repo === "string" ? body.repo.trim() : ""
-  if (!REPO_NAME_RE.test(rawRepo)) return fail(400, "invalid_repo")
-  const repo = rawRepo.toLowerCase()
-  const family = str(body.family, 32) ?? undefined
-  const agent = str(body.agent, 64) ?? undefined
-  const model = str(body.model, 128) ?? undefined
-  const mode = str(body.mode, 32) ?? "auto"
-  const host = str(body.host, 32) ?? "local"
-  const handoffOut = await (deps.handoff ?? addBrainHandoff)({
-    title: parsed.title,
-    prompt: parsed.prompt,
-    noteId: parsed.noteId,
-    reasoning: parsed.reasoning,
-    sourceTurnId: parsed.sourceTurnId,
-    repo,
-    ...(parsed.taskId ? { taskId: parsed.taskId } : {}),
-  })
-  if (handoffOut.body.ok !== true) {
-    return Response.json(handoffOut.body, { status: handoffOut.status })
-  }
-  const resolvedTaskId = String(handoffOut.body.taskId ?? parsed.taskId ?? "")
-  const claim = typeof handoffOut.body.claim === "string" ? handoffOut.body.claim : undefined
-  const mcp = deps.workerMcp ?? workerMcp
-  const rpcOut = await mcp.handleRpc({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "dispatch_task",
-      arguments: {
-        task_id: resolvedTaskId,
-        repo,
-        prompt: parsed.prompt,
-        title: parsed.title,
-        mode,
-        host,
-        ...(family ? { family } : {}),
-        ...(agent ? { agent } : {}),
-        ...(model ? { model } : {}),
-        ...(claim ? { claim } : {}),
-      },
-    },
-  })
-  const structured = ((rpcOut?.result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent) ?? {}
-  if (structured.ok !== true) {
-    if (handoffOut.body.replay === true && structured.error === "task_already_running") {
-      const existingOut = await mcp.handleRpc({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: { name: "get_task", arguments: { task_id: resolvedTaskId, host } },
-      })
-      const existing = ((existingOut?.result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent) ?? {}
-      return Response.json({
-        ...handoffOut.body,
-        dispatched: true,
-        replay: true,
-        host: existing.host ?? host,
-        task: existing.task ?? null,
-      }, { status: 200, headers: { "Idempotent-Replayed": "true" } })
-    }
-    const status = typeof structured.status === "number" ? structured.status : 502
-    return Response.json({
-      ...handoffOut.body,
-      ok: false,
-      dispatched: false,
-      error: typeof structured.error === "string" ? structured.error : "dispatch_failed",
-    }, { status })
-  }
-  return Response.json({
-    ...handoffOut.body,
-    dispatched: true,
-    claimStatus: structured.claim ?? (claim ? "verified" : "absent"),
-    host: structured.host ?? host,
-    task: structured.task ?? null,
-  }, {
-    status: 200,
-    headers: handoffOut.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
-  })
-}
-
 async function propose(req: Request, deps: BrainRouteDeps, forceDispatch = false): Promise<Response> {
   const refused = proposeRefusal(req, deps)
   if (refused) {
@@ -232,7 +155,11 @@ async function propose(req: Request, deps: BrainRouteDeps, forceDispatch = false
   const reasoning = str(body.reasoning, REASONING_MAX) ?? ""
   if (forceDispatch || body.dispatch === true) {
     deps.wiring.noteSideEffect?.("dispatch")
-    return runAtomicBrainDispatch(body, deps, { noteId, prompt, sourceTurnId, title, reasoning, taskId: rawTaskId })
+    return executeAtomicBrainDispatch(
+      body,
+      { noteId, prompt, sourceTurnId, title, reasoning, taskId: rawTaskId },
+      { handoff: deps.handoff, workerMcp: deps.workerMcp },
+    )
   }
   if (body.handoff === true) {
     deps.wiring.noteSideEffect?.("propose:handoff")
@@ -475,6 +402,17 @@ async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/load-skill: Stage 2 dynamic skill retrieval for un-injected skills (`POST /hooks/brain/load-skill`). */
+async function loadSkillRoute(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const out = (deps.loadSkill ?? runBrainLoadSkill)(body)
+  if (!out.ok) return Response.json(out, { status: out.error === "skill_not_found" ? 404 : 400 })
+  return Response.json(out, { status: 200 })
+}
+
 /** POST /api/brain/a2ui/action: deterministic bidirectional A2UI action router with actionKey idempotency. */
 async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const body = await readJson(req)
@@ -494,6 +432,15 @@ async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response>
     status: out.status,
     headers: out.body.replay ? { "Idempotent-Replayed": "true" } : undefined,
   })
+}
+
+async function streamBrainTurn(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const prompt = str(body.prompt, PROMPT_MAX)
+  if (!prompt) return fail(400, "prompt required")
+  const sessionId = str(body.sessionId, 128) ?? deps.wiring.status().sessionKey ?? "brain_sse"
+  return createBrainSseTurnResponse({ sessionId, prompt, transport: deps.streamTransport, signal: req.signal })
 }
 
 export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, sessions: listSessions, enabled: brainEnabled }) {
@@ -569,6 +516,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return ui(req, deps)
     }
+    if (p === "/hooks/brain/load-skill") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return loadSkillRoute(req, deps)
+    }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()
     if (!deps.enabled()) return fail(404, "brain_disabled")
@@ -583,6 +535,7 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       return Response.json({ ok: true, mode: s.mode, sessions: s.sessions, foreign: s.foreign })
     }
     if (req.method !== "POST") return fail(405, "method_not_allowed")
+    if (p === "/api/brain/stream") return streamBrainTurn(req, deps)
     if (p === "/api/brain/a2ui/action") return a2uiAction(req, deps)
     if (p === "/api/brain/pause") return Response.json({ ok: true, brain: deps.wiring.pause() })
     if (p === "/api/brain/resume") return Response.json({ ok: true, brain: deps.wiring.resume() })

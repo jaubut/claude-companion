@@ -37,6 +37,7 @@ const READ_ONLY_TOOLS = new Set([
   "update_steps",
   "TodoWrite",
   "write_todos",
+  "load_skill",
 ])
 
 const MUTATING_FILE_TOOLS = new Set([

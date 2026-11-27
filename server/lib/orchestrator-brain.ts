@@ -2,8 +2,12 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { brainText } from "./brain"
+import { pruneContext, turnsToInteractiveMessages } from "./context-pruning"
+import { getFeatureFlags } from "./feature-flags"
 import type { Turn } from "./orchestrator-chat"
+import { db } from "./orchestrator-db"
 import { parseCliResult } from "./cli-json"
+import { buildDeterministicColdSummary, getSessionSummarySync, upsertSessionSummary } from "./session-summaries"
 
 // Orchestrator brain (PRJ-OR1T). Decides whether to answer a user message inline
 // (chat) or propose dispatching a worker Claude (proposal). Phase 3 tiers the
@@ -88,9 +92,35 @@ function stripFence(s: string): string {
   return s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim()
 }
 
-export function history(turns: Turn[]): string {
-  const h = turns.slice(-20).map((t) => `${t.role}: ${brainText(t)}`).join("\n")
-  return h || "(empty)"
+export function history(turns: Turn[], env: Record<string, string | undefined> = process.env): string {
+  if (!getFeatureFlags(env).ENABLE_CONTEXT_PRUNING) {
+    const h = turns.slice(-20).map((t) => `${t.role}: ${brainText(t)}`).join("\n")
+    return h || "(empty)"
+  }
+  const threadId = turns[0]?.threadId ?? ""
+  const interactive = turnsToInteractiveMessages(turns)
+  if (interactive.length === 0) return "(empty)"
+
+  const stored = threadId ? getSessionSummarySync(db, threadId) : null
+  const initial = pruneContext(interactive, stored?.summaryMarkdown)
+  let summaryBlock = initial.coldSummarySystemBlock
+
+  if (threadId && initial.coldMessages.length > 0) {
+    const cursor = stored?.summarizedUpToTurnId ?? -1
+    const unsummarized = initial.coldMessages.filter((m) => m.id > cursor)
+    if (unsummarized.length > 0) {
+      const nextMarkdown = buildDeterministicColdSummary(unsummarized, stored?.summaryMarkdown)
+      const maxId = unsummarized.reduce((max, m) => Math.max(max, m.id), cursor)
+      void upsertSessionSummary(db, { sessionId: threadId, summarizedUpToTurnId: maxId, summaryMarkdown: nextMarkdown })
+      summaryBlock = nextMarkdown ? `### Cold Session Summary\n${nextMarkdown}` : undefined
+    }
+  }
+
+  const lines = initial.messages.map((m) => {
+    const roleLabel = m.role === "assistant" ? "orchestrator" : m.role === "tool" ? "worker" : "user"
+    return `${roleLabel}: ${m.content}`
+  })
+  return [summaryBlock, ...lines].filter(Boolean).join("\n") || "(empty)"
 }
 
 // One headless model call, tools disabled. Returns the model's text (the wrapper

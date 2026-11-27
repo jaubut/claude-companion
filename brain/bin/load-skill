@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# brain-v2 (Phase 1): dynamically load an un-injected skill's full SKILL.md (POST /hooks/brain/load-skill).
+#
+#   bin/load-skill <skill-id>
+#   bin/load-skill --skill <skill-id>
+#
+# Same loopback auth as bin/propose and bin/ui: X-Companion-Task-Id: brain and
+# the pid of the calling claude/codex/gemini/agy process.
+set -euo pipefail
+
+SKILL_ID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skill|--id) SKILL_ID="${2:-}"; shift 2 ;;
+    -*) echo "load-skill: unknown flag $1" >&2; exit 2 ;;
+    *)
+      if [ -z "$SKILL_ID" ]; then
+        SKILL_ID="$1"
+        shift
+      else
+        echo 'load-skill: usage: bin/load-skill <skill-id>' >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$SKILL_ID" ]; then
+  echo 'load-skill: usage: bin/load-skill <skill-id>' >&2
+  exit 2
+fi
+
+caller_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*|*codex*|*gemini*|*agy*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(SKILL_ID="$SKILL_ID" python3 -c 'import json, os; print(json.dumps({"skillId": os.environ["SKILL_ID"]}))')
+
+curl -sS --max-time 15 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/load-skill" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(caller_pid)" \
+  --data-binary "$BODY"
+echo

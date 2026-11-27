@@ -359,6 +359,67 @@
           "externals": []
         },
         {
+          "path": "lib/adaptive-routing.ts",
+          "lines": 196,
+          "kind": "lib",
+          "exports": [
+            "GEMINI4_UNIFIED_CONTEXT_WINDOW",
+            "GEMINI4_DEFAULT_SYNC_OUTPUT_LIMIT",
+            "TIER1_TIMEOUT_MS",
+            "TIER2_TIMEOUT_MS",
+            "TIER3_MIN_TIMEOUT_MS",
+            "RouteTier",
+            "Gemini4ThinkingLevel",
+            "AdaptiveRouteDecision",
+            "classifyPromptRoute",
+            "shouldSwitchWarmAgyModel",
+            "resolveTierTimeoutMs"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-telemetry.ts",
+            "lib/worker-invocation.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/agent-notifications.ts",
+          "lines": 191,
+          "kind": "lib",
+          "exports": [
+            "NOTIFICATION_SEVERITIES",
+            "NotificationSeverity",
+            "Notification",
+            "InsertNotificationInput",
+            "ensureAgentNotificationsTable",
+            "openIsolatedNotificationDb",
+            "insertAgentNotification",
+            "fetchAndMarkUnsurfacedNotifications",
+            "classifyBackgroundEventNotification"
+          ],
+          "state": [
+            "SEVERITY_SET: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/db-path.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/agent-pid.ts",
           "lines": 38,
           "kind": "lib",
@@ -1484,8 +1545,39 @@
           "externals": []
         },
         {
+          "path": "lib/brain-lane-isolation.ts",
+          "lines": 267,
+          "kind": "lib",
+          "exports": [
+            "fitPrioritizedTurns",
+            "runLegacyPureEventTriage",
+            "scrubInternalEventsFromReply",
+            "IsolatedBackgroundLane",
+            "createIsolatedBackgroundLane",
+            "appendLaneANotifications"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agent-notifications.ts",
+            "lib/brain.ts",
+            "lib/brain-event-triage.ts",
+            "lib/db-path.ts",
+            "lib/ops-triage.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/brain-preempt.ts",
-          "lines": 146,
+          "lines": 147,
           "kind": "lib",
           "exports": [
             "BrainTurnTrigger",
@@ -1557,7 +1649,7 @@
         },
         {
           "path": "lib/brain-stream.ts",
-          "lines": 408,
+          "lines": 439,
           "kind": "lib",
           "exports": [
             "SpawnedPersistentWorkerHandle",
@@ -1570,6 +1662,7 @@
             "buildBrainDoneFrame",
             "buildBrainClearFrame",
             "reconcileBrainStream",
+            "StreamToolCall",
             "extractStreamToolCall",
             "readAgyStepText"
           ],
@@ -1627,6 +1720,49 @@
           "externals": []
         },
         {
+          "path": "lib/brain-turn-harness.ts",
+          "lines": 356,
+          "kind": "lib",
+          "exports": [
+            "getSharedSkillRegistry",
+            "resetSharedSkillRegistryForTests",
+            "runBrainLoadSkill",
+            "ModelTurnPart",
+            "ModelTurn",
+            "preserveModelTurnThoughtSignatures",
+            "sanitizeGemini4GenerationConfig",
+            "PreparedBrainTurn",
+            "sanitizeInteractiveBatchText",
+            "prepareBrainTurn",
+            "TurnMetricsTracker",
+            "startBrainTurnMetrics"
+          ],
+          "state": [
+            "let defaultRegistry",
+            "let defaultRegistryDir"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/adaptive-routing.ts",
+            "lib/brain-stream.ts",
+            "lib/context-pruning.ts",
+            "lib/feature-flags.ts",
+            "lib/orchestrator-telemetry.ts",
+            "lib/session-summaries.ts",
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts",
+            "lib/skill-tools.ts",
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/brain-workers.ts",
           "lines": 113,
           "kind": "lib",
@@ -1665,7 +1801,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 307,
+          "lines": 312,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -2286,6 +2422,37 @@
           "externals": []
         },
         {
+          "path": "lib/context-pruning.ts",
+          "lines": 224,
+          "kind": "lib",
+          "exports": [
+            "Message",
+            "PrunedContextResult",
+            "HOT_WINDOW_TURNS",
+            "WARM_WINDOW_END_TURNS",
+            "WARM_TOOL_COMPACT_CHAR_THRESHOLD",
+            "DEFAULT_CONTEXT_TOKEN_CEILING",
+            "stripStackTraces",
+            "isOperationalEventText",
+            "filterInteractiveMessages",
+            "turnsToInteractiveMessages",
+            "pruneContext"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/orchestrator-chat.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/copy-jobs.ts",
           "lines": 306,
           "kind": "lib",
@@ -2825,6 +2992,28 @@
           "externals": []
         },
         {
+          "path": "lib/feature-flags.ts",
+          "lines": 63,
+          "kind": "lib",
+          "exports": [
+            "FeatureFlags",
+            "SafeParseResult",
+            "parseFeatureFlags",
+            "FeatureFlagsSchema",
+            "FLAGS",
+            "getFeatureFlags"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/feed.ts",
           "lines": 210,
           "kind": "lib",
@@ -2977,6 +3166,39 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/gemini4-orchestrator-client.ts",
+          "lines": 531,
+          "kind": "lib",
+          "exports": [
+            "OrchestratorEvent",
+            "formatOrchestratorSseEvent",
+            "parseOrchestratorSseChunk",
+            "createOrchestratorSseResponse",
+            "Gemini4NativeRequestPayload",
+            "buildGemini4NativeRequest",
+            "Gemini4StreamChunk",
+            "Gemini4StreamTransport",
+            "createFetchGemini4Transport",
+            "agyStreamLineToOrchestratorEvents"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/adaptive-routing.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/feature-flags.ts",
+            "lib/native-tool-executor.ts",
+            "lib/orchestrator-telemetry.ts",
+            "lib/skill-types.ts"
+          ],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4064,6 +4286,39 @@
           "externals": []
         },
         {
+          "path": "lib/native-tool-executor.ts",
+          "lines": 203,
+          "kind": "lib",
+          "exports": [
+            "MAX_TOOL_SCHEMA_RETRIES",
+            "ToolSchema",
+            "InferToolSchema",
+            "ToolExecutionResult",
+            "GeminiFunctionDeclaration",
+            "NativeToolDefinition",
+            "ExecutableNativeTool",
+            "defineNativeTool",
+            "executeNativeTool",
+            "FieldRule",
+            "defineObjectToolSchema",
+            "buildGeminiFunctionDeclarations",
+            "createNativeLoadSkillTool"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts",
+            "lib/skill-retrieval.ts",
+            "lib/skill-tools.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/note-media.ts",
           "lines": 120,
           "kind": "lib",
@@ -4092,7 +4347,7 @@
         },
         {
           "path": "lib/ops-triage.ts",
-          "lines": 362,
+          "lines": 366,
           "kind": "lib",
           "exports": [
             "OPS_TRIAGE_TIMEOUT_MS",
@@ -4131,7 +4386,7 @@
         },
         {
           "path": "lib/orchestrator-brain.ts",
-          "lines": 278,
+          "lines": 308,
           "kind": "lib",
           "exports": [
             "BrainDecision",
@@ -4150,8 +4405,12 @@
           "apiCalls": [],
           "imports": [
             "lib/brain.ts",
+            "lib/context-pruning.ts",
+            "lib/feature-flags.ts",
             "lib/orchestrator-chat.ts",
-            "lib/cli-json.ts"
+            "lib/orchestrator-db.ts",
+            "lib/cli-json.ts",
+            "lib/session-summaries.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4256,6 +4515,40 @@
           "apiCalls": [],
           "imports": [
             "lib/db-path.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-telemetry.ts",
+          "lines": 297,
+          "kind": "lib",
+          "exports": [
+            "TurnMetricRecord",
+            "StoredTurnMetricRow",
+            "PostgresSqlTag",
+            "TelemetrySink",
+            "isGemini4Model",
+            "sanitizeThinkingLevel",
+            "ensureTurnMetricsTable",
+            "logTurnMetrics",
+            "recordTurnMetrics",
+            "readTurnMetrics",
+            "ExtractedUsageMetrics",
+            "extractUsageMetrics"
+          ],
+          "state": [
+            "VALID_GEMINI4_THINKING_LEVELS: Set",
+            "let pgClientUrl",
+            "let pgClient"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5682,6 +5975,35 @@
           "externals": []
         },
         {
+          "path": "lib/session-summaries.ts",
+          "lines": 200,
+          "kind": "lib",
+          "exports": [
+            "DEFAULT_COLD_SUMMARIZER_MODEL",
+            "SessionSummaryRecord",
+            "ensureSessionSummariesTable",
+            "upsertSessionSummary",
+            "getSessionSummarySync",
+            "getSessionSummary",
+            "ColdTurnSummaryInput",
+            "ColdSummarizerFn",
+            "buildDeterministicColdSummary",
+            "foldColdSessionSummary"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/session-titles.ts",
           "lines": 145,
           "kind": "lib",
@@ -5817,6 +6139,131 @@
             "lib/spawn-session.ts",
             "lib/tmux-pane.ts",
             "lib/tmux-spawn-confirm.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-loader.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "parseSkillFrontmatter",
+            "extractSkillTriggers",
+            "inferSkillCategory",
+            "LoadSkillsOptions",
+            "defaultSkillsDir",
+            "loadSkillManifests"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-prompt.ts",
+          "lines": 144,
+          "kind": "lib",
+          "exports": [
+            "STATIC_LOAD_SKILL_INSTRUCTIONS",
+            "loadStaticBrainRules",
+            "renderFullSkillBlock",
+            "BuiltSystemPrompt",
+            "buildDynamicSystemPrompt",
+            "buildBaselineStaticSystemPrompt"
+          ],
+          "state": [
+            "cachedBrainRulesByDir: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-retrieval.ts",
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-retrieval.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "compactSkillDescription",
+            "DynamicSkillRegistry"
+          ],
+          "state": [
+            "STOPWORDS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-tools.ts",
+          "lines": 127,
+          "kind": "lib",
+          "exports": [
+            "LoadSkillInput",
+            "LoadSkillInputSchema",
+            "loadSkillToolDefinition",
+            "LoadSkillExecutionResult",
+            "executeLoadSkill"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts",
+            "lib/skill-retrieval.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-types.ts",
+          "lines": 112,
+          "kind": "lib",
+          "exports": [
+            "SKILL_CATEGORIES",
+            "SkillCategory",
+            "SkillManifest",
+            "SkillDirectoryEntry",
+            "SkillSelectionResult",
+            "estimateTokens",
+            "isSkillCategory",
+            "SkillManifestSchema"
+          ],
+          "state": [
+            "CATEGORY_SET: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -7405,7 +7852,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 591,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -8177,7 +8624,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 598,
+          "lines": 551,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -8194,7 +8641,9 @@
             "lib/a2ui-macros.ts",
             "lib/auth.ts",
             "lib/brain.ts",
+            "lib/brain-turn-harness.ts",
             "lib/brain-trace.ts",
+            "lib/gemini4-orchestrator-client.ts",
             "lib/link-media.ts",
             "lib/log.ts",
             "lib/orchestrator-chat.ts",
@@ -8206,6 +8655,7 @@
             "lib/worker-mcp.ts",
             "wiring/brain.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -8214,8 +8664,7 @@
             "wiring/brain-task-cancel.ts",
             "wiring/brain-lead.ts",
             "wiring/auto-deploy.ts",
-            "wiring/brain-workers.ts",
-            "wiring/worker-mcp.ts"
+            "wiring/brain-workers.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9430,7 +9879,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 571,
+          "lines": 583,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -9454,18 +9903,23 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/adaptive-routing.ts",
             "lib/brain.ts",
             "lib/brain-store.ts",
             "lib/brain-stream.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/command-catalog.ts",
+            "lib/feature-flags.ts",
             "lib/last-assistant.ts",
             "lib/log.ts",
+            "lib/orchestrator-telemetry.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts",
+            "lib/skill-retrieval.ts",
             "lib/spawn-session.ts",
-            "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts",
-            "wiring/brain-workers.ts",
-            "lib/command-catalog.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-workers.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9657,6 +10111,38 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-propose.ts",
+          "lines": 150,
+          "kind": "lib",
+          "exports": [
+            "ProposeInput",
+            "proposalHandedOff",
+            "executeAtomicBrainDispatch",
+            "createBrainSseTurnResponse"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "wiring/brain-headless.ts",
+            "wiring/brain-handoff.ts",
+            "wiring/worker-mcp.ts",
+            "lib/brain.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "lib/native-tool-executor.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/skill-prompt.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-mcp.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-restore.ts",
           "lines": 100,
           "kind": "lib",
@@ -9826,14 +10312,12 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 574,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "BrainStatus",
-            "ProposeInput",
             "BrainDeps",
             "emitTrace",
-            "proposalHandedOff",
             "createBrainWiring",
             "BrainWiring",
             "setBrainDeliver",
@@ -9857,9 +10341,12 @@
             "state.ts",
             "lib/brain.ts",
             "lib/brain-event-triage.ts",
+            "lib/brain-lane-isolation.ts",
             "lib/brain-preempt.ts",
             "lib/brain-stream.ts",
+            "lib/feature-flags.ts",
             "lib/ops-triage.ts",
+            "lib/orchestrator-telemetry.ts",
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "wiring/brain-activity.ts",
@@ -9873,7 +10360,8 @@
             "wiring/orchestrator.ts",
             "wiring/dispatch.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain-headless.ts"
+            "wiring/brain-headless.ts",
+            "wiring/brain-propose.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -11770,7 +12258,9 @@
             "lib/a2ui-actions.ts",
             "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
+            "lib/brain-lane-isolation.ts",
             "lib/brain-stream.ts",
+            "lib/context-pruning.ts",
             "lib/dispatch-poller.ts",
             "lib/front-door.ts",
             "lib/orchestrator-brain.ts",
@@ -11894,8 +12384,10 @@
             "lib/a2ui-actions.ts",
             "lib/a2ui.ts",
             "lib/brain-event-triage.ts",
+            "lib/brain-lane-isolation.ts",
             "lib/brain-stream.ts",
             "lib/brain-workers.ts",
+            "lib/context-pruning.ts",
             "routes/brain.ts",
             "routes/orchestrator.ts",
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
@@ -12328,9 +12820,47 @@
         "normalizeAgyCliModelFlag": {
           "module": "lib/worker-invocation.ts",
           "callers": [
+            "lib/adaptive-routing.ts",
             "lib/agy-feed.ts",
             "lib/ops-triage.ts",
             "lib/worker-supervisor.ts"
+          ]
+        },
+        "sanitizeThinkingLevel": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/adaptive-routing.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "companionDbPath": {
+          "module": "lib/db-path.ts",
+          "callers": [
+            "lib/agent-notifications.ts",
+            "lib/approval-history.ts",
+            "lib/board-room.ts",
+            "lib/brain-lane-isolation.ts",
+            "lib/learned-allow.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push-tokens.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/session-titles.ts",
+            "lib/voice-memo.ts",
+            "wiring/auto-compact.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "TelemetrySink": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/agent-notifications.ts",
+            "lib/brain-lane-isolation.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "lib/session-summaries.ts",
+            "wiring/brain-headless.ts",
+            "wiring/brain.ts"
           ]
         },
         "readTailLines": {
@@ -12656,21 +13186,6 @@
             "wiring/trips.ts",
             "wiring/worker-mcp.ts",
             "ws.ts"
-          ]
-        },
-        "companionDbPath": {
-          "module": "lib/db-path.ts",
-          "callers": [
-            "lib/approval-history.ts",
-            "lib/board-room.ts",
-            "lib/learned-allow.ts",
-            "lib/orchestrator-db.ts",
-            "lib/push-tokens.ts",
-            "lib/receipt-qa-store.ts",
-            "lib/session-titles.ts",
-            "lib/voice-memo.ts",
-            "wiring/auto-compact.ts",
-            "wiring/canvas.ts"
           ]
         },
         "redactSecrets": {
@@ -13550,6 +14065,75 @@
             "wiring/brain-lead.ts"
           ]
         },
+        "classifyBackgroundEventNotification": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "fetchAndMarkUnsurfacedNotifications": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "insertAgentNotification": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "openIsolatedNotificationDb": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "DeliveryTurn": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "fitQueued": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "OpsTriageEvent": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "OpsTriageDecision": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "brainText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "lib/context-pruning.ts",
+            "lib/front-door.ts",
+            "lib/orchestrator-brain.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "classifyBrainEvent": {
+          "module": "lib/brain-event-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "SpawnedWorkerHandle": {
           "module": "lib/worker-spawn.ts",
           "callers": [
@@ -13628,6 +14212,181 @@
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
             "wiring/brain-workers.ts"
+          ]
+        },
+        "SpawnedPersistentWorkerHandle": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "StreamToolCall": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "defaultSpawnPersistentWorker": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "extractStreamToolCall": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "ExtractedUsageMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "TurnMetricRecord": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "extractUsageMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "isGemini4Model": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "logTurnMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "recordTurnMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "STATIC_LOAD_SKILL_INSTRUCTIONS": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "buildBaselineStaticSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "buildDynamicSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "loadStaticBrainRules": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "renderFullSkillBlock": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "DynamicSkillRegistry": {
+          "module": "lib/skill-retrieval.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/native-tool-executor.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-tools.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "defaultSkillsDir": {
+          "module": "lib/skill-loader.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "loadSkillManifests": {
+          "module": "lib/skill-loader.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "LoadSkillExecutionResult": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "executeLoadSkill": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/native-tool-executor.ts"
+          ]
+        },
+        "isOperationalEventText": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "getFeatureFlags": {
+          "module": "lib/feature-flags.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "lib/orchestrator-brain.ts",
+            "wiring/brain-headless.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "getSessionSummarySync": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "classifyPromptRoute": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "estimateTokens": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts"
           ]
         },
         "BRAIN_AGENT": {
@@ -14071,6 +14830,22 @@
             "routes/dialogs.ts#POST /api/dialog/key",
             "routes/dialogs.ts#POST /api/dialog/pick",
             "wiring/pane-mirror.ts"
+          ]
+        },
+        "ModelTurnPart": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/context-pruning.ts",
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "isBrainInternalEvent": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/context-pruning.ts",
+            "routes/orchestrator.ts#GET /api/orchestrator/thread",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts"
           ]
         },
         "readSecretValue": {
@@ -14616,15 +15391,6 @@
             "lib/front-door.ts"
           ]
         },
-        "brainText": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "lib/front-door.ts",
-            "lib/orchestrator-brain.ts",
-            "routes/brain.ts",
-            "wiring/brain.ts"
-          ]
-        },
         "RouteDecision": {
           "module": "lib/jev-router.ts",
           "callers": [
@@ -14673,6 +15439,78 @@
             "lib/front-door.ts"
           ]
         },
+        "AdaptiveRouteDecision": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "GEMINI4_DEFAULT_SYNC_OUTPUT_LIMIT": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "GEMINI4_UNIFIED_CONTEXT_WINDOW": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "Gemini4ThinkingLevel": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "RouteTier": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "resolveTierTimeoutMs": {
+          "module": "lib/adaptive-routing.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "ModelTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "preserveModelTurnThoughtSignatures": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "sanitizeGemini4GenerationConfig": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "ExecutableNativeTool": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "MAX_TOOL_SCHEMA_RETRIES": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
+        "buildGeminiFunctionDeclarations": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "lib/gemini4-orchestrator-client.ts"
+          ]
+        },
         "WorkerFamily": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -14706,7 +15544,8 @@
             "lib/worker-supervisor.ts",
             "lib/worker-task-store.ts",
             "lib/worker-worktree.ts",
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain-propose.ts"
           ]
         },
         "herdrGateKey": {
@@ -15206,6 +16045,26 @@
             "routes/my-tasks.ts#* /api/tasks/mine"
           ]
         },
+        "SafeParseResult": {
+          "module": "lib/feature-flags.ts",
+          "callers": [
+            "lib/native-tool-executor.ts",
+            "lib/skill-tools.ts",
+            "lib/skill-types.ts"
+          ]
+        },
+        "loadSkillToolDefinition": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/native-tool-executor.ts"
+          ]
+        },
+        "LoadSkillInputSchema": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/native-tool-executor.ts"
+          ]
+        },
         "fetchNoteImage": {
           "module": "lib/dashboard-client.ts",
           "callers": [
@@ -15283,6 +16142,30 @@
           "callers": [
             "lib/ops-triage.ts",
             "wiring/brain-headless.ts"
+          ]
+        },
+        "turnsToInteractiveMessages": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "pruneContext": {
+          "module": "lib/context-pruning.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "buildDeterministicColdSummary": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
+          ]
+        },
+        "upsertSessionSummary": {
+          "module": "lib/session-summaries.ts",
+          "callers": [
+            "lib/orchestrator-brain.ts"
           ]
         },
         "parseCliResult": {
@@ -16506,6 +17389,12 @@
             "wiring/brain-headless.ts"
           ]
         },
+        "PostgresSqlTag": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/session-summaries.ts"
+          ]
+        },
         "WaitingKind": {
           "module": "lib/waiting.ts",
           "callers": [
@@ -16627,6 +17516,39 @@
           "module": "lib/ended-sessions.ts",
           "callers": [
             "lib/shell-sessions.ts"
+          ]
+        },
+        "SkillCategory": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts"
+          ]
+        },
+        "isSkillCategory": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts"
+          ]
+        },
+        "SkillManifest": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts"
+          ]
+        },
+        "SkillSelectionResult": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts"
+          ]
+        },
+        "SkillDirectoryEntry": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-retrieval.ts"
           ]
         },
         "oneLine": {
@@ -17723,7 +18645,8 @@
         "StreamJsonEvent": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "progressOf": {
@@ -18574,7 +19497,8 @@
         "addBrainHandoff": {
           "module": "wiring/brain-handoff.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain-propose.ts"
           ]
         },
         "BrainWorkers": {
@@ -18617,15 +19541,27 @@
           "module": "lib/worker-mcp.ts",
           "callers": [
             "routes/brain.ts",
-            "routes/worker-mcp.ts"
+            "routes/worker-mcp.ts",
+            "wiring/brain-propose.ts"
           ]
         },
-        "workerMcp": {
-          "module": "wiring/worker-mcp.ts",
+        "runBrainLoadSkill": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "Gemini4StreamTransport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
           "callers": [
             "routes/brain.ts",
-            "routes/worker-mcp.ts",
-            "wiring/github-webhook.ts"
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "executeAtomicBrainDispatch": {
+          "module": "wiring/brain-propose.ts",
+          "callers": [
+            "routes/brain.ts"
           ]
         },
         "searchThread": {
@@ -18706,6 +19642,12 @@
         },
         "executeA2UIMacro": {
           "module": "lib/a2ui-macros.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "createBrainSseTurnResponse": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -19496,7 +20438,7 @@
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts",
@@ -19690,14 +20632,6 @@
           "module": "lib/body.ts",
           "callers": [
             "routes/orchestrator.ts"
-          ]
-        },
-        "isBrainInternalEvent": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "routes/orchestrator.ts#GET /api/orchestrator/thread",
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
           ]
         },
         "listPipeline": {
@@ -20047,6 +20981,14 @@
           "module": "wiring/worker-blocked.ts",
           "callers": [
             "routes/worker-blocked.ts"
+          ]
+        },
+        "workerMcp": {
+          "module": "wiring/worker-mcp.ts",
+          "callers": [
+            "routes/worker-mcp.ts",
+            "wiring/brain-propose.ts",
+            "wiring/github-webhook.ts"
           ]
         },
         "RECEIPT_TOOLS": {
@@ -20559,7 +21501,7 @@
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain-handoff.ts",
-            "wiring/brain.ts"
+            "wiring/brain-propose.ts"
           ]
         },
         "stampDispatchId": {
@@ -20576,26 +21518,32 @@
             "wiring/brain.ts"
           ]
         },
-        "SpawnedPersistentWorkerHandle": {
-          "module": "lib/brain-stream.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "defaultSpawnPersistentWorker": {
-          "module": "lib/brain-stream.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "extractStreamToolCall": {
-          "module": "lib/brain-stream.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
         "readAgyStepText": {
           "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "PreparedBrainTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "TurnMetricsTracker": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "prepareBrainTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "startBrainTurnMetrics": {
+          "module": "lib/brain-turn-harness.ts",
           "callers": [
             "wiring/brain-headless.ts"
           ]
@@ -20624,6 +21572,12 @@
         },
         "buildPersistentGeminiArgs": {
           "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "shouldSwitchWarmAgyModel": {
+          "module": "lib/adaptive-routing.ts",
           "callers": [
             "wiring/brain-headless.ts"
           ]
@@ -20719,6 +21673,37 @@
           "callers": [
             "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts"
+          ]
+        },
+        "createFetchGemini4Transport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "createOrchestratorSseResponse": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "getSharedSkillRegistry": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "BRAIN_DIR": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain-propose.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "createNativeLoadSkillTool": {
+          "module": "lib/native-tool-executor.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
           ]
         },
         "envValue": {
@@ -20844,19 +21829,7 @@
             "wiring/brain.ts"
           ]
         },
-        "DeliveryTurn": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "deliveryText": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "fitQueued": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"
@@ -20934,12 +21907,6 @@
             "wiring/brain.ts"
           ]
         },
-        "BRAIN_DIR": {
-          "module": "wiring/brain-headless.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "HEADLESS_BRAIN_PANE": {
           "module": "wiring/brain-headless.ts",
           "callers": [
@@ -20952,20 +21919,26 @@
             "wiring/brain.ts"
           ]
         },
-        "OpsTriageEvent": {
-          "module": "lib/ops-triage.ts",
+        "ProposeInput": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
-        "OpsTriageDecision": {
-          "module": "lib/ops-triage.ts",
+        "proposalHandedOff": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
         "ActiveBrainTurnState": {
           "module": "lib/brain-preempt.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "createIsolatedBackgroundLane": {
+          "module": "lib/brain-lane-isolation.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -20988,12 +21961,6 @@
             "wiring/brain.ts"
           ]
         },
-        "classifyBrainEvent": {
-          "module": "lib/brain-event-triage.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "enqueueDelivery": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -21012,6 +21979,24 @@
             "wiring/brain.ts"
           ]
         },
+        "fitPrioritizedTurns": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "runLegacyPureEventTriage": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "appendLaneANotifications": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "BrainTurnTrigger": {
           "module": "lib/brain-preempt.ts",
           "callers": [
@@ -21026,6 +22011,12 @@
         },
         "markDelivered": {
           "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "scrubInternalEventsFromReply": {
+          "module": "lib/brain-lane-isolation.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -22047,12 +23038,6 @@
         },
         "createResolverEngine": {
           "module": "lib/resolver-engine.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "proposalHandedOff": {
-          "module": "wiring/brain.ts",
           "callers": [
             "wiring/resolver.ts"
           ]

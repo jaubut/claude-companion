@@ -218,13 +218,17 @@ async function callGeminiDirect(
   fetchFn: typeof fetch,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`
+  const gemini4 = /(?:^|\/)gemini[- ]4\b/i.test(model) || /gemini-pro-orchestrator/i.test(model)
+  const generationConfig: Record<string, unknown> = gemini4
+    ? { responseMimeType: "application/json" }
+    : { temperature: 0, maxOutputTokens: 120, responseMimeType: "application/json" }
   const res = await fetchFn(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: [{ role: "user", parts: [{ text: payload }] }],
-      generationConfig: { temperature: 0, maxOutputTokens: 120, responseMimeType: "application/json" },
+      generationConfig,
     }),
     signal: AbortSignal.timeout(timeoutMs),
   })
@@ -241,6 +245,7 @@ async function callOpenRouter(
   timeoutMs: number,
   fetchFn: typeof fetch,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const gemini4 = /(?:^|\/)gemini[- ]4\b/i.test(model) || /gemini-pro-orchestrator/i.test(model)
   const res = await fetchFn(OPENROUTER_ENDPOINT, {
     method: "POST",
     headers: {
@@ -250,8 +255,7 @@ async function callOpenRouter(
     },
     body: JSON.stringify({
       model,
-      temperature: 0,
-      max_tokens: 120,
+      ...(gemini4 ? {} : { temperature: 0, max_tokens: 120 }),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
