@@ -1,36 +1,40 @@
-import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { companionLog } from "../lib/log"
 import { HOST_INFO, broadcast } from "../state"
 import {
-  BRAIN_AGENT, BRAIN_THREAD, brainFiling, type BrainActivity, type BrainState, type DeliveryTurn,
-  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, brainText, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
+  BRAIN_AGENT, BRAIN_THREAD, type BrainActivity, type BrainState, type DeliveryTurn,
+  BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import { classifyBrainEvent } from "../lib/brain-event-triage"
+import {
+  appendLaneANotifications, createIsolatedBackgroundLane, fitPrioritizedTurns,
+  runLegacyPureEventTriage, scrubInternalEventsFromReply,
+} from "../lib/brain-lane-isolation"
+import { getFeatureFlags } from "../lib/feature-flags"
 import { type OpsTriageDecision, type OpsTriageEvent, triageOpsEvents } from "../lib/ops-triage"
+import type { TelemetrySink } from "../lib/orchestrator-telemetry"
 import {
   clearTyped, dismissDeliveries, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
-  openDeliveries, proposeSeen, rememberPropose, setKv, takeDeliveries,
+  openDeliveries, setKv, takeDeliveries,
 } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { createBrainActivity } from "./brain-activity"
-import { type Turn, appendTurn, createProposal, getTask, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
+import { type Turn, appendTurn, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
 import { ensureChannel } from "../lib/orchestrator-channels"
-import { DEFAULT_AGENT, getNote, resolveAgent } from "../lib/dispatch-tasks"
 import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import type { SpawnResult } from "../lib/spawn-session"
 import { pushToAll } from "../lib/push"
 import { apnsConfigured } from "../lib/apns"
 import type { ApnsPayload } from "../lib/apns"
 import { gauge } from "./gauge"
-import { emitChannel, emitTask, orchEmit } from "./orchestrator"
-import { approveProposal } from "./proposals"
+import { emitChannel, orchEmit } from "./orchestrator"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
 import { BRAIN_DIR, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, getBrainModel } from "./brain-headless"
+import { type ProposeInput, executeBrainPropose, proposalHandedOff } from "./brain-propose"
 
-export { BRAIN_DIR, HEADLESS_BRAIN_PANE, getBrainModel }
+export { BRAIN_DIR, HEADLESS_BRAIN_PANE, getBrainModel, type ProposeInput, proposalHandedOff }
 
 // brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent (herdr pane,
 // interactive claude under Remote Control `brain`), relays Jeremie's brain-thread
@@ -43,8 +47,6 @@ export { BRAIN_DIR, HEADLESS_BRAIN_PANE, getBrainModel }
 // retyped. The paused flag is re-read before every spawn, adoption and delivery.
 
 export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string; activity: BrainActivity | null }
-
-export interface ProposeInput { title: string; prompt: string; noteId: string; agent: string | null; reasoning: string; sourceTurnId: string }
 
 export interface BrainDeps {
   now(): number
@@ -79,14 +81,17 @@ export interface BrainDeps {
   middayRollover?: boolean
   /** Stateless cheap Ops Triage (Gemini Flash) called on pure-event batches before waking the Brain. */
   triageEvents?: (events: OpsTriageEvent[]) => Promise<OpsTriageDecision>
+  /** Override `ENABLE_LANE_ISOLATION` in tests; defaults to `getFeatureFlags().ENABLE_LANE_ISOLATION`. */
+  laneIsolation?: boolean
+  /** Notification bridge sink (SQLite `Database` or PostgreSQL `sql` tag) for Lane A / Lane B. */
+  notificationSink?: TelemetrySink
+  /** Max concurrent Lane B triage batches when lane isolation is enabled. */
+  laneBMaxConcurrency?: number
 }
 
 export function emitTrace(rows: TraceRow[]): void {
   if (rows.length) broadcast({ type: "brain_trace", op: "row", rows })
 }
-
-/** The resolver leaves a proposal alone once it is handed off: the brain is filing it, or it is no longer `proposed`. */
-export const proposalHandedOff = (taskId: string): boolean => brainFiling.has(taskId) || getTask(taskId)?.status !== "proposed"
 
 export function createBrainWiring(deps: BrainDeps) {
   let state: BrainState = "starting"
@@ -112,6 +117,14 @@ export function createBrainWiring(deps: BrainDeps) {
   const coalesceMs = deps.eventCoalesceMs ?? 0
   /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
   let selfWrite = 0, ticking = false, triaging = false, triageGen = 0
+  const isLaneIsolated = (): boolean => deps.laneIsolation ?? getFeatureFlags().ENABLE_LANE_ISOLATION
+  const laneB = createIsolatedBackgroundLane({
+    triageEvents: deps.triageEvents,
+    notificationSink: deps.notificationSink,
+    maxConcurrency: deps.laneBMaxConcurrency,
+    coalesceMs,
+    log: deps.log,
+  })
 
   function clearCoalesce(): void {
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null }
@@ -191,6 +204,10 @@ export function createBrainWiring(deps: BrainDeps) {
   /** A system turn landed in the brain thread (receipt, approval, merge…): triage before waking the brain. */
   function wake(turn: Turn): void {
     if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator" || selfWrite > 0) return
+    if (isLaneIsolated()) {
+      laneB.enqueue(turn)
+      return
+    }
     const disposition = classifyBrainEvent(turn)
     if (disposition === "silent") return
     try {
@@ -241,49 +258,48 @@ export function createBrainWiring(deps: BrainDeps) {
     return null
   }
 
-  function fitPrioritized(queued: string[], found: DeliveryTurn[]): { turns: DeliveryTurn[]; ids: string[] } {
-    const fitted = fitQueued(queued, found)
-    if (!found.some((t) => t.role === "user") || fitted.turns.some((t) => t.role === "user")) return fitted
-    return fitQueued(queued, [...found.filter((t) => t.role === "user"), ...found.filter((t) => t.role !== "user")])
-  }
-
   /** Deliver what is queued (with the boot seed first after a spawn). One typed prompt per brain turn. */
   async function flush(): Promise<void> {
     // A lost post-compact SessionStart must not hold delivery forever.
     if (compacting && deps.now() - compactedAt > BUSY_MAX_MS) compacting = false
     if (deps.paused.read() || busy || compacting || state !== "up" || !target()) return
+    const isolated = isLaneIsolated()
     const seed = pendingSeed
     let queued = seed ? openDeliveries().map((r) => r.turnId) : takeDeliveries()
     if (!seed && queued.length === 0) return
     let found = turnsOf(queued)
+    if (isolated) {
+      const bgEvents = found.filter((t) => t.role !== "user")
+      if (bgEvents.length > 0) {
+        dismissDeliveries(bgEvents.map((t) => t.id))
+        for (const ev of bgEvents) laneB.enqueue({ id: ev.id, text: ev.text, createdAt: ev.createdAt, card: ev.card as Turn["card"] })
+        found = found.filter((t) => t.role === "user")
+        queued = found.map((t) => t.id)
+        if (!seed && queued.length === 0) return
+      }
+    }
     const hasUserTurn = found.some((t) => t.role === "user")
-    if (triaging) {
+    if (!isolated && triaging) {
       if (!hasUserTurn) return
       // A real user turn arrived while pure-event triage was running: preempt triage so Jeremie never waits behind it.
       triageGen++; triaging = false
     }
-    let { turns, ids } = seed ? fitQueued(queued, found) : fitPrioritized(queued, found)
-    if (!seed && !hasUserTurn && deps.triageEvents && turns.length > 0 && turns.every((t) => t.role === "orchestrator" && classifyBrainEvent({ threadId: BRAIN_THREAD, role: "orchestrator", text: t.text, card: t.card ?? null }) === "batch")) {
+    let { turns, ids } = seed ? fitQueued(queued, found) : fitPrioritizedTurns(queued, found)
+    if (!isolated && !seed && !hasUserTurn && deps.triageEvents && turns.length > 0 && turns.every((t) => t.role === "orchestrator" && classifyBrainEvent({ threadId: BRAIN_THREAD, role: "orchestrator", text: t.text, card: t.card ?? null }) === "batch")) {
       const myGen = ++triageGen; triaging = true
-      let ignored = false
-      try {
-        const d = await deps.triageEvents(turns.map((t) => ({ id: t.id, text: brainText(t), cardKind: t.card?.kind ?? null })))
-        if (myGen !== triageGen) return
-        if (d.provider !== "none") deps.log(`[brain] ops-triage (${d.mode}) ${d.verdict}→${d.action} [${d.provider}/${d.model} ${d.latencyMs}ms]: ${d.reason}${d.error ? ` (${d.error})` : ""}`)
-        if (d.action === "ignore") { dismissDeliveries(ids); ignored = true }
-      } catch (err) {
-        if (myGen !== triageGen) return
-        deps.log(`[brain] ops-triage failed (escalating): ${(err as Error)?.message ?? String(err)}`)
-      } finally {
-        if (myGen === triageGen) triaging = false
-      }
-      if (ignored) { if (takeDeliveries().length > 0) void flush(); return }
+      const outcome = await runLegacyPureEventTriage({
+        turns, triageEvents: deps.triageEvents, log: deps.log,
+        isCurrentGen: () => myGen === triageGen, dismissIds: dismissDeliveries, ids,
+      }).finally(() => { if (myGen === triageGen) triaging = false })
+      if (outcome === "aborted") return
+      if (outcome === "ignored") { if (takeDeliveries().length > 0) void flush(); return }
       queued = takeDeliveries()
       if (queued.length === 0) return
       found = turnsOf(queued)
-      ;({ turns, ids } = fitPrioritized(queued, found))
+      ;({ turns, ids } = fitPrioritizedTurns(queued, found))
     }
-    const text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
+    let text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
+    if (isolated && (!seed || hasUserTurn)) text = await appendLaneANotifications(text, deps.notificationSink)
     if (busy || !target()) return
     setBusy(true)
     const out = await type(text)
@@ -328,7 +344,8 @@ export function createBrainWiring(deps: BrainDeps) {
   async function finishTurn(reply: string): Promise<void> {
     setBusy(false)
     lastActivity = deps.now()
-    const text = reply.trim()
+    const rawText = reply.trim()
+    const text = isLaneIsolated() ? scrubInternalEventsFromReply(rawText) : rawText
     const was = control
     control = null
     // A late Stop after the transcript fallback carries the same reply: once only.
@@ -459,6 +476,7 @@ export function createBrainWiring(deps: BrainDeps) {
   return {
     status,
     tick,
+    laneB,
 
     start(): void {
       if (timer) return
@@ -472,6 +490,7 @@ export function createBrainWiring(deps: BrainDeps) {
 
     stop(): void {
       clearCoalesce()
+      laneB.stop()
       if (timer) clearInterval(timer); timer = null
     },
 
@@ -536,45 +555,7 @@ export function createBrainWiring(deps: BrainDeps) {
 
     /** A proposal from bin/propose (POST /hooks/brain/propose, auth done by the route). */
     async propose(p: ProposeInput): Promise<{ status: number; body: Record<string, unknown> }> {
-      const agent = resolveAgent(p.agent ?? DEFAULT_AGENT)
-      if (!agent) return { status: 400, body: { ok: false, error: "unknown_agent" } }
-      let note: Awaited<ReturnType<typeof getNote>>
-      try {
-        note = await getNote(deps.dispatch.query, p.noteId)
-      } catch {
-        return { status: 503, body: { ok: false, error: "turso_unreachable" } }
-      }
-      if (!note) return { status: 404, body: { ok: false, error: "no such note" } }
-      // Dedupe and create with no await between: two identical calls can never both create.
-      const hash = createHash("sha256").update(p.prompt).digest("hex").slice(0, 32)
-      const seen = proposeSeen(p.sourceTurnId, hash)
-      if (seen) return { status: 200, body: { ok: true, proposalId: seen, replay: true } }
-      const task = createProposal(p.prompt, "", p.reasoning, BRAIN_THREAD, { noteId: note.noteId, agent, title: p.title })
-      brainFiling.add(task.taskId) // no await since the insert: triage never sees it un-flagged
-      rememberPropose(p.sourceTurnId, hash, task.taskId)
-      const project = note.ref ?? note.title ?? note.noteId
-      const repoId = rowId.repo(p.sourceTurnId, project)
-      trace([
-        upsertRow({ id: repoId, parentId: rowId.turn(p.sourceTurnId), turnId: p.sourceTurnId, kind: "repo", status: "running", title: note.title ?? project, detail: project }),
-        upsertRow({ id: rowId.agent(task.taskId), parentId: repoId, turnId: p.sourceTurnId, kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "waits for your tap" }),
-      ])
-      emitTask(task.taskId)
-      // The brain hands off: filed and queued at once, no Approve card (Jeremie, 2026-10-29).
-      // The trace row is what he sees; a failed file stays a proposal he can tap.
-      let res: Response, body: Record<string, unknown>
-      try {
-        res = await approveProposal(task, {}, deps.dispatch)
-        body = await res.json() as Record<string, unknown>
-      } finally {
-        brainFiling.delete(task.taskId)
-      }
-      if (res.ok) {
-        trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: body.status === "queued" ? "dispatched" : "waits for the dashboard stamp", ref: { taskId: String(body.dispatchTaskId ?? "") } })])
-        return { status: 200, body: { ...body, proposalId: task.taskId } }
-      }
-      deps.log(`[brain] auto-file failed (${String(body.error)}): left as a proposal`)
-      trace([upsertRow({ id: rowId.agent(task.taskId), kind: "agent", status: "pending", title: `${agent} — ${p.title}`, detail: "couldn't dispatch — tap to file it" })])
-      return { status: 200, body: { ok: true, proposalId: task.taskId, status: "proposed", error: body.error ?? null } }
+      return executeBrainPropose(p, { dispatch: deps.dispatch, log: deps.log, trace })
     },
 
     /** A brain voice take was archived (POST /api/capture/voice/start brainTurnId): the turn card gets its audio id. */

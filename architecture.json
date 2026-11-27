@@ -359,6 +359,37 @@
           "externals": []
         },
         {
+          "path": "lib/agent-notifications.ts",
+          "lines": 191,
+          "kind": "lib",
+          "exports": [
+            "NOTIFICATION_SEVERITIES",
+            "NotificationSeverity",
+            "Notification",
+            "InsertNotificationInput",
+            "ensureAgentNotificationsTable",
+            "openIsolatedNotificationDb",
+            "insertAgentNotification",
+            "fetchAndMarkUnsurfacedNotifications",
+            "classifyBackgroundEventNotification"
+          ],
+          "state": [
+            "SEVERITY_SET: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/db-path.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/agent-pid.ts",
           "lines": 38,
           "kind": "lib",
@@ -1478,6 +1509,37 @@
           "apiCalls": [],
           "imports": [
             "lib/brain.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/brain-lane-isolation.ts",
+          "lines": 267,
+          "kind": "lib",
+          "exports": [
+            "fitPrioritizedTurns",
+            "runLegacyPureEventTriage",
+            "scrubInternalEventsFromReply",
+            "IsolatedBackgroundLane",
+            "createIsolatedBackgroundLane",
+            "appendLaneANotifications"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agent-notifications.ts",
+            "lib/brain.ts",
+            "lib/brain-event-triage.ts",
+            "lib/db-path.ts",
+            "lib/ops-triage.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/orchestrator-db.ts",
+            "lib/orchestrator-telemetry.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9859,6 +9921,34 @@
           "externals": []
         },
         {
+          "path": "wiring/brain-propose.ts",
+          "lines": 73,
+          "kind": "lib",
+          "exports": [
+            "ProposeInput",
+            "proposalHandedOff",
+            "executeBrainPropose"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/brain.ts",
+            "lib/brain-store.ts",
+            "lib/brain-trace.ts",
+            "lib/dispatch-tasks.ts",
+            "lib/orchestrator-chat.ts",
+            "wiring/dispatch.ts",
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "wiring/brain-restore.ts",
           "lines": 100,
           "kind": "lib",
@@ -10028,14 +10118,12 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 680,
+          "lines": 661,
           "kind": "lib",
           "exports": [
             "BrainStatus",
-            "ProposeInput",
             "BrainDeps",
             "emitTrace",
-            "proposalHandedOff",
             "createBrainWiring",
             "BrainWiring",
             "setBrainDeliver",
@@ -10059,22 +10147,24 @@
             "state.ts",
             "lib/brain.ts",
             "lib/brain-event-triage.ts",
+            "lib/brain-lane-isolation.ts",
+            "lib/feature-flags.ts",
             "lib/ops-triage.ts",
+            "lib/orchestrator-telemetry.ts",
             "lib/brain-store.ts",
             "lib/brain-trace.ts",
             "wiring/brain-activity.ts",
             "lib/orchestrator-chat.ts",
             "lib/orchestrator-channels.ts",
-            "lib/dispatch-tasks.ts",
             "lib/sessions.ts",
             "lib/spawn-session.ts",
             "lib/push.ts",
             "lib/apns.ts",
             "wiring/gauge.ts",
             "wiring/orchestrator.ts",
-            "wiring/proposals.ts",
             "wiring/dispatch.ts",
-            "wiring/brain-headless.ts"
+            "wiring/brain-headless.ts",
+            "wiring/brain-propose.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -11969,6 +12059,7 @@
             "lib/a2ui-actions.ts",
             "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
+            "lib/brain-lane-isolation.ts",
             "lib/context-pruning.ts",
             "lib/dispatch-poller.ts",
             "lib/front-door.ts",
@@ -12093,6 +12184,7 @@
             "lib/a2ui-actions.ts",
             "lib/a2ui.ts",
             "lib/brain-event-triage.ts",
+            "lib/brain-lane-isolation.ts",
             "lib/brain-workers.ts",
             "lib/context-pruning.ts",
             "routes/brain.ts",
@@ -12107,6 +12199,7 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
@@ -12524,6 +12617,34 @@
             "lib/activity.ts"
           ]
         },
+        "companionDbPath": {
+          "module": "lib/db-path.ts",
+          "callers": [
+            "lib/agent-notifications.ts",
+            "lib/approval-history.ts",
+            "lib/board-room.ts",
+            "lib/brain-lane-isolation.ts",
+            "lib/learned-allow.ts",
+            "lib/orchestrator-db.ts",
+            "lib/push-tokens.ts",
+            "lib/receipt-qa-store.ts",
+            "lib/session-titles.ts",
+            "lib/voice-memo.ts",
+            "wiring/auto-compact.ts",
+            "wiring/canvas.ts"
+          ]
+        },
+        "TelemetrySink": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/agent-notifications.ts",
+            "lib/brain-lane-isolation.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/session-summaries.ts",
+            "wiring/brain-headless.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "normalizeAgyCliModelFlag": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -12854,21 +12975,6 @@
             "wiring/trips.ts",
             "wiring/worker-mcp.ts",
             "ws.ts"
-          ]
-        },
-        "companionDbPath": {
-          "module": "lib/db-path.ts",
-          "callers": [
-            "lib/approval-history.ts",
-            "lib/board-room.ts",
-            "lib/learned-allow.ts",
-            "lib/orchestrator-db.ts",
-            "lib/push-tokens.ts",
-            "lib/receipt-qa-store.ts",
-            "lib/session-titles.ts",
-            "lib/voice-memo.ts",
-            "wiring/auto-compact.ts",
-            "wiring/canvas.ts"
           ]
         },
         "redactSecrets": {
@@ -13748,6 +13854,75 @@
             "wiring/brain-lead.ts"
           ]
         },
+        "classifyBackgroundEventNotification": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "fetchAndMarkUnsurfacedNotifications": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "insertAgentNotification": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "openIsolatedNotificationDb": {
+          "module": "lib/agent-notifications.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts"
+          ]
+        },
+        "DeliveryTurn": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "fitQueued": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "OpsTriageEvent": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "OpsTriageDecision": {
+          "module": "lib/ops-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "brainText": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "lib/context-pruning.ts",
+            "lib/front-door.ts",
+            "lib/orchestrator-brain.ts",
+            "routes/brain.ts"
+          ]
+        },
+        "classifyBrainEvent": {
+          "module": "lib/brain-event-triage.ts",
+          "callers": [
+            "lib/brain-lane-isolation.ts",
+            "wiring/brain.ts"
+          ]
+        },
         "WorkerProgress": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -13785,14 +13960,6 @@
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
             "lib/brain-turn-harness.ts"
-          ]
-        },
-        "TelemetrySink": {
-          "module": "lib/orchestrator-telemetry.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts",
-            "lib/session-summaries.ts",
-            "wiring/brain-headless.ts"
           ]
         },
         "TurnMetricRecord": {
@@ -13883,7 +14050,8 @@
           "module": "lib/feature-flags.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
-            "lib/orchestrator-brain.ts"
+            "lib/orchestrator-brain.ts",
+            "wiring/brain.ts"
           ]
         },
         "getSessionSummarySync": {
@@ -14380,16 +14548,6 @@
             "routes/orchestrator.ts#GET /api/orchestrator/thread",
             "wiring/dispatch.ts",
             "wiring/orchestrator.ts"
-          ]
-        },
-        "brainText": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "lib/context-pruning.ts",
-            "lib/front-door.ts",
-            "lib/orchestrator-brain.ts",
-            "routes/brain.ts",
-            "wiring/brain.ts"
           ]
         },
         "readSecretValue": {
@@ -17963,6 +18121,7 @@
           "callers": [
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -17973,6 +18132,7 @@
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -17985,6 +18145,7 @@
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -19862,7 +20023,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/proposals.ts"
           ]
         },
@@ -19880,7 +20041,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts",
@@ -19962,7 +20123,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -20016,7 +20177,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -20052,7 +20213,7 @@
           "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/triage.ts"
           ]
         },
@@ -20674,7 +20835,7 @@
           "callers": [
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
-            "wiring/brain.ts",
+            "wiring/brain-propose.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts"
@@ -21020,6 +21181,24 @@
             "wiring/brain-pr-update-branch.ts"
           ]
         },
+        "brainFiling": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "proposeSeen": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "rememberPropose": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
         "envValue": {
           "module": "lib/brain-workers.ts",
           "callers": [
@@ -21137,31 +21316,13 @@
             "wiring/brain-workers.ts"
           ]
         },
-        "brainFiling": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "BrainState": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
-        "DeliveryTurn": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "deliveryText": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "fitQueued": {
           "module": "lib/brain.ts",
           "callers": [
             "wiring/brain.ts"
@@ -21245,6 +21406,36 @@
             "wiring/brain.ts"
           ]
         },
+        "fitPrioritizedTurns": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "createIsolatedBackgroundLane": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "appendLaneANotifications": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "runLegacyPureEventTriage": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "scrubInternalEventsFromReply": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "enqueueDelivery": {
           "module": "lib/brain-store.ts",
           "callers": [
@@ -21287,18 +21478,6 @@
             "wiring/brain.ts"
           ]
         },
-        "proposeSeen": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "rememberPropose": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "BRAIN_DIR": {
           "module": "wiring/brain-headless.ts",
           "callers": [
@@ -21317,14 +21496,14 @@
             "wiring/brain.ts"
           ]
         },
-        "OpsTriageEvent": {
-          "module": "lib/ops-triage.ts",
+        "ProposeInput": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
-        "OpsTriageDecision": {
-          "module": "lib/ops-triage.ts",
+        "proposalHandedOff": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -21335,14 +21514,14 @@
             "wiring/brain.ts"
           ]
         },
-        "classifyBrainEvent": {
-          "module": "lib/brain-event-triage.ts",
+        "onTurnAppended": {
+          "module": "lib/orchestrator-chat.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
-        "onTurnAppended": {
-          "module": "lib/orchestrator-chat.ts",
+        "executeBrainPropose": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -22310,12 +22489,6 @@
         },
         "createResolverEngine": {
           "module": "lib/resolver-engine.ts",
-          "callers": [
-            "wiring/resolver.ts"
-          ]
-        },
-        "proposalHandedOff": {
-          "module": "wiring/brain.ts",
           "callers": [
             "wiring/resolver.ts"
           ]
