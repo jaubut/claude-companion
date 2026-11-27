@@ -1,6 +1,6 @@
 // Environment-gated feature flags for the Companion Orchestrator Harness upgrade (Phases 1-4).
-// Sequential rollout Step 2 active: ENABLE_DYNAMIC_SKILLS defaults to `true` (set `"false"` to roll back);
-// Phases 2-4 remain `false` by default until flipped sequentially.
+// Sequential rollout Steps 2-3 active: ENABLE_DYNAMIC_SKILLS and ENABLE_CONTEXT_PRUNING default to `true`
+// (set `"false"` on either to roll back); Phases 3-4 remain `false` by default until flipped sequentially.
 
 export interface FeatureFlags {
   ENABLE_DYNAMIC_SKILLS: boolean
@@ -26,7 +26,7 @@ function parseBoolEnv(raw: unknown, defaultValue = false): boolean {
 export function parseFeatureFlags(env: Record<string, unknown> = process.env): FeatureFlags {
   return {
     ENABLE_DYNAMIC_SKILLS: parseBoolEnv(env.ENABLE_DYNAMIC_SKILLS, true),
-    ENABLE_CONTEXT_PRUNING: parseBoolEnv(env.ENABLE_CONTEXT_PRUNING, false),
+    ENABLE_CONTEXT_PRUNING: parseBoolEnv(env.ENABLE_CONTEXT_PRUNING, true),
     ENABLE_LANE_ISOLATION: parseBoolEnv(env.ENABLE_LANE_ISOLATION, false),
     ENABLE_ADAPTIVE_ROUTING: parseBoolEnv(env.ENABLE_ADAPTIVE_ROUTING, false),
   }
