@@ -2,6 +2,7 @@ import type { A2UIEngineDeps } from "../lib/a2ui"
 import { executeA2UIMacro, handleA2UIAction } from "../lib/a2ui-macros"
 import { checkBearer, unauthorized } from "../lib/auth"
 import { BRAIN_AGENT, BRAIN_THREAD, LEAD_PREFIX, brainEnabled, brainText, leadSlug } from "../lib/brain"
+import { runBrainLoadSkill } from "../lib/brain-turn-harness"
 import { latestRows, rowsSince } from "../lib/brain-trace"
 import { analyseLink } from "../lib/link-media"
 import { companionLog } from "../lib/log"
@@ -92,6 +93,8 @@ export interface BrainRouteDeps {
   emailSender?: OutboundSender
   /** Persistence + broadcast seam for A2UI surface tests. */
   a2uiEngine?: A2UIEngineDeps
+  /** Stage 2 dynamic skill loader seam for `bin/load-skill` (`POST /hooks/brain/load-skill`). */
+  loadSkill?: typeof runBrainLoadSkill
 }
 
 const fail = (status: number, error: string): Response => Response.json({ ok: false, error }, { status })
@@ -354,6 +357,19 @@ async function ui(req: Request, deps: BrainRouteDeps): Promise<Response> {
   return Response.json(out.body, { status: out.status })
 }
 
+/** bin/load-skill: Stage 2 dynamic skill retrieval for un-injected skills (`POST /hooks/brain/load-skill`). */
+async function loadSkillRoute(req: Request, deps: BrainRouteDeps): Promise<Response> {
+  const refused = proposeRefusal(req, deps)
+  if (refused) return refused
+  const body = await readJson(req)
+  if (!body) return fail(400, "bad_json")
+  const out = (deps.loadSkill ?? runBrainLoadSkill)(body)
+  if (!out.ok) {
+    return Response.json(out, { status: out.error === "skill_not_found" ? 404 : 400 })
+  }
+  return Response.json(out, { status: 200 })
+}
+
 /** POST /api/brain/a2ui/action: deterministic bidirectional A2UI action router with actionKey idempotency. */
 async function a2uiAction(req: Request, deps: BrainRouteDeps): Promise<Response> {
   const body = await readJson(req)
@@ -442,6 +458,11 @@ export function createBrainRoute(deps: BrainRouteDeps = { wiring: brainWiring, s
       if (req.method !== "POST") return fail(405, "method_not_allowed")
       if (!deps.enabled()) return fail(404, "brain_disabled")
       return ui(req, deps)
+    }
+    if (p === "/hooks/brain/load-skill") {
+      if (req.method !== "POST") return fail(405, "method_not_allowed")
+      if (!deps.enabled()) return fail(404, "brain_disabled")
+      return loadSkillRoute(req, deps)
     }
     if (p !== "/api/brain" && !p.startsWith("/api/brain/")) return null
     if (!checkBearer(req)) return unauthorized()

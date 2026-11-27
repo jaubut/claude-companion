@@ -1553,6 +1553,50 @@
           "externals": []
         },
         {
+          "path": "lib/brain-turn-harness.ts",
+          "lines": 389,
+          "kind": "lib",
+          "exports": [
+            "SpawnedPersistentWorkerHandle",
+            "defaultSpawnPersistentWorker",
+            "getSharedSkillRegistry",
+            "resetSharedSkillRegistryForTests",
+            "runBrainLoadSkill",
+            "StreamToolCall",
+            "extractBrainStreamToolCall",
+            "ModelTurnPart",
+            "ModelTurn",
+            "preserveModelTurnThoughtSignatures",
+            "sanitizeGemini4GenerationConfig",
+            "PreparedBrainTurn",
+            "prepareBrainTurn",
+            "TurnMetricsTracker",
+            "startBrainTurnMetrics"
+          ],
+          "state": [
+            "let defaultRegistry",
+            "let defaultRegistryDir"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts",
+            "lib/orchestrator-telemetry.ts",
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts",
+            "lib/skill-tools.ts",
+            "lib/skill-types.ts",
+            "lib/worker-pid.ts",
+            "lib/worker-supervisor.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/brain-workers.ts",
           "lines": 113,
           "kind": "lib",
@@ -1591,7 +1635,7 @@
         },
         {
           "path": "lib/brain.ts",
-          "lines": 307,
+          "lines": 312,
           "kind": "lib",
           "exports": [
             "BRAIN_THREAD",
@@ -2746,6 +2790,28 @@
             "lib/herdr.ts",
             "lib/recent-sessions.ts"
           ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/feature-flags.ts",
+          "lines": 58,
+          "kind": "lib",
+          "exports": [
+            "FeatureFlags",
+            "SafeParseResult",
+            "parseFeatureFlags",
+            "FeatureFlagsSchema",
+            "FLAGS",
+            "getFeatureFlags"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
           "listeners": [],
           "sheets": 0,
           "externals": []
@@ -4018,7 +4084,7 @@
         },
         {
           "path": "lib/ops-triage.ts",
-          "lines": 362,
+          "lines": 366,
           "kind": "lib",
           "exports": [
             "OPS_TRIAGE_TIMEOUT_MS",
@@ -4182,6 +4248,40 @@
           "apiCalls": [],
           "imports": [
             "lib/db-path.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/orchestrator-telemetry.ts",
+          "lines": 297,
+          "kind": "lib",
+          "exports": [
+            "TurnMetricRecord",
+            "StoredTurnMetricRow",
+            "PostgresSqlTag",
+            "TelemetrySink",
+            "isGemini4Model",
+            "sanitizeThinkingLevel",
+            "ensureTurnMetricsTable",
+            "logTurnMetrics",
+            "recordTurnMetrics",
+            "readTurnMetrics",
+            "ExtractedUsageMetrics",
+            "extractUsageMetrics"
+          ],
+          "state": [
+            "VALID_GEMINI4_THINKING_LEVELS: Set",
+            "let pgClientUrl",
+            "let pgClient"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/orchestrator-db.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -5743,6 +5843,131 @@
             "lib/spawn-session.ts",
             "lib/tmux-pane.ts",
             "lib/tmux-spawn-confirm.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-loader.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "parseSkillFrontmatter",
+            "extractSkillTriggers",
+            "inferSkillCategory",
+            "LoadSkillsOptions",
+            "defaultSkillsDir",
+            "loadSkillManifests"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-prompt.ts",
+          "lines": 144,
+          "kind": "lib",
+          "exports": [
+            "STATIC_LOAD_SKILL_INSTRUCTIONS",
+            "loadStaticBrainRules",
+            "renderFullSkillBlock",
+            "BuiltSystemPrompt",
+            "buildDynamicSystemPrompt",
+            "buildBaselineStaticSystemPrompt"
+          ],
+          "state": [
+            "cachedBrainRulesByDir: Map"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-retrieval.ts",
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-retrieval.ts",
+          "lines": 187,
+          "kind": "lib",
+          "exports": [
+            "compactSkillDescription",
+            "DynamicSkillRegistry"
+          ],
+          "state": [
+            "STOPWORDS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/skill-types.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-tools.ts",
+          "lines": 127,
+          "kind": "lib",
+          "exports": [
+            "LoadSkillInput",
+            "LoadSkillInputSchema",
+            "loadSkillToolDefinition",
+            "LoadSkillExecutionResult",
+            "executeLoadSkill"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts",
+            "lib/skill-retrieval.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/skill-types.ts",
+          "lines": 112,
+          "kind": "lib",
+          "exports": [
+            "SKILL_CATEGORIES",
+            "SkillCategory",
+            "SkillManifest",
+            "SkillDirectoryEntry",
+            "SkillSelectionResult",
+            "estimateTokens",
+            "isSkillCategory",
+            "SkillManifestSchema"
+          ],
+          "state": [
+            "CATEGORY_SET: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/feature-flags.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -8102,7 +8327,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 472,
+          "lines": 493,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -8119,6 +8344,7 @@
             "lib/a2ui-macros.ts",
             "lib/auth.ts",
             "lib/brain.ts",
+            "lib/brain-turn-harness.ts",
             "lib/brain-trace.ts",
             "lib/link-media.ts",
             "lib/log.ts",
@@ -9338,11 +9564,9 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 596,
+          "lines": 567,
           "kind": "lib",
           "exports": [
-            "SpawnedPersistentWorkerHandle",
-            "defaultSpawnPersistentWorker",
             "BRAIN_DIR",
             "HEADLESS_BRAIN_PANE",
             "BRAIN_RUNTIME_ALLOWED_TOOLS",
@@ -9365,12 +9589,14 @@
           "imports": [
             "lib/brain.ts",
             "lib/brain-store.ts",
+            "lib/brain-turn-harness.ts",
             "lib/last-assistant.ts",
             "lib/log.ts",
+            "lib/orchestrator-telemetry.ts",
             "lib/session-titles.ts",
             "lib/sessions.ts",
+            "lib/skill-retrieval.ts",
             "lib/spawn-session.ts",
-            "lib/worker-pid.ts",
             "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts",
             "wiring/brain-workers.ts",
@@ -13486,6 +13712,135 @@
             "wiring/brain-workers.ts"
           ]
         },
+        "ExtractedUsageMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "TelemetrySink": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "TurnMetricRecord": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "extractUsageMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "isGemini4Model": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "logTurnMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "recordTurnMetrics": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "sanitizeThinkingLevel": {
+          "module": "lib/orchestrator-telemetry.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/desk-runner.ts",
+            "lib/worker-spawn.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "DynamicSkillRegistry": {
+          "module": "lib/skill-retrieval.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-tools.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "defaultSkillsDir": {
+          "module": "lib/skill-loader.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "loadSkillManifests": {
+          "module": "lib/skill-loader.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "LoadSkillExecutionResult": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "executeLoadSkill": {
+          "module": "lib/skill-tools.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "getFeatureFlags": {
+          "module": "lib/feature-flags.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "loadStaticBrainRules": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "buildBaselineStaticSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "estimateTokens": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts"
+          ]
+        },
+        "buildDynamicSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "renderFullSkillBlock": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
         "BRAIN_AGENT": {
           "module": "lib/brain.ts",
           "callers": [
@@ -14069,15 +14424,6 @@
           "callers": [
             "lib/desk-runner.ts",
             "lib/worker-supervisor.ts"
-          ]
-        },
-        "defaultKillPid": {
-          "module": "lib/worker-pid.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-spawn.ts",
-            "lib/worker-supervisor.ts",
-            "wiring/brain-headless.ts"
           ]
         },
         "defaultLoadAgentSecrets": {
@@ -16508,6 +16854,46 @@
             "lib/shell-sessions.ts"
           ]
         },
+        "SkillCategory": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts"
+          ]
+        },
+        "isSkillCategory": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts"
+          ]
+        },
+        "SkillManifest": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-loader.ts",
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts"
+          ]
+        },
+        "SkillSelectionResult": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-prompt.ts",
+            "lib/skill-retrieval.ts"
+          ]
+        },
+        "SkillDirectoryEntry": {
+          "module": "lib/skill-types.ts",
+          "callers": [
+            "lib/skill-retrieval.ts"
+          ]
+        },
+        "SafeParseResult": {
+          "module": "lib/feature-flags.ts",
+          "callers": [
+            "lib/skill-tools.ts",
+            "lib/skill-types.ts"
+          ]
+        },
         "oneLine": {
           "module": "lib/canvas.ts",
           "callers": [
@@ -18491,6 +18877,12 @@
             "routes/brain.ts"
           ]
         },
+        "runBrainLoadSkill": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
         "searchThread": {
           "module": "lib/orchestrator-chat.ts",
           "callers": [
@@ -20341,6 +20733,48 @@
             "wiring/brain-todo.ts",
             "wiring/events.ts",
             "wiring/worker-mcp.ts"
+          ]
+        },
+        "PreparedBrainTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "SpawnedPersistentWorkerHandle": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "TurnMetricsTracker": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "defaultSpawnPersistentWorker": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "extractBrainStreamToolCall": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "prepareBrainTurn": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "startBrainTurnMetrics": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
           ]
         },
         "getKv": {

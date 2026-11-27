@@ -289,7 +289,12 @@ export function brainToolStep(tool: string, input: Record<string, unknown>): Bra
     if (cmd.startsWith("bin/lead")) return step("dispatching", "Filing a lead", "Filed a lead")
     if (cmd.startsWith("bin/thread")) return step("searching", "Searching the thread", "Searched the thread")
     if (cmd.startsWith("bin/ui")) return step("writing", "Rendering a card", "Rendered a card")
+    if (cmd.startsWith("bin/load-skill")) return step("reading", "Loading a skill", "Loaded a skill")
     return step("working", "Running a command", "Ran a command")
+  }
+  if (tool === "load_skill") {
+    const sid = typeof input.skillId === "string" && input.skillId.trim() ? input.skillId.trim().slice(0, 80) : d
+    return step("reading", "Loading a skill", "Loaded a skill", sid)
   }
   if (tool === "mcp__tls__note_create" || tool === "mcp__tls__note_update" || tool === "mcp__turso__note_create" || tool === "mcp__turso__note_update") return step("writing", "Writing a note", "Wrote a note", d)
   if (tool === "mcp__tls__send_email" || tool === "mcp__turso__send_email") return step("writing", "Sending an email", "Sent an email")
