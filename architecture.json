@@ -4018,7 +4018,7 @@
         },
         {
           "path": "lib/ops-triage.ts",
-          "lines": 361,
+          "lines": 362,
           "kind": "lib",
           "exports": [
             "OPS_TRIAGE_TIMEOUT_MS",
@@ -7331,7 +7331,7 @@
         },
         {
           "path": "lib/worker-invocation.ts",
-          "lines": 584,
+          "lines": 591,
           "kind": "lib",
           "exports": [
             "TASK_ID_RE",
@@ -9597,10 +9597,12 @@
         },
         {
           "path": "wiring/brain-stuck-events.ts",
-          "lines": 454,
+          "lines": 514,
           "kind": "lib",
           "exports": [
+            "GREEN_POLL_MS",
             "StuckEventsDeps",
+            "sanitizePrWakeReason",
             "needsPrMergeCard",
             "greenPrWakeLine",
             "stuckLine",

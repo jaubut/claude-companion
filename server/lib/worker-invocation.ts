@@ -479,9 +479,9 @@ export function normalizeAgyCliModelFlag(raw: string): string {
     "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high", "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
     "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium", "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
     "gemini 4 carbon (high)": "gemini-4-carbon-high", "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
-    "gemini 4 carbon (low)": "gemini-4-carbon-low", "gemini 4 carbon": "gemini-4-carbon-low", "gemini-4-carbon": "gemini-4-carbon-low",
+    "gemini 4 carbon (low)": "gemini-4-carbon-low", "gemini 4 carbon": "gemini-4-carbon-high", "gemini-4-carbon": "gemini-4-carbon-high",
     "gemini 4 argon (high)": "gemini-4-argon-high", "gemini 4 argon (medium)": "gemini-4-argon-medium",
-    "gemini 4 argon (low)": "gemini-4-argon-low", "gemini 4 argon": "gemini-4-argon-low", "gemini-4-argon": "gemini-4-argon-low",
+    "gemini 4 argon (low)": "gemini-4-argon-low", "gemini 4 argon": "gemini-4-argon-high", "gemini-4-argon": "gemini-4-argon-high",
     "gemini 3.8 flash (high)": "gemini-3.8-flash-high", "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium", "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
   }
   return map[lower] ?? trimmed
@@ -501,8 +501,15 @@ export const GEMINI_INLINE_PROMPT_MAX = 90_000
 /** Hardened `--settings` JSON for headless `agy` workers: deny unscrubbed user MCPs and host secret roots. */
 export function agyWorkerSettings(home = homedir()): string {
   const secretRoots = [
-    join(home, ".claude-companion"), join(home, ".config", "tls-agent"), join(home, ".config", "gh"),
-    join(home, ".ssh"), join(home, ".aws"), join(home, ".gnupg"), join(home, ".claude", ".credentials.json"), join(home, ".codex"), "/proc",
+    join(home, ".claude-companion"),
+    join(home, ".config", "tls-agent"),
+    join(home, ".config", "gh"),
+    join(home, ".ssh"),
+    join(home, ".aws"),
+    join(home, ".gnupg"),
+    join(home, ".claude", ".credentials.json"),
+    join(home, ".codex"),
+    "/proc",
   ].map((p) => `read_file(${p})`)
   return JSON.stringify({ permissions: { deny: ["mcp(*)", ...secretRoots] } })
 }

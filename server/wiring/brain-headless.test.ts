@@ -104,6 +104,9 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_DEFAULT_MODEL: "gemini-4-argon-medium" })).toBe("gemini-4-argon-medium")
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-argon-low")
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini", COMPANION_BRAIN_EFFORT_DEFAULT: "medium" })).toBe("gemini-4-argon-medium")
+    // Setting COMPANION_BRAIN_EFFORT_DEFAULT alone must never switch a Claude Brain onto Gemini
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_EFFORT_DEFAULT: "high" })).toBe("claude-opus-5-5")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "claude", COMPANION_BRAIN_EFFORT_DEFAULT: "low" })).toBe("claude-opus-5-5")
     expect(resolveBrainSessionModel("auto", {})).toBe("claude-opus-5-5")
 
     // Legacy KV high values downgrade to -low unless explicitly opted into high effort
@@ -118,19 +121,21 @@ describe("brain family and Gemini 4 resolution", () => {
     setKv("brain_model", "auto")
   })
 
-  test("normalizes Gemini 4 Argon/Carbon low, medium, and high CLI model flags cleanly", () => {
+  test("normalizes Gemini 4 Argon/Carbon low, medium, and high CLI model flags cleanly while keeping bare worker models at -high", () => {
     expect(normalizeAgyCliModelFlag("gemini-4-argon-low")).toBe("gemini-4-argon-low")
     expect(normalizeAgyCliModelFlag("Gemini 4 Argon (Low)")).toBe("gemini-4-argon-low")
     expect(normalizeAgyCliModelFlag("gemini-4-argon-medium")).toBe("gemini-4-argon-medium")
     expect(normalizeAgyCliModelFlag("Gemini 4 Argon (Medium)")).toBe("gemini-4-argon-medium")
     expect(normalizeAgyCliModelFlag("gemini-4-argon-high")).toBe("gemini-4-argon-high")
-    expect(normalizeAgyCliModelFlag("gemini-4-argon")).toBe("gemini-4-argon-low")
+    expect(normalizeAgyCliModelFlag("gemini-4-argon")).toBe("gemini-4-argon-high")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Argon")).toBe("gemini-4-argon-high")
     expect(normalizeAgyCliModelFlag("gemini-4-carbon-low")).toBe("gemini-4-carbon-low")
     expect(normalizeAgyCliModelFlag("Gemini 4 Carbon (Low)")).toBe("gemini-4-carbon-low")
     expect(normalizeAgyCliModelFlag("gemini-4-carbon-medium")).toBe("gemini-4-carbon-medium")
     expect(normalizeAgyCliModelFlag("Gemini 4 Carbon (Medium)")).toBe("gemini-4-carbon-medium")
     expect(normalizeAgyCliModelFlag("gemini-4-carbon-high")).toBe("gemini-4-carbon-high")
-    expect(normalizeAgyCliModelFlag("gemini-4-carbon")).toBe("gemini-4-carbon-low")
+    expect(normalizeAgyCliModelFlag("gemini-4-carbon")).toBe("gemini-4-carbon-high")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Carbon")).toBe("gemini-4-carbon-high")
   })
 
   test("agyBrainSettings scopes out global ~/.agents/skills, bans schedule and sleep, and preserves tls and board MCP servers", () => {

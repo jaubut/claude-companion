@@ -71,7 +71,7 @@ test("middayRolloverDue: rolls over at 18 turns, or past 55% idle 60s, or immedi
   expect(isBrainInternalEvent({
     threadId: "brain",
     role: "orchestrator",
-    text: 'CI green jaubut/claude-companion#380 (1a2b3c4, MERGEABLE + CLEAN): emit `./bin/ui pr --repo jaubut/claude-companion --pr 380 --reason "touches human-merge path"` now. https://github.com/jaubut/claude-companion/pull/380',
+    text: "green PR jaubut/claude-companion#380 (1a2b3c4): touches human-merge path (brain/CLAUDE.md) https://github.com/jaubut/claude-companion/pull/380",
   })).toBe(true)
 })
 

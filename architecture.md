@@ -18,10 +18,10 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/discover.ts` | 608 ⚠ 608 > cap 600 | lib | 20 | state: let firstDone, let firstExpected, let resolveFirst |
 | `lib/auto-compact.ts` | 599 | lib | 18 |  |
 | `wiring/brain-headless.ts` | 596 | lib | 15 |  |
+| `lib/worker-invocation.ts` | 591 | lib | 44 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/a2ui-macros.ts` | 587 | lib | 14 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
-| `lib/worker-invocation.ts` | 584 | lib | 44 | state: SUBCOMMAND_TOOLS: Set, NOISE_COMMANDS: Set |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
 | `lib/a2ui.ts` | 571 | lib | 35 | state: ALLOWED_COMPONENTS: Set, DANGEROUS_KEYS: Set |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
@@ -33,6 +33,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/resolver.ts` | 534 | lib | 46 | state: CLOSABLE: Set, REJECTABLE: Set, HELD_WHY: Set |
 | `lib/link-media.ts` | 526 | lib | 22 | state: inflight: Map |
 | `lib/triage.ts` | 514 | lib | 47 | state: DESTRUCTIVE: Set |
+| `wiring/brain-stuck-events.ts` | 514 | lib | 9 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/spawn-session.ts` | 513 | lib | 26 | state: RETIRED_APPS: Set |
 | `routes/api.ts` | 507 | route-host | 1 | state: HISTORY_KINDS: Set, HISTORY_FILTERS: Set · emits: super_auto, resolved · routes: 26 |
 | `lib/secret-store.ts` | 502 | lib | 30 | state: FLAGS: Set, let lock |
@@ -43,7 +44,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/voice-memo.ts` | 469 | lib | 26 | state: let tdb |
 | `wiring/triage.ts` | 467 | lib | 11 | state: let liveResolver, let live, prCacheDrop: WeakMap |
 | `lib/command-list.ts` | 459 | lib | 21 |  |
-| `wiring/brain-stuck-events.ts` | 454 | lib | 7 | state: PR_GATE_CARD_KINDS: Set |
 | `lib/questions.ts` | 446 | lib | 30 | state: pending: Map, expiryTimers: Map, handlers: Set, expiryHandlers: Set, resolvedHandlers: Set, parkedAnswers: Map, parkTimers: Map, answeredAtByKey: Map, recentlyAnswered: Map, recentlyFellThrough: Map |
 | `lib/shell-sessions.ts` | 443 | lib | 29 | state: let spawnTurn, let storeGen |
 | `lib/pane-mirror.ts` | 441 | lib | 33 |  |
@@ -63,7 +63,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/herdr.ts` | 367 | lib | 34 | state: let clientMod, spawnedAgents: Map |
 | `lib/orchestrator-chat.ts` | 367 | lib | 29 | state: appendedListeners: Set |
 | `lib/gauge.ts` | 362 | lib | 19 |  |
-| `lib/ops-triage.ts` | 361 | lib | 20 |  |
+| `lib/ops-triage.ts` | 362 | lib | 20 |  |
 | `lib/codex-feed.ts` | 355 | lib | 1 | state: offsets: Map, lineCounts: Map, callsByThread: Map, let timer |
 | `lib/board-url-resolve.ts` | 351 | lib | 14 |  |
 | `lib/outbound.ts` | 348 | lib | 27 |  |

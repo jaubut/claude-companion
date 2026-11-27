@@ -200,7 +200,7 @@ const MEMORY_DUTY = (memoryRef: string | null): string =>
 /** The brain's whole reply to events that need nothing from Jeremie: kept out of the thread. */
 export const QUIET_REPLY = "noted"
 
-const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|CI green \S+|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
+const INTERNAL_BRAIN_EVENT_RE = /^(?:\[from [^\]]+\]|stuck \S+|\d+ stuck PRs |More stuck PRs:|(?:green PR|CI green) \S+|Brain (?:merged|closed|updated|cancelled) |Auto-deploy)/i
 const INTERNAL_WORKER_RECEIPT_RE = /^(?:PR ready|completed|blocked|still running|done|filed|cancelled)\s+\[/i
 
 /**

@@ -123,7 +123,7 @@ export function resolveBrainSessionModel(configured: string, env: Record<string,
   if (norm && norm.toLowerCase() !== "auto") return norm
   const envModel = env.COMPANION_BRAIN_DEFAULT_MODEL?.trim()
   if (envModel) return mapBareGeminiBrainModel(envModel, effort)
-  if (env.COMPANION_BRAIN_FAMILY?.trim().toLowerCase() === "gemini" || env.COMPANION_BRAIN_EFFORT_DEFAULT?.trim()) {
+  if (env.COMPANION_BRAIN_FAMILY?.trim().toLowerCase() === "gemini") {
     return effort === "low" ? DEFAULT_GEMINI_BRAIN_MODEL : `gemini-4-argon-${effort}`
   }
   return "claude-opus-5-5"
