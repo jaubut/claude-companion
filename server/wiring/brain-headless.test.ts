@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, statSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
@@ -173,10 +173,12 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(persistentArgs.slice(-2)).toEqual(["--settings", raw])
   })
 
-  test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and bin/load-skill before -- prompt", () => {
+  test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui, bin/dispatch, and bin/load-skill before -- prompt", () => {
     expect(BRAIN_RUNTIME_ALLOWED_TOOLS).toEqual([
       "Bash(bin/ui:*)",
       "Bash(./bin/ui:*)",
+      "Bash(bin/dispatch:*)",
+      "Bash(./bin/dispatch:*)",
       "Bash(bin/load-skill:*)",
       "Bash(./bin/load-skill:*)",
     ])
@@ -187,10 +189,12 @@ describe("brain family and Gemini 4 resolution", () => {
       mode: "auto",
       model: "claude-opus-5-5",
     })
-    expect(args.slice(0, 5)).toEqual([
+    expect(args.slice(0, 7)).toEqual([
       "--allowedTools",
       "Bash(bin/ui:*)",
       "Bash(./bin/ui:*)",
+      "Bash(bin/dispatch:*)",
+      "Bash(./bin/dispatch:*)",
       "Bash(bin/load-skill:*)",
       "Bash(./bin/load-skill:*)",
     ])
@@ -380,6 +384,164 @@ describe("warm persistent Antigravity Brain session & CLI fallback", () => {
     expect(oneShotSpawns[0]!.args).toContain(agyBrainSettings())
     expect(stops).toEqual([{ sid: "resumed-brain-sid", reply: "recovered via fallback" }])
     expect(await runner.agentStatus()).toBe("idle")
+
+    await runner.stopAgent()
+    setKv("brain_model", "auto")
+  })
+
+  test("streams live text deltas from agy step_update events and transcript PLANNER_RESPONSE steps with a stable draftTurnId across tool calls and fallback", async () => {
+    const savedHome = process.env.HOME
+    const tempHome = mkdtempSync(join(tmpdir(), "cc-agy-stream-home-"))
+    process.env.HOME = tempHome
+    try {
+      setKv("brain_model", "gemini-4-argon-low")
+      setKv("agy_conversation_id", "")
+      const convId = "agy-stream-conv-42"
+      const transcriptDir = join(tempHome, ".gemini", "antigravity-cli", "brain", convId, ".system_generated", "logs")
+      mkdirSync(transcriptDir, { recursive: true })
+      writeFileSync(
+        join(transcriptDir, "transcript.jsonl"),
+        [
+          JSON.stringify({ step_index: 1, type: "CORTEX_STEP_TYPE_PLANNER_RESPONSE", planner_response: { modified_response: "First block before tool." } }),
+          JSON.stringify({ step_index: 3, type: "CORTEX_STEP_TYPE_PLANNER_RESPONSE", planner_response: { response: "Second block after tool." } }),
+        ].join("\n") + "\n",
+      )
+
+      const deltas: Array<{ sid: string; draftTurnId: string; delta: string; text: string; blockIndex: number }> = []
+      const stops: Array<{ sid: string; reply: string; draftTurnId?: string }> = []
+      let persistentOpts: SpawnWorkerOpts | null = null
+
+      const runner = createHeadlessBrainRunner({
+        noteActivity: () => {},
+        onTextDelta: (sid, ev) => { deltas.push({ sid, ...ev }) },
+        onStop: async (sid, reply, draftTurnId) => { stops.push({ sid, reply, draftTurnId }) },
+        spawnPersistentWorker: (opts): SpawnedPersistentWorkerHandle => {
+          persistentOpts = opts
+          return {
+            pid: 9191,
+            writeLine() { return true },
+            closeInput() {},
+            kill() {},
+          }
+        },
+        log: () => {},
+      })
+
+      await runner.spawn("stream-brain-sid")
+      await runner.deliver("stream two blocks")
+
+      // Step 1: agent_response step_update resolved from transcript.jsonl
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 1, step_type: "agent_response", state: "DONE" },
+      }))
+      // Step 2: tool step_update in between
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 2, step_type: "tool", state: "ACTIVE", tool_name: "run_command", tool_info: { parameters: { CommandLine: "bin/thread --q test" } } },
+      }))
+      // Step 3: second agent_response step_update after the tool call
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "step_update",
+        conversation_id: convId,
+        step_update: { step_index: 3, step_type: "agent_response", state: "DONE" },
+      }))
+      // Result event completes the turn
+      persistentOpts!.onStdoutLine(JSON.stringify({
+        event: "result",
+        result: { conversation_id: convId, status: "SUCCESS", response: "Second block after tool." },
+      }))
+      await Bun.sleep(5)
+
+      expect(deltas).toHaveLength(2)
+      const draftTurnId = deltas[0]!.draftTurnId
+      expect(draftTurnId).toBeTruthy()
+      expect(deltas[1]!.draftTurnId).toBe(draftTurnId)
+      expect(deltas[0]!.blockIndex).toBe(0)
+      expect(deltas[0]!.text).toBe("First block before tool.")
+      expect(deltas[1]!.blockIndex).toBe(1)
+      expect(deltas[1]!.text).toBe("First block before tool.\n\nSecond block after tool.")
+
+      expect(stops).toEqual([{
+        sid: expect.any(String),
+        reply: "First block before tool.\n\nSecond block after tool.",
+        draftTurnId,
+      }])
+
+      await runner.stopAgent()
+      setKv("brain_model", "auto")
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME
+      else process.env.HOME = savedHome
+    }
+  })
+
+  test("keeps prewarmed gemini-4-argon-low daemon alive across Tier 1 and Tier 2 turns, escalates on Tier 3, and steps back down after Tier 3", async () => {
+    setKv("brain_model", "auto")
+    setKv("brain_model_explicit_effort", "")
+    setKv("agy_conversation_id", "")
+    const spawns: Array<{ model: string; opts: SpawnWorkerOpts; killed: boolean }> = []
+
+    const runner = createHeadlessBrainRunner({
+      noteActivity: () => {},
+      onStop: async () => {},
+      prewarm: true,
+      env: {
+        COMPANION_BRAIN_FAMILY: "gemini",
+        ENABLE_DYNAMIC_SKILLS: "true",
+        ENABLE_ADAPTIVE_ROUTING: "true",
+      },
+      spawnPersistentWorker: (opts): SpawnedPersistentWorkerHandle => {
+        const mIdx = opts.args.indexOf("--model")
+        const model = mIdx >= 0 ? (opts.args[mIdx + 1] ?? "") : ""
+        const rec = { model, opts, killed: false }
+        spawns.push(rec)
+        queueMicrotask(() => {
+          opts.onStdoutLine(JSON.stringify({ event: "init", conversation_id: "agy-tier-conv-1" }))
+        })
+        return {
+          pid: 9300 + spawns.length,
+          writeLine() {
+            queueMicrotask(() => {
+              opts.onStdoutLine(JSON.stringify({
+                event: "result",
+                result: { conversation_id: "agy-tier-conv-1", status: "SUCCESS", response: "ok" },
+              }))
+            })
+            return true
+          },
+          closeInput() {},
+          kill() { rec.killed = true },
+        }
+      },
+      log: () => {},
+    })
+
+    await runner.spawn(null)
+    await Bun.sleep(5)
+    expect(spawns.map((s) => s.model)).toEqual(["gemini-4-argon-low"])
+
+    // Turn 1 (Tier 1): reuses prewarmed gemini-4-argon-low
+    await runner.deliver("hey, status?")
+    await Bun.sleep(10)
+    expect(spawns).toHaveLength(1)
+
+    // Turn 2 (Tier 2 PR review): reuses warm gemini-4-argon-low (zero cold-respawn penalty)
+    await runner.deliver("Review PR #381 and diagnose why the failing CI check occurred.")
+    await Bun.sleep(10)
+    expect(spawns).toHaveLength(1)
+
+    // Turn 3 (Tier 3 deep audit): escalates warm daemon to gemini-4-hydrogen-high
+    await runner.deliver("Run a cross-repo security audit and race condition root-cause analysis across all services.")
+    await Bun.sleep(10)
+    expect(spawns.map((s) => s.model)).toEqual(["gemini-4-argon-low", "gemini-4-hydrogen-high"])
+
+    // Turn 4 (Tier 1 follow-up): steps back down to gemini-4-argon-low so Brain never stays stuck on hydrogen-high
+    await runner.deliver("got it, thanks")
+    await Bun.sleep(10)
+    expect(spawns.map((s) => s.model)).toEqual(["gemini-4-argon-low", "gemini-4-hydrogen-high", "gemini-4-argon-low"])
 
     await runner.stopAgent()
     setKv("brain_model", "auto")

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# brain-v2: atomic local handoff + headless worker dispatch in one round-trip (POST /hooks/brain/dispatch).
+#
+#   bin/dispatch --turn <sourceTurnId> --note <projects/... note id> --repo <repo> \
+#                --prompt "<what the builder must do>" [--title "<title>"] [--why "<one line>"] \
+#                [--task <id>] [--family claude|codex|gemini] [--agent <agent>] [--model <model>] \
+#                [--mode auto] [--host local|zettlab|mac]
+#
+# Persists the handoff locally to Companion SQLite in < 20ms, syncs `tasks` + `agent_activity` to
+# `tls-sqld` asynchronously via the durable outbox, mints and binds the handoff claim automatically,
+# and dispatches the headless worker idempotently by `taskId` / deterministic request hash.
+set -euo pipefail
+
+TURN="" NOTE="" TITLE="" PROMPT="" WHY="" REPO="" TASK_ID="" FAMILY="" AGENT="" MODEL="" MODE="auto" HOST="local"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --turn) TURN="$2"; shift 2 ;;
+    --note) NOTE="$2"; shift 2 ;;
+    --title) TITLE="$2"; shift 2 ;;
+    --prompt) PROMPT="$2"; shift 2 ;;
+    --why) WHY="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --task) TASK_ID="$2"; shift 2 ;;
+    --family) FAMILY="$2"; shift 2 ;;
+    --agent) AGENT="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --mode) MODE="$2"; shift 2 ;;
+    --host) HOST="$2"; shift 2 ;;
+    *) echo "dispatch: unknown flag $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$TURN" ] || [ -z "$NOTE" ] || [ -z "$REPO" ] || [ -z "$PROMPT" ]; then
+  echo "dispatch: --turn, --note, --repo and --prompt are required" >&2
+  exit 2
+fi
+
+claude_pid() {
+  local pid=$PPID comm
+  for _ in $(seq 1 12); do
+    [ -z "$pid" ] || [ "$pid" -le 1 ] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    case "$comm" in
+      *claude*|*codex*|*gemini*|*agy*) echo "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+  done
+  echo "${PPID}"
+}
+
+BODY=$(TURN="$TURN" NOTE="$NOTE" TITLE="$TITLE" PROMPT="$PROMPT" WHY="$WHY" REPO="$REPO" TASK_ID="$TASK_ID" FAMILY="$FAMILY" AGENT="$AGENT" MODEL="$MODEL" MODE="$MODE" HOST="$HOST" python3 -c '
+import json, os
+b = {
+    "sourceTurnId": os.environ["TURN"],
+    "noteId": os.environ["NOTE"],
+    "repo": os.environ["REPO"],
+    "prompt": os.environ["PROMPT"],
+    "title": os.environ["TITLE"],
+    "reasoning": os.environ["WHY"],
+    "mode": os.environ["MODE"] or "auto",
+    "host": os.environ["HOST"] or "local",
+}
+if os.environ["TASK_ID"]: b["taskId"] = os.environ["TASK_ID"]
+if os.environ["FAMILY"]: b["family"] = os.environ["FAMILY"]
+if os.environ["AGENT"]: b["agent"] = os.environ["AGENT"]
+if os.environ["MODEL"]: b["model"] = os.environ["MODEL"]
+print(json.dumps(b))')
+
+curl -sS --max-time 30 -X POST "${COMPANION_URL:-http://127.0.0.1:4245}/hooks/brain/dispatch" \
+  -H "Content-Type: application/json" \
+  -H "X-Companion-Task-Id: brain" \
+  -H "X-Companion-Pid: $(claude_pid)" \
+  --data-binary "$BODY"
+echo

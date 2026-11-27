@@ -1,7 +1,12 @@
 import type { Database } from "bun:sqlite"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { classifyPromptRoute } from "./adaptive-routing"
+import {
+  type SpawnedPersistentWorkerHandle,
+  type StreamToolCall,
+  defaultSpawnPersistentWorker,
+  extractStreamToolCall,
+} from "./brain-stream"
 import { isOperationalEventText } from "./context-pruning"
 import { getFeatureFlags } from "./feature-flags"
 import {
@@ -16,59 +21,22 @@ import {
 } from "./orchestrator-telemetry"
 import { getSessionSummarySync } from "./session-summaries"
 import { defaultSkillsDir, loadSkillManifests } from "./skill-loader"
-import { buildBaselineStaticSystemPrompt, buildDynamicSystemPrompt, loadStaticBrainRules, renderFullSkillBlock } from "./skill-prompt"
+import {
+  STATIC_LOAD_SKILL_INSTRUCTIONS,
+  buildBaselineStaticSystemPrompt,
+  buildDynamicSystemPrompt,
+  loadStaticBrainRules,
+  renderFullSkillBlock,
+} from "./skill-prompt"
 import { DynamicSkillRegistry } from "./skill-retrieval"
 import { type LoadSkillExecutionResult, executeLoadSkill } from "./skill-tools"
 import { estimateTokens } from "./skill-types"
-import { defaultKillPid } from "./worker-pid"
-import type { SpawnWorkerOpts, SpawnedWorkerHandle } from "./worker-supervisor"
 
-export interface SpawnedPersistentWorkerHandle extends SpawnedWorkerHandle {
-  writeLine(line: string): boolean
-  closeInput(): void
-}
-
-export function defaultSpawnPersistentWorker(opts: SpawnWorkerOpts): SpawnedPersistentWorkerHandle {
-  const child = spawn(opts.cmd, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ["pipe", "pipe", "pipe"], detached: true })
-  let outBuf = "", errBuf = "", closed = false
-  child.stdin?.on("error", () => { closed = true })
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    outBuf += chunk; const lines = outBuf.split("\n"); outBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStdoutLine(l)
-  })
-  child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-    errBuf += chunk; const lines = errBuf.split("\n"); errBuf = lines.pop() ?? ""
-    for (const l of lines) if (l.trim()) opts.onStderrLine(l)
-  })
-  child.on("error", (err) => { closed = true; opts.onStderrLine(err.message); opts.onExit(1, null) })
-  child.on("close", (code, sig) => {
-    closed = true
-    if (outBuf.trim()) opts.onStdoutLine(outBuf)
-    if (errBuf.trim()) opts.onStderrLine(errBuf)
-    opts.onExit(code, sig)
-  })
-  return {
-    pid: child.pid ?? 0,
-    writeLine(line: string): boolean {
-      if (closed || !child.stdin || child.stdin.destroyed || !child.stdin.writable) return false
-      try {
-        child.stdin.write(line.endsWith("\n") ? line : `${line}\n`, "utf8")
-        return true
-      } catch {
-        closed = true
-        return false
-      }
-    },
-    closeInput() {
-      closed = true
-      try { child.stdin?.end() } catch { /* ignore */ }
-    },
-    kill(sig: NodeJS.Signals) {
-      closed = true
-      try { child.stdin?.destroy() } catch { /* ignore */ }
-      if (child.pid) defaultKillPid(child.pid, sig)
-    },
-  }
+export {
+  type SpawnedPersistentWorkerHandle,
+  type StreamToolCall,
+  defaultSpawnPersistentWorker,
+  extractStreamToolCall as extractBrainStreamToolCall,
 }
 
 let defaultRegistry: DynamicSkillRegistry | null = null
@@ -88,72 +56,6 @@ export function resetSharedSkillRegistryForTests(): void {
 
 export function runBrainLoadSkill(rawArgs: unknown, registry = getSharedSkillRegistry()): LoadSkillExecutionResult {
   return executeLoadSkill(registry, rawArgs)
-}
-
-export interface StreamToolCall {
-  phase: "pre" | "post"
-  tool: string
-  input: Record<string, unknown>
-  toolUseId: string
-  thoughtSignature?: string
-}
-
-/** Extract active tool-call metadata from Claude or `agy` stream-json lines, preserving any `thoughtSignature` verbatim. */
-export function extractBrainStreamToolCall(line: string): StreamToolCall | undefined {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(line) as unknown
-  } catch {
-    return undefined
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined
-  const raw = parsed as {
-    event?: string
-    thoughtSignature?: string
-    step_update?: {
-      step_type?: string
-      state?: string
-      tool_name?: string
-      step_index?: number
-      thoughtSignature?: string
-      tool_info?: { name?: string; parameters?: Record<string, unknown>; thoughtSignature?: string }
-    }
-    message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string }> }
-  }
-  const tu = Array.isArray(raw.message?.content)
-    ? raw.message.content.find((b) => b?.type === "tool_use" && typeof b.name === "string")
-    : undefined
-  if (tu?.name) {
-    const sig = typeof tu.thoughtSignature === "string" ? tu.thoughtSignature : undefined
-    return {
-      phase: "pre",
-      tool: tu.name,
-      input: tu.input && typeof tu.input === "object" && !Array.isArray(tu.input) ? tu.input : {},
-      toolUseId: tu.id || `tu_${Date.now()}`,
-      ...(sig !== undefined ? { thoughtSignature: sig } : {}),
-    }
-  }
-  if (raw.event === "step_update" && raw.step_update?.step_type === "tool" && raw.step_update.state === "ACTIVE") {
-    const tool = raw.step_update.tool_name || raw.step_update.tool_info?.name
-    const params = raw.step_update.tool_info?.parameters
-    if (typeof tool === "string" && tool) {
-      const sig = typeof raw.step_update.tool_info?.thoughtSignature === "string"
-        ? raw.step_update.tool_info.thoughtSignature
-        : typeof raw.step_update.thoughtSignature === "string"
-          ? raw.step_update.thoughtSignature
-          : typeof raw.thoughtSignature === "string"
-            ? raw.thoughtSignature
-            : undefined
-      return {
-        phase: "pre",
-        tool,
-        input: params && typeof params === "object" && !Array.isArray(params) ? params : {},
-        toolUseId: `agy_tu_${raw.step_update.step_index ?? Date.now()}`,
-        ...(sig !== undefined ? { thoughtSignature: sig } : {}),
-      }
-    }
-  }
-  return undefined
 }
 
 export interface ModelTurnPart {
@@ -304,9 +206,14 @@ export function prepareBrainTurn(opts: {
   }
 
   const baseStatic = loadStaticBrainRules(opts.brainDir)
-  const staticRules = opts.family === "gemini" && opts.legacyAgyBootPrefix
-    ? `${opts.legacyAgyBootPrefix}${baseStatic}`
+  // `agy` runs with `cwd: BRAIN_DIR` and already loads `AGENTS.md` + `CLAUDE.md` natively into its system prompt;
+  // do not duplicate ~5.6K tokens of those files inside Turn 1's stdin user message.
+  const staticRules = opts.family === "gemini"
+    ? `${opts.legacyAgyBootPrefix}${STATIC_LOAD_SKILL_INSTRUCTIONS}`
     : baseStatic
+  const nativeCwdTokens = opts.family === "gemini"
+    ? Math.max(0, estimateTokens(baseStatic) - estimateTokens(STATIC_LOAD_SKILL_INSTRUCTIONS))
+    : 0
   const built = buildDynamicSystemPrompt({
     staticRules,
     registry,
@@ -320,7 +227,7 @@ export function prepareBrainTurn(opts: {
     return {
       promptToSend,
       injectedSkillCount: built.injectedSkillCount,
-      estimatedPromptTokens: built.totalPromptTokens + estimateTokens(`${coldBlock}${effectiveUserText}`),
+      estimatedPromptTokens: nativeCwdTokens + built.totalPromptTokens + estimateTokens(`${coldBlock}${effectiveUserText}`),
       newlyInjectedSkillIds: built.selection.activeSkills.map((s) => s.id),
       routeTier: adaptive?.tier ?? fallbackTier,
       ...(adaptive
@@ -345,7 +252,7 @@ export function prepareBrainTurn(opts: {
   return {
     promptToSend,
     injectedSkillCount: built.injectedSkillCount,
-    estimatedPromptTokens: built.totalPromptTokens + estimateTokens(effectiveUserText),
+    estimatedPromptTokens: nativeCwdTokens + built.totalPromptTokens + estimateTokens(effectiveUserText),
     newlyInjectedSkillIds: deltaSkills.map((s) => s.id),
     routeTier: adaptive?.tier ?? fallbackTier,
     ...(adaptive
@@ -399,7 +306,7 @@ export function startBrainTurnMetrics(opts: {
         firstTokenAt = now()
       }
 
-      if (extractBrainStreamToolCall(trimmed)) {
+      if (extractStreamToolCall(trimmed)) {
         toolCallCount++
       }
       if (obj.event === "error" || obj.is_error === true || obj.type === "turn.failed") {

@@ -30,13 +30,16 @@ describe("repoIssues", () => {
     expect(repoIssues("", "{")).toEqual(["brain/.claude/settings.json: not valid JSON"])
   })
 
-  test("honors real BRAIN_RUNTIME_ALLOWED_TOOLS from brain-headless.ts and flags brain/bin/ui + brain/bin/load-skill if runtimeAllow is omitted", () => {
-    expect(repoIssues(entry("brain/bin/ui") + entry("brain/bin/load-skill"), allowed)).toEqual([
+  test("honors real BRAIN_RUNTIME_ALLOWED_TOOLS from brain-headless.ts and flags brain/bin/ui + brain/bin/dispatch + brain/bin/load-skill if runtimeAllow is omitted", () => {
+    const tree = entry("brain/bin/ui") + entry("brain/bin/dispatch") + entry("brain/bin/load-skill")
+    expect(repoIssues(tree, allowed)).toEqual([
       "brain/bin/ui: Bash(bin/ui:*) missing from brain/.claude/settings.json",
       "brain/bin/ui: Bash(./bin/ui:*) missing from brain/.claude/settings.json",
+      "brain/bin/dispatch: Bash(bin/dispatch:*) missing from brain/.claude/settings.json",
+      "brain/bin/dispatch: Bash(./bin/dispatch:*) missing from brain/.claude/settings.json",
       "brain/bin/load-skill: Bash(bin/load-skill:*) missing from brain/.claude/settings.json",
       "brain/bin/load-skill: Bash(./bin/load-skill:*) missing from brain/.claude/settings.json",
     ])
-    expect(repoIssues(entry("brain/bin/ui") + entry("brain/bin/load-skill"), allowed, BRAIN_RUNTIME_ALLOWED_TOOLS)).toEqual([])
+    expect(repoIssues(tree, allowed, BRAIN_RUNTIME_ALLOWED_TOOLS)).toEqual([])
   })
 })

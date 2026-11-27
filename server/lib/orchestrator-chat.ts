@@ -152,10 +152,18 @@ export function onTurnAppended(fn: (turn: Turn) => void): () => void {
   return () => appendedListeners.delete(fn)
 }
 
-export function appendTurn(role: TurnRole, text: string, taskId: string | null = null, threadId: string = GENERAL_CHANNEL, card?: TurnCard): Turn {
-  const turn: Turn = { id: randomUUID(), threadId, role, text, taskId, createdAt: Date.now(), ...(card ? { card } : {}) }
+export function appendTurn(
+  role: TurnRole,
+  text: string,
+  taskId: string | null = null,
+  threadId: string = GENERAL_CHANNEL,
+  card?: TurnCard,
+  id?: string,
+): Turn {
+  const turnId = typeof id === "string" && id.trim() ? id.trim() : randomUUID()
+  const turn: Turn = { id: turnId, threadId, role, text, taskId, createdAt: Date.now(), ...(card ? { card } : {}) }
   db.query(
-    "INSERT INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at, card) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT OR REPLACE INTO orchestrator_turns (id, thread_id, role, text, task_id, created_at, card) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(turn.id, turn.threadId, turn.role, turn.text, turn.taskId, turn.createdAt, card ? JSON.stringify(card) : null)
   for (const fn of appendedListeners) {
     try { fn(turn) } catch { /* a listener never fails the write */ }

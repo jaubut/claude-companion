@@ -66,7 +66,8 @@ export function applyProgressEvent(t: { plan?: PlanProgress | null; step: string
   return true
 }
 export interface StreamJsonEvent {
-  sessionId?: string; step?: string; assistantText?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean; plan?: PlanProgress
+  sessionId?: string; step?: string; assistantText?: string; textDelta?: string; resultText?: string; isError?: boolean; prUrl?: string; done?: boolean; plan?: PlanProgress
+  stepType?: string; stepIndex?: number; stepState?: string
 }
 
 /** Step labels stay short enough for a phone card. */
@@ -245,11 +246,22 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
     const body = [obj.init, obj.step_update, obj.result].find((v) => v && typeof v === "object" && !Array.isArray(v)) as Record<string, unknown> | undefined
     const cid = obj.conversation_id ?? body?.conversation_id
     if (typeof cid === "string" && cid.trim()) out.sessionId = cid.trim()
-    if (obj.event === "step_update" && body?.step_type === "tool" && body.state === "ACTIVE") {
-      const info = body.tool_info && typeof body.tool_info === "object" ? (body.tool_info as Record<string, unknown>) : {}
-      const params = info.parameters && typeof info.parameters === "object" && !Array.isArray(info.parameters) ? (info.parameters as Record<string, unknown>) : {}
-      out.step = toolStep(String(body.tool_name ?? info.name ?? "tool"), params)
-      if (body.tool_name === "write_todos" || info.name === "write_todos") setPlan(out, params.todos, "todos")
+    if (obj.event === "step_update" && body) {
+      if (body.step_type === "tool" && body.state === "ACTIVE") {
+        const info = body.tool_info && typeof body.tool_info === "object" ? (body.tool_info as Record<string, unknown>) : {}
+        const params = info.parameters && typeof info.parameters === "object" && !Array.isArray(info.parameters) ? (info.parameters as Record<string, unknown>) : {}
+        out.step = toolStep(String(body.tool_name ?? info.name ?? "tool"), params)
+        if (body.tool_name === "write_todos" || info.name === "write_todos") setPlan(out, params.todos, "todos")
+      } else if (body.step_type !== "tool" && body.step_type !== "user_input" && body.step_type !== "system_message") {
+        if (typeof body.step_type === "string") out.stepType = body.step_type
+        if (typeof body.step_index === "number") out.stepIndex = body.step_index
+        if (typeof body.state === "string") out.stepState = body.state
+        const delta = typeof body.delta === "string" ? body.delta : typeof obj.delta === "string" ? obj.delta : ""
+        const msgContent = body.message && typeof body.message === "object" ? (body.message as Record<string, unknown>).content : undefined
+        const text = typeof body.text === "string" ? body.text : typeof body.content === "string" ? body.content : typeof body.response === "string" ? body.response : typeof msgContent === "string" ? msgContent : ""
+        if (delta) { out.textDelta = delta; out.assistantText = delta }
+        else if (text.trim()) { out.assistantText = text.trim(); const pr = out.assistantText.match(PR_URL_RE)?.[0]; if (pr) out.prUrl = pr }
+      }
     }
     if (obj.event === "result" || obj.event === "error") {
       out.done = true
@@ -265,6 +277,12 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
       }
     }
     return Object.keys(out).length > 0 ? out : null
+  }
+
+  if (obj.type === "content_block_delta" || obj.type === "text_delta" || obj.event === "text_delta" || obj.event === "assistant_delta") {
+    const dObj = obj.delta && typeof obj.delta === "object" ? (obj.delta as Record<string, unknown>) : null
+    const delta = typeof obj.delta === "string" ? obj.delta : typeof dObj?.text === "string" ? dObj.text : typeof obj.text === "string" ? obj.text : ""
+    if (delta) { out.textDelta = delta; out.assistantText = delta; return out }
   }
 
   if (obj.type === "assistant") {
@@ -352,11 +370,7 @@ export function parseStreamJsonLine(line: string): StreamJsonEvent | null {
   return Object.keys(out).length > 0 ? out : null
 }
 
-/**
- * A headless agent's env (claude -p, codex exec, gemini, agy) without the DB credentials and the Companion / broker
- * tokens: no `/api/mcp/workers` calls, no direct `tasks` writes. CLAUDE_NO_AGENT_ENV=1 keeps the `claude` launch shim
- * (~/.bun/bin/claude) from loading the agent secrets back in. Disk reads of those secrets are not covered here.
- */
+/** Headless agent env without DB credentials or Companion/broker tokens; CLAUDE_NO_AGENT_ENV=1 disables the launch shim. */
 export function scrubAgentEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   for (const key of Object.keys(env)) {
@@ -366,10 +380,7 @@ export function scrubAgentEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env
 }
 
-/**
- * `export NAME=value` lines from `tls-agent-env` (tls-secrets.py env: shlex-quoted). Values in any other quoting
- * (the legacy bash %q fallback with spaces or escapes) are skipped, never guessed.
- */
+/** Parse shlex-quoted `export NAME=value` lines from `tls-agent-env`. */
 export function parseAgentEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const line of text.split("\n")) {
@@ -382,29 +393,18 @@ export function parseAgentEnv(text: string): Record<string, string> {
   return out
 }
 
-/**
- * The worker's env: scrubbed (scrubAgentEnv) plus its dispatch identity. `secrets` (Claude workers: the agent
- * secrets from tls-agent-env) are merged BEFORE the scrub, so a notes DB / Companion / Phase key in them never gets through.
- */
+/** Scrubbed worker env plus dispatch identity (`secrets` merged before the scrub so DB/Companion keys never pass). */
 export function buildWorkerEnv(baseEnv: NodeJS.ProcessEnv, taskId: string, builder: string, secrets: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = scrubAgentEnv({ ...baseEnv, ...secrets })
   env.DISPATCH_TASK_ID = taskId; env.DISPATCH_WORKER = "1"; env.DISPATCH_HEADLESS = "1"; env.COMPANION_TASK_ID = builder
   env.COMPANION_HEADLESS = "1"; env.COMPANION_ORIGIN = "worker"
-  // Nobody answers a prompt in a headless worker: an API-enable [y/N] from gcloud hung a gemini worker's background task for the whole turn.
   env.CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
-  // Headless claude 2.1.x ships TaskCreate/TaskUpdate (incremental, ids in tool results); 0 brings back TodoWrite, whose
-  // every call carries the full list, so the progress bar reads done / total off one event.
   env.CLAUDE_CODE_ENABLE_TASKS = "0"
-  // The server's systemd invocation, not the worker's: a Companion test the worker runs must not take itself for the service.
   delete env.INVOCATION_ID
   return env
 }
 
-/**
- * What an interactive `claude` gets from the launch shim, read by the supervisor instead: the shim stays off
- * (CLAUDE_NO_AGENT_ENV=1) so buildWorkerEnv can scrub the result. No TLS_AGENT_PATHS → never the scripts-only keys
- * (ANTHROPIC_API_KEY would switch the worker to API billing). stdout is only parsed, never logged.
- */
+/** Read Claude agent secrets from `tls-agent-env` without TLS_AGENT_PATHS / TLS_AGENT_SCRIPTS. */
 export function defaultLoadAgentSecrets(home = homedir()): Promise<Record<string, string>> {
   const env: NodeJS.ProcessEnv = { ...process.env }
   delete env.TLS_AGENT_PATHS; delete env.TLS_AGENT_SCRIPTS

@@ -1,4 +1,5 @@
 import { sanitizeThinkingLevel } from "./orchestrator-telemetry"
+import { normalizeAgyCliModelFlag } from "./worker-invocation"
 
 export const GEMINI4_UNIFIED_CONTEXT_WINDOW = 1_048_576
 export const GEMINI4_DEFAULT_SYNC_OUTPUT_LIMIT = 65_536
@@ -55,6 +56,18 @@ function normalizeGemini4BaseModel(raw: string | undefined, fallback: string): s
   return fallback
 }
 
+/**
+ * Resolve a valid Antigravity `agy` CLI `--model` flag (`server/routes/model.ts` catalog):
+ * - Tier 1 (fast Brain default): `gemini-4-argon-low`
+ * - Tier 2 (standard action / analytical): `gemini-4-argon-medium` / `gemini-4-carbon-medium`
+ * - Tier 3 (deep multi-file / deepest reasoning): `gemini-4-carbon-high` / `gemini-4-hydrogen-high`
+ */
+function resolveAgyCliTierFlag(rawOverride: string | undefined, defaultCliFlag: string): string {
+  const trimmed = rawOverride?.trim()
+  if (trimmed) return normalizeAgyCliModelFlag(trimmed)
+  return defaultCliFlag
+}
+
 function enforceNonMinimalLevel(level: string): Gemini4ThinkingLevel {
   const sanitized = sanitizeThinkingLevel("gemini-4-hydrogen", level)
   if (sanitized === "xhigh" || sanitized === "high" || sanitized === "medium" || sanitized === "low") {
@@ -88,14 +101,18 @@ export function classifyPromptRoute(
     if (pathCount >= 3) reasons.push(`mentions_${pathCount}_files`)
     if (codeFenceCount >= 2 && charLen > 1200) reasons.push("large_multi_block_specification")
 
-    const useCarbonXhigh = hasXhighSignal || pathCount >= 5 || charLen > 2400
-    const defaultBase = useCarbonXhigh ? "gemini-4-carbon" : "gemini-4-neon"
+    const useDeepest = hasXhighSignal || pathCount >= 5 || charLen > 2400
+    const defaultBase = useDeepest ? "gemini-4-carbon" : "gemini-4-neon"
     const modelId = normalizeGemini4BaseModel(env.COMPANION_TIER3_MODEL, defaultBase)
-    const thinkingLevel = enforceNonMinimalLevel(useCarbonXhigh ? "xhigh" : "high")
+    const thinkingLevel = enforceNonMinimalLevel(useDeepest ? "xhigh" : "high")
+    const cliModelFlag = resolveAgyCliTierFlag(
+      env.COMPANION_TIER3_AGY_MODEL,
+      useDeepest ? "gemini-4-hydrogen-high" : "gemini-4-carbon-high",
+    )
     return {
       tier: "tier3_deep",
       modelId,
-      cliModelFlag: `${modelId}-${thinkingLevel}`,
+      cliModelFlag,
       thinkingLevel,
       timeoutMs: TIER3_MIN_TIMEOUT_MS,
       reasons,
@@ -115,10 +132,14 @@ export function classifyPromptRoute(
     const defaultBase = hasAnalytical ? "gemini-4-neon" : "gemini-4-hydrogen"
     const modelId = normalizeGemini4BaseModel(env.COMPANION_TIER2_MODEL, defaultBase)
     const thinkingLevel = enforceNonMinimalLevel("medium")
+    const cliModelFlag = resolveAgyCliTierFlag(
+      env.COMPANION_TIER2_AGY_MODEL,
+      hasAnalytical ? "gemini-4-carbon-medium" : "gemini-4-argon-medium",
+    )
     return {
       tier: "tier2_standard",
       modelId,
-      cliModelFlag: `${modelId}-${thinkingLevel}`,
+      cliModelFlag,
       thinkingLevel,
       timeoutMs: TIER2_TIMEOUT_MS,
       reasons,
@@ -129,14 +150,34 @@ export function classifyPromptRoute(
   reasons.push("simple_qa_or_lookup")
   const modelId = normalizeGemini4BaseModel(env.COMPANION_TIER1_MODEL, "gemini-4-hydrogen")
   const thinkingLevel = enforceNonMinimalLevel("low")
+  const cliModelFlag = resolveAgyCliTierFlag(env.COMPANION_TIER1_AGY_MODEL, "gemini-4-argon-low")
   return {
     tier: "tier1_fast",
     modelId,
-    cliModelFlag: `${modelId}-${thinkingLevel}`,
+    cliModelFlag,
     thinkingLevel,
     timeoutMs: TIER1_TIMEOUT_MS,
     reasons,
   }
+}
+
+/**
+ * Decide whether an already-warm persistent `agy` daemon should be restarted for `targetModel`.
+ * Cold-booting `agy` + reconnecting MCP servers (`tls`, `board`) costs ~3–5s, so keep a warm
+ * low/medium daemon alive across routine Tier 1 ↔ Tier 2 turns; only restart to escalate into
+ * `tier3_deep` (`-high`) or step back down from `-high` after a deep turn finishes.
+ */
+export function shouldSwitchWarmAgyModel(
+  currentWarmModel: string,
+  targetModel: string,
+  routeTier: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (currentWarmModel === targetModel) return false
+  if (env.COMPANION_AGY_RESTART_ON_TIER_CHANGE === "1") return true
+  const isHigh = (m: string): boolean => /(?:-x?high|\(high\))$/i.test(m.trim())
+  if (routeTier === "tier3_deep") return true
+  return isHigh(currentWarmModel) !== isHigh(targetModel)
 }
 
 /** Guarantee Tier 3 HTTP/CLI timeouts are always >= 15 minutes (`900,000` ms). */

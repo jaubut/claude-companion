@@ -38,7 +38,7 @@ describe("Phase 4: Deterministic Fast Classifier & Route Tiers", () => {
     delete process.env.ENABLE_ADAPTIVE_ROUTING
   })
 
-  test("routes simple Q&A and status lookups to Tier 1 (gemini-4-hydrogen, low thinking, <1ms, zero prompt rewrite)", () => {
+  test("routes simple Q&A and status lookups to Tier 1 (SDK gemini-4-hydrogen low, agy CLI gemini-4-argon-low, <1ms, zero prompt rewrite)", () => {
     const raw = "What is the current deployment status?"
     const t0 = performance.now()
     const decision = classifyPromptRoute(raw)
@@ -48,32 +48,33 @@ describe("Phase 4: Deterministic Fast Classifier & Route Tiers", () => {
     expect(decision.tier).toBe("tier1_fast")
     expect(decision.modelId).toBe("gemini-4-hydrogen")
     expect(decision.thinkingLevel).toBe("low")
-    expect(decision.cliModelFlag).toBe("gemini-4-hydrogen-low")
-    expect(normalizeAgyCliModelFlag(decision.cliModelFlag)).toBe("gemini-4-hydrogen-low")
+    expect(decision.cliModelFlag).toBe("gemini-4-argon-low")
+    expect(normalizeAgyCliModelFlag(decision.cliModelFlag)).toBe("gemini-4-argon-low")
   })
 
-  test("routes single-file edits and PR reviews to Tier 2 (gemini-4-hydrogen / gemini-4-neon, medium thinking)", () => {
+  test("routes single-file edits and PR reviews to Tier 2 (SDK hydrogen/neon medium, agy CLI argon-medium/carbon-medium)", () => {
     const singleEdit = classifyPromptRoute("Fix the null check in server/lib/ops-triage.ts and add a unit test.")
     expect(singleEdit.tier).toBe("tier2_standard")
     expect(singleEdit.modelId).toBe("gemini-4-hydrogen")
     expect(singleEdit.thinkingLevel).toBe("medium")
-    expect(singleEdit.cliModelFlag).toBe("gemini-4-hydrogen-medium")
+    expect(singleEdit.cliModelFlag).toBe("gemini-4-argon-medium")
 
     const prReview = classifyPromptRoute("Review PR #381 and diagnose why the failing CI check occurred.")
     expect(prReview.tier).toBe("tier2_standard")
     expect(prReview.modelId).toBe("gemini-4-neon")
     expect(prReview.thinkingLevel).toBe("medium")
-    expect(prReview.cliModelFlag).toBe("gemini-4-neon-medium")
-    expect(normalizeAgyCliModelFlag(prReview.cliModelFlag)).toBe("gemini-4-neon-medium")
+    expect(prReview.cliModelFlag).toBe("gemini-4-carbon-medium")
+    expect(normalizeAgyCliModelFlag(prReview.cliModelFlag)).toBe("gemini-4-carbon-medium")
   })
 
-  test("routes multi-file refactors and deep architecture/concurrency tasks to Tier 3 (neon/carbon, high/xhigh, >=15m timeout)", () => {
+  test("routes multi-file refactors and deep architecture/concurrency tasks to Tier 3 (SDK neon/carbon high/xhigh, agy CLI carbon-high/hydrogen-high, >=15m timeout)", () => {
     const multiFile = classifyPromptRoute(
       "Perform a multi-file refactor across server/lib/a.ts, server/lib/b.ts, and server/wiring/c.ts.",
     )
     expect(multiFile.tier).toBe("tier3_deep")
     expect(multiFile.modelId).toBe("gemini-4-neon")
     expect(multiFile.thinkingLevel).toBe("high")
+    expect(multiFile.cliModelFlag).toBe("gemini-4-carbon-high")
     expect(multiFile.timeoutMs).toBeGreaterThanOrEqual(TIER3_MIN_TIMEOUT_MS)
     expect(multiFile.timeoutMs).toBeGreaterThanOrEqual(15 * 60 * 1000)
 
@@ -83,8 +84,8 @@ describe("Phase 4: Deterministic Fast Classifier & Route Tiers", () => {
     expect(deepAudit.tier).toBe("tier3_deep")
     expect(deepAudit.modelId).toBe("gemini-4-carbon")
     expect(deepAudit.thinkingLevel).toBe("xhigh")
-    expect(deepAudit.cliModelFlag).toBe("gemini-4-carbon-xhigh")
-    expect(normalizeAgyCliModelFlag(deepAudit.cliModelFlag)).toBe("gemini-4-carbon-xhigh")
+    expect(deepAudit.cliModelFlag).toBe("gemini-4-hydrogen-high")
+    expect(normalizeAgyCliModelFlag(deepAudit.cliModelFlag)).toBe("gemini-4-hydrogen-high")
     expect(resolveTierTimeoutMs("tier3_deep", 60_000)).toBe(TIER3_MIN_TIMEOUT_MS)
   })
 })
@@ -390,7 +391,7 @@ describe("Phase 4: Native Tool Invocation, Zod Self-Correction & SSE Stream", ()
     expect(r2.status).toBe(200)
     await Bun.sleep(20)
 
-    expect(spawnedModels).toEqual(["gemini-4-hydrogen-low", "gemini-4-carbon-xhigh"])
+    expect(spawnedModels).toEqual(["gemini-4-argon-low", "gemini-4-hydrogen-high"])
 
     const rows = memDb.query("SELECT route_tier, model_id, thinking_level, ttft_ms, tool_error_count FROM orchestrator_turn_metrics ORDER BY rowid ASC").all() as Array<{
       route_tier: string
@@ -402,17 +403,22 @@ describe("Phase 4: Native Tool Invocation, Zod Self-Correction & SSE Stream", ()
     expect(rows.length).toBe(2)
     expect(rows[0]).toMatchObject({
       route_tier: "tier1_fast",
-      model_id: "gemini-4-hydrogen-low",
+      model_id: "gemini-4-argon-low",
       thinking_level: "low",
       tool_error_count: 0,
     })
     expect(rows[0]!.ttft_ms).toBeLessThan(1500)
     expect(rows[1]).toMatchObject({
       route_tier: "tier3_deep",
-      model_id: "gemini-4-carbon-xhigh",
+      model_id: "gemini-4-hydrogen-high",
       thinking_level: "xhigh",
       tool_error_count: 0,
     })
+
+    const { shouldSwitchWarmAgyModel } = await import("./adaptive-routing")
+    expect(shouldSwitchWarmAgyModel("gemini-4-argon-low", "gemini-4-carbon-medium", "tier2_standard", {})).toBe(false)
+    expect(shouldSwitchWarmAgyModel("gemini-4-argon-low", "gemini-4-hydrogen-high", "tier3_deep", {})).toBe(true)
+    expect(shouldSwitchWarmAgyModel("gemini-4-hydrogen-high", "gemini-4-argon-low", "tier1_fast", {})).toBe(true)
 
     const agyMapped = agyStreamLineToOrchestratorEvents(
       JSON.stringify({ event: "assistant", message: { content: "Hello SSE" } }),
@@ -488,7 +494,10 @@ describe("Spec §5 Final Definition of Done (All 4 Feature Flags Enabled)", () =
     expect(tokenReductionRatio).toBeGreaterThanOrEqual(0.6)
     expect(upgradedPrepared.injectedSkillCount).toBeLessThanOrEqual(5 + 1)
     expect(upgradedPrepared.routeTier).toBe("tier1_fast")
-    expect(upgradedPrepared.routedModelId).toBe("gemini-4-hydrogen-low")
+    expect(upgradedPrepared.routedModelId).toBe("gemini-4-argon-low")
+    // Verify Turn 1 stdin on agy does NOT duplicate full CLAUDE.md/AGENTS.md text
+    expect(upgradedPrepared.promptToSend).toStartWith("[System]\n")
+    expect(upgradedPrepared.promptToSend.length).toBeLessThan(12_000)
 
     // 2. 35+ turn conversation maintains < 24,000 token ceiling while preserving latest 4+ turns verbatim
     const longHistory: Message[] = []

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -8,17 +9,13 @@ import {
   BUSY_MAX_MS, MEMORY_TAG, QUIET_REPLY, TURN_END_GRACE_MS, bootSeed, compactText, deliveryText, fitQueued, flushPrompt, idleCompactDue, middayRolloverDue, rolloverDue, rolloverPrompt, superviseStep, TICK_MS,
 } from "../lib/brain"
 import { classifyBrainEvent } from "../lib/brain-event-triage"
-import {
-  appendLaneANotifications, createIsolatedBackgroundLane, fitPrioritizedTurns,
-  runLegacyPureEventTriage, scrubInternalEventsFromReply,
-} from "../lib/brain-lane-isolation"
+import { appendLaneANotifications, createIsolatedBackgroundLane, fitPrioritizedTurns, runLegacyPureEventTriage, scrubInternalEventsFromReply } from "../lib/brain-lane-isolation"
+import { type ActiveBrainTurnState, type BrainTurnTrigger, canPreemptBrainTurn, isMutatingBrainToolCall } from "../lib/brain-preempt"
+import { type BrainStreamFrame, BrainTurnAccumulator, buildBrainClearFrame, buildBrainDeltaFrame, buildBrainDoneFrame } from "../lib/brain-stream"
 import { getFeatureFlags } from "../lib/feature-flags"
 import { type OpsTriageDecision, type OpsTriageEvent, triageOpsEvents } from "../lib/ops-triage"
 import type { TelemetrySink } from "../lib/orchestrator-telemetry"
-import {
-  clearTyped, dismissDeliveries, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries,
-  openDeliveries, setKv, takeDeliveries,
-} from "../lib/brain-store"
+import { clearTyped, dismissDeliveries, enqueueDelivery, getKv, markDelivered, markMaybe, requeueDeliveries, requeueTyped, openDeliveries, setKv, takeDeliveries } from "../lib/brain-store"
 import { type TraceRow, rowId, upsertRow } from "../lib/brain-trace"
 import { createBrainActivity } from "./brain-activity"
 import { type Turn, appendTurn, getTurn, onTurnAppended, setTurnCard } from "../lib/orchestrator-chat"
@@ -26,46 +23,33 @@ import { ensureChannel } from "../lib/orchestrator-channels"
 import { type Session, getSessionByKey, listSessions, recordSession } from "../lib/sessions"
 import type { SpawnResult } from "../lib/spawn-session"
 import { pushToAll } from "../lib/push"
-import { apnsConfigured } from "../lib/apns"
-import type { ApnsPayload } from "../lib/apns"
+import { type ApnsPayload, apnsConfigured } from "../lib/apns"
 import { gauge } from "./gauge"
 import { emitChannel, orchEmit } from "./orchestrator"
 import { type DispatchWiring, dispatchWiring } from "./dispatch"
-import { BRAIN_DIR, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, getBrainModel } from "./brain-headless"
-import { type ProposeInput, executeBrainPropose, proposalHandedOff } from "./brain-propose"
+import { proposeBrainTask } from "./brain-handoff"
+import { BRAIN_DIR, type BrainDeltaEvent, HEADLESS_BRAIN_PANE, createHeadlessBrainRunner, getBrainModel } from "./brain-headless"
+import { type ProposeInput, proposalHandedOff } from "./brain-propose"
 
 export { BRAIN_DIR, HEADLESS_BRAIN_PANE, getBrainModel, type ProposeInput, proposalHandedOff }
 
-// brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent (herdr pane,
-// interactive claude under Remote Control `brain`), relays Jeremie's brain-thread
-// turns into it, records its replies and keeps the trace (sqlite is the store,
-// not the transcript). Started by companion-server.ts iff COMPANION_BRAIN=1.
-// Adoption: only the session in the pane this supervisor spawned, never a second
-// one while the adopted one is the delivery target. Delivery is strict: a
-// non-empty key whose session has taskId "brain" AND the adopted session id —
-// never a cwd or the most-recent fallback. not_submitted → `maybe`, never
-// retyped. The paused flag is re-read before every spawn, adoption and delivery.
+// brain-v2 (RES-QDHU) runtime: supervises the one `brain` agent, relays Jeremie's brain-thread
+// turns into it, records its replies and keeps the trace (sqlite is the store, not the transcript).
 
 export interface BrainStatus { state: BrainState; sessionKey: string | null; since: number; restarts: number; host: string; activity: BrainActivity | null }
 
 export interface BrainDeps {
   now(): number
   alive(): Promise<boolean>
-  /** herdr's `brain` agent pane ("" when absent): what to adopt after a Companion restart. */
   agentPane(): Promise<string>
-  /** Start the brain: resume that conversation (claude --resume), or a fresh one when null. */
   spawn(resume: string | null): Promise<SpawnResult>
   stopAgent(): Promise<void>
   sessions(): Session[]
   sessionByKey(key: string): Session | null
-  /** Set taskId "brain" on a session found in the spawned pane. */
   tagBrain(key: string): boolean
   deliver(text: string, key: string): Promise<Response>
-  /** Claude Code's own status for the session ("busy" | "waiting" | "idle" | ""). */
   agentStatus(key: string): Promise<string>
-  /** The text the brain wrote after its last prompt, read from its transcript ("" when none). */
   lastReply(s: Session): Promise<string>
-  /** Esc into the brain's pane: cancels a running /compact. */
   interrupt(key: string): Promise<void>
   broadcast(frame: Record<string, unknown>): void
   push(payload: ApnsPayload): void
@@ -75,11 +59,8 @@ export interface BrainDeps {
   dispatch: DispatchWiring
   host: string
   log(msg: string): void
-  /** Coalesce window (ms) for batchable system events before waking the Brain (0 = immediate). */
   eventCoalesceMs?: number
-  /** Headless mode: use mid-day fresh-session rollover instead of no-op /compact. */
   middayRollover?: boolean
-  /** Stateless cheap Ops Triage (Gemini Flash) called on pure-event batches before waking the Brain. */
   triageEvents?: (events: OpsTriageEvent[]) => Promise<OpsTriageDecision>
   /** Override `ENABLE_LANE_ISOLATION` in tests; defaults to `getFeatureFlags().ENABLE_LANE_ISOLATION`. */
   laneIsolation?: boolean
@@ -97,26 +78,18 @@ export function createBrainWiring(deps: BrainDeps) {
   let state: BrainState = "starting"
   let since = deps.now()
   let restarts: number[] = []
-  let spawnedAt = 0
-  let pane = ""
-  let sessionKey: string | null = null
-  let sessionId: string | null = null
-  let busy = false
-  let busySince = 0
-  let lastHookAt = 0
-  let pendingSeed = false
-  let lastActivity = deps.now()
-  let compactedAt = 0
-  let compacting = false
-  /** A control turn ([flush], [rollover]) is in flight: its reply is not a thread turn. */
+  let spawnedAt = 0, busySince = 0, lastHookAt = 0, lastActivity = deps.now(), compactedAt = 0, turnsSinceReset = 0
+  let pane = "", lastReplyText = ""
+  let sessionKey: string | null = null, sessionId: string | null = null
+  let busy = false, pendingSeed = false, compacting = false
   let control: "flush" | "rollover" | null = null
-  let lastReplyText = ""
-  let turnsSinceReset = 0
   let timer: ReturnType<typeof setInterval> | null = null
   let coalesceTimer: ReturnType<typeof setTimeout> | null = null
   const coalesceMs = deps.eventCoalesceMs ?? 0
   /** >0 while the supervisor writes its own thread turns: those never wake the brain. */
-  let selfWrite = 0, ticking = false, triaging = false, triageGen = 0
+  let selfWrite = 0, ticking = false, triaging = false, triageGen = 0, turnGen = 0
+  let activeTurn: ActiveBrainTurnState | null = null
+  let activeDraft: { draftTurnId: string; acc: BrainTurnAccumulator } | null = null
   const isLaneIsolated = (): boolean => deps.laneIsolation ?? getFeatureFlags().ENABLE_LANE_ISOLATION
   const laneB = createIsolatedBackgroundLane({
     triageEvents: deps.triageEvents,
@@ -126,25 +99,16 @@ export function createBrainWiring(deps: BrainDeps) {
     log: deps.log,
   })
 
-  function clearCoalesce(): void {
-    if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null }
-  }
-
+  const clearCoalesce = (): void => { if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null } }
   const trace = (rows: Array<TraceRow | null>, out = rows.filter((r): r is TraceRow => !!r)): void => {
     if (out.length) deps.broadcast({ type: "brain_trace", op: "row", rows: out })
   }
-
   const activity = createBrainActivity({ now: deps.now, changed: () => deps.broadcast({ type: "brain", ...status() }), trace })
-
-  function status(): BrainStatus {
-    return { state, sessionKey, since, restarts: restarts.length, host: deps.host, activity: activity.get() }
-  }
+  const status = (): BrainStatus => ({ state, sessionKey, since, restarts: restarts.length, host: deps.host, activity: activity.get() })
 
   function setState(next: BrainState): void {
     if (next === state) return
-    const was = state
-    state = next
-    since = deps.now()
+    const was = state; state = next; since = deps.now()
     deps.log(`[brain] ${was} → ${next}`)
     deps.broadcast({ type: "brain", ...status() })
     if (next === "down") {
@@ -152,56 +116,54 @@ export function createBrainWiring(deps: BrainDeps) {
     }
   }
 
-  function setBusy(on: boolean): void {
-    busy = on
-    busySince = on ? deps.now() : 0
-    syncActivity()
-  }
   const syncActivity = (): void => activity.sync({ busy, compacting, flushing: control === "flush" })
+  const setBusy = (on: boolean): void => { busy = on; busySince = on ? deps.now() : 0; syncActivity() }
+  const forgetSession = (): void => { sessionKey = sessionId = null; activeTurn = null; activeDraft = null; setBusy(false) }
 
-  function forgetSession(): void {
-    sessionKey = sessionId = null
-    setBusy(false)
-  }
-
-  /** The delivery target, or null: key set, session registered as the brain, same session id. */
   function target(): Session | null {
-    if (!sessionKey) return null
+    if (!sessionKey || !sessionId) return null
     const s = deps.sessionByKey(sessionKey)
-    if (!s || s.taskId !== BRAIN_AGENT) return null
-    if (!sessionId || s.sessionId !== sessionId) return null
-    return s
+    return s && s.taskId === BRAIN_AGENT && s.sessionId === sessionId ? s : null
   }
 
-  /** Adopt a brain session: only in the spawned pane (both non-empty), never replacing a live adopted one. */
   function adopt(s: Session): boolean {
-    if (s.taskId !== BRAIN_AGENT || !s.sessionId) return false
-    if (!pane || !s.herdrPane || s.herdrPane !== pane) return false
+    if (s.taskId !== BRAIN_AGENT || !s.sessionId || !pane || !s.herdrPane || s.herdrPane !== pane) return false
     if (s.key === sessionKey && s.sessionId === sessionId) return true
     if (target()) return false
-    sessionKey = s.key
-    sessionId = s.sessionId
-    setBusy(false)
-    compacting = false
+    sessionKey = s.key; sessionId = s.sessionId; setBusy(false); compacting = false
     setKv("session_id", s.sessionId)
     deps.log(`[brain] adopted ${s.key} sid=${s.sessionId.slice(0, 8)} pane=${pane}`)
     return true
   }
 
-  function turnsOf(ids: string[]): DeliveryTurn[] {
-    return ids.map((id) => getTurn(id)).filter((t): t is Turn => !!t).map((t) => ({ id: t.id, text: t.text, createdAt: t.createdAt, card: t.card ?? null, role: t.role }))
-  }
-
-  /** Jeremie's turns only: events get no trace rows. */
+  const turnsOf = (ids: string[]): DeliveryTurn[] =>
+    ids.map((id) => getTurn(id)).filter((t): t is Turn => !!t).map((t) => ({ id: t.id, text: t.text, createdAt: t.createdAt, card: t.card ?? null, role: t.role }))
   const userIds = (ids: string[]): string[] => ids.filter((id) => getTurn(id)?.role === "user")
 
-  /** A brain-thread turn the supervisor writes (reply, warning, proposal card). */
-  function say(text: string, taskId: string | null = null): void {
+  function say(text: string, taskId: string | null = null, draftTurnId: string | null = null): Turn {
     selfWrite++
-    try { orchEmit(appendTurn("orchestrator", text, taskId, BRAIN_THREAD)) } finally { selfWrite-- }
+    try {
+      const turn = appendTurn("orchestrator", text, taskId, BRAIN_THREAD, undefined, draftTurnId ?? undefined)
+      orchEmit(turn, draftTurnId ? { draftTurnId } : undefined)
+      return turn
+    } finally {
+      selfWrite--
+    }
   }
 
-  /** A system turn landed in the brain thread (receipt, approval, merge…): triage before waking the brain. */
+  function noteSideEffect(reason: string): boolean {
+    if (activeTurn?.preempted) return false
+    if (activeTurn) { activeTurn.sideEffectFired = true; activeTurn.sideEffectReason ??= reason }
+    return true
+  }
+
+  function requeueActiveEvents(seedIds: string[]): string[] {
+    const typedIds = requeueTyped(deps.now())
+    const evIds = [...new Set([...seedIds, ...typedIds])].filter((id) => getTurn(id)?.role !== "user")
+    if (evIds.length > 0) requeueDeliveries(evIds, deps.now())
+    return evIds
+  }
+
   function wake(turn: Turn): void {
     if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator" || selfWrite > 0) return
     if (isLaneIsolated()) {
@@ -214,10 +176,7 @@ export function createBrainWiring(deps: BrainDeps) {
       enqueueDelivery(turn.id, turn.createdAt)
       if (disposition === "batch" && coalesceMs > 0) {
         if (!coalesceTimer) {
-          coalesceTimer = setTimeout(() => {
-            coalesceTimer = null
-            void flush()
-          }, coalesceMs)
+          coalesceTimer = setTimeout(() => { coalesceTimer = null; void flush() }, coalesceMs)
           coalesceTimer.unref?.()
         }
         return
@@ -229,16 +188,11 @@ export function createBrainWiring(deps: BrainDeps) {
     }
   }
 
-  /** Type one prompt into the brain. ok / not_submitted / refused (left for the next try). */
   async function type(text: string): Promise<"ok" | "maybe" | "refused"> {
     const s = target()
     if (!s) return "refused"
     let res: Response
-    try {
-      res = await deps.deliver(text, s.key)
-    } catch {
-      return "refused"
-    }
+    try { res = await deps.deliver(text, s.key) } catch { return "refused" }
     const body = await res.json().catch(() => ({})) as { ok?: unknown; error?: unknown }
     if (res.ok && body.ok === true) return "ok"
     if (body.error === "not_submitted") return "maybe"
@@ -246,7 +200,6 @@ export function createBrainWiring(deps: BrainDeps) {
     return "refused"
   }
 
-  /** The memory note's ref: remembered, else the newest note tagged brain-memory (then remembered). */
   async function memoryRef(): Promise<string | null> {
     const known = getKv("memory_ref")
     if (known) return known
@@ -301,12 +254,23 @@ export function createBrainWiring(deps: BrainDeps) {
     let text = seed ? bootSeed({ memoryRef: await memoryRef(), open: turns }) : deliveryText(turns)
     if (isolated && (!seed || hasUserTurn)) text = await appendLaneANotifications(text, deps.notificationSink)
     if (busy || !target()) return
-    setBusy(true)
+    const trigger: BrainTurnTrigger = seed ? "boot" : turns.some((t) => t.role === "user") ? "user" : "event"
+    const turnState: ActiveBrainTurnState = {
+      gen: ++turnGen, trigger, turnIds: [...ids], draftTurnId: randomUUID(),
+      sideEffectFired: false, sideEffectReason: null, preempted: false, startedAt: deps.now(),
+    }
+    activeTurn = turnState; activeDraft = null; setBusy(true)
     const out = await type(text)
-    if (out === "refused") { setBusy(false); return }
+    if (turnState.preempted) {
+      const evToRequeue = ids.filter((id) => getTurn(id)?.role !== "user")
+      if (evToRequeue.length > 0) requeueDeliveries(evToRequeue, deps.now())
+      return
+    }
+    if (out === "refused") { if (activeTurn === turnState) activeTurn = null; setBusy(false); return }
     if (seed) { pendingSeed = false; requeueDeliveries(queued.filter((id) => !ids.includes(id))) }
     lastActivity = deps.now()
     if (out === "maybe") {
+      if (activeTurn === turnState) activeTurn = null
       markMaybe(ids); setBusy(false)
       say("⚠︎ Typed into the brain but not confirmed as submitted — not retyped. Check the brain pane, or resend.")
       return
@@ -318,16 +282,9 @@ export function createBrainWiring(deps: BrainDeps) {
 
   /** Spawn now unless paused (re-read: callers may have awaited). fresh = a new conversation (rollover, resume from down), else resume. */
   async function spawnNow(fresh = false): Promise<void> {
-    if (deps.paused.read()) {
-      setState("paused")
-      return
-    }
-    forgetSession()
-    pane = ""
-    if (fresh) {
-      setKv("session_id", "")
-      turnsSinceReset = 0
-    }
+    if (deps.paused.read()) { setState("paused"); return }
+    forgetSession(); pane = ""
+    if (fresh) { setKv("session_id", ""); turnsSinceReset = 0 }
     const r = await deps.spawn(getKv("session_id") || null)
     spawnedAt = deps.now()
     if (!r.ok) {
@@ -335,42 +292,51 @@ export function createBrainWiring(deps: BrainDeps) {
       if (r.error?.startsWith("name_taken")) await deps.stopAgent()
       return
     }
-    pane = r.herdrPane ?? ""
-    pendingSeed = true
+    pane = r.herdrPane ?? ""; pendingSeed = true
     deps.log(`[brain] spawned (pane ${pane || "?"})`)
   }
 
   /** A brain turn ended (its Stop hook, or the transcript when that hook was lost). */
-  async function finishTurn(reply: string): Promise<void> {
-    setBusy(false)
-    lastActivity = deps.now()
+  async function finishTurn(reply: string, explicitDraftTurnId?: string): Promise<void> {
+    const finishedTurn = activeTurn; activeTurn = null
+    const finishedDraft = activeDraft; activeDraft = null
+    const draftTurnId = explicitDraftTurnId || finishedDraft?.draftTurnId || finishedTurn?.draftTurnId || null
+    const hadStream = !!finishedDraft?.acc.hasStreamed() || !!explicitDraftTurnId
+    const blockIdx = finishedDraft?.acc.currentBlockIndex() ?? 0
+    setBusy(false); lastActivity = deps.now()
     const rawText = reply.trim()
-    const text = isLaneIsolated() ? scrubInternalEventsFromReply(rawText) : rawText
-    const was = control
-    control = null
+    const combinedText = finishedDraft?.acc.hasStreamed() ? finishedDraft.acc.finalReply(rawText) : rawText
+    const text = isLaneIsolated() ? scrubInternalEventsFromReply(combinedText) : combinedText
+    const was = control; control = null
+    const isQuiet = text.toLowerCase() === QUIET_REPLY
+    const isInterrupted = text.toLowerCase() === "interrupted"
     // A late Stop after the transcript fallback carries the same reply: once only.
-    if (!was && text && text !== lastReplyText && text.toLowerCase() !== QUIET_REPLY && text.toLowerCase() !== "interrupted") say(text)
+    if (!was && text && text !== lastReplyText && !isQuiet && !isInterrupted) {
+      const turn = say(text, null, hadStream ? draftTurnId : null)
+      if (hadStream && draftTurnId) deps.broadcast(buildBrainDoneFrame(draftTurnId, turn, blockIdx) as unknown as Record<string, unknown>)
+    } else if (draftTurnId && (isQuiet || (hadStream && (isInterrupted || !!was || !text)))) {
+      deps.broadcast(buildBrainClearFrame(draftTurnId, isQuiet ? "quiet_reply" : "interrupted", blockIdx) as unknown as Record<string, unknown>)
+    }
     if (text) lastReplyText = text
     if (!was) {
       turnsSinceReset++
-      trace(userIds(clearTyped()).map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+      if (isInterrupted && finishedTurn?.trigger === "event" && !finishedTurn.sideEffectFired) {
+        requeueActiveEvents(finishedTurn.turnIds)
+      } else {
+        trace(userIds(clearTyped()).map((id) => upsertRow({ id: rowId.turn(id), kind: "turn", status: "done", title: getTurn(id)?.text ?? id, detail: null })))
+      }
     }
     if (was === "flush") {
-      // Memory is on disk: compact now, unless Jeremie spoke meanwhile.
       if (sessionKey && openDeliveries().length === 0 && !deps.paused.read()) {
         const ok = await deps.compact(sessionKey, compactText(await memoryRef(), 0))
-        compacting = ok
-        syncActivity()
+        compacting = ok; syncActivity()
         deps.log(`[brain] idle compact ${ok ? "sent" : "refused"}`)
         if (ok) return
       }
     }
     if (was === "rollover") {
       deps.log("[brain] rollover: restarting with a fresh session")
-      await deps.stopAgent()
-      setState("starting")
-      await spawnNow(true)
-      return
+      await deps.stopAgent(); setState("starting"); await spawnNow(true); return
     }
     await flush()
   }
@@ -379,63 +345,41 @@ export function createBrainWiring(deps: BrainDeps) {
     if (ticking) return
     ticking = true
     try {
-      // The kill switch first: a paused brain never respawns, whatever else holds.
       const paused = deps.paused.read()
       const alive = await deps.alive()
       const step = superviseStep({ paused, alive, state, spawnedAt, restarts, now: deps.now() })
       restarts = step.restarts
-      if (step.action === "stop") {
-        await deps.stopAgent()
-        forgetSession()
-      }
-      if (step.action === "spawn") {
-        setState("starting")
-        await spawnNow()
-        return
-      }
-      if (!alive || paused) {
-        setState(step.state)
-        return
-      }
+      if (step.action === "stop") { await deps.stopAgent(); forgetSession() }
+      if (step.action === "spawn") { setState("starting"); await spawnNow(); return }
+      if (!alive || paused) { setState(step.state); return }
       if (!pane) pane = await deps.agentPane()
       if (!target()) {
         let found = deps.sessions().find((s) => s.taskId === BRAIN_AGENT && !!pane && s.herdrPane === pane)
-        // The SessionStart hook can be lost (it posts in the background as the
-        // hook exits), leaving the brain registered by discovery with no taskId.
-        // The pane we spawned is proof enough: tag it.
         if (!found && pane) {
           const untagged = deps.sessions().find((s) => !s.taskId && !!s.sessionId && s.herdrPane === pane)
           if (untagged && deps.tagBrain(untagged.key)) found = deps.sessionByKey(untagged.key) ?? undefined
         }
-        if (!found || !adopt(found)) {
-          setState("starting")
-          return
-        }
+        if (!found || !adopt(found)) { setState("starting"); return }
       }
-      spawnedAt = 0
-      setState("up")
+      spawnedAt = 0; setState("up")
       const quietFor = deps.now() - Math.max(busySince, lastHookAt)
       if (busy && quietFor > TURN_END_GRACE_MS && sessionKey && await deps.agentStatus(sessionKey) === "idle") {
-        // The Stop hook posts in the background as the hook exits and can be
-        // lost: Claude Code says the turn is over, so read the reply ourselves.
         const s = target()
         if (s) {
           deps.log("[brain] idle with no Stop hook — the reply is read from the transcript")
-          await finishTurn(await deps.lastReply(s))
-          return
+          await finishTurn(await deps.lastReply(s)); return
         }
       }
       if (busy && quietFor > BUSY_MAX_MS) {
         deps.log("[brain] no hook from the brain while busy — the turn is considered lost, delivery resumes")
-        setBusy(false)
+        if (activeTurn?.trigger === "event") requeueActiveEvents(activeTurn.turnIds)
+        activeTurn = null; activeDraft = null; setBusy(false)
       }
-      await flush()
-      await maintain()
+      await flush(); await maintain()
     } catch (err) {
       deps.log(`[brain] tick failed: ${(err as Error)?.message ?? String(err)}`)
     } finally {
-      ticking = false
-      syncActivity()
+      ticking = false; syncActivity()
     }
   }
 
@@ -443,49 +387,42 @@ export function createBrainWiring(deps: BrainDeps) {
   async function maintain(): Promise<void> {
     if (busy || !sessionKey || deps.paused.read()) return
     const now = deps.now()
+    const startControlTurn = async (kind: "rollover" | "flush", prompt: string): Promise<"ok" | "maybe" | "refused"> => {
+      activeTurn = { gen: ++turnGen, trigger: kind, turnIds: [], draftTurnId: randomUUID(), sideEffectFired: true, sideEffectReason: kind, preempted: false, startedAt: now }
+      setBusy(true)
+      const out = await type(prompt)
+      if (out === "ok") control = kind
+      else { activeTurn = null; setBusy(false) }
+      return out
+    }
     if (rolloverDue(new Date(now), getKv("last_rollover"))) {
       setKv("last_rollover", new Date(now).toISOString().slice(0, 10))
-      setBusy(true)
-      const out = await type(rolloverPrompt(await memoryRef()))
-      if (out === "ok") control = "rollover"
-      else setBusy(false)
-      return
+      await startControlTurn("rollover", rolloverPrompt(await memoryRef())); return
     }
     if (deps.middayRollover) {
       const ctxPct = deps.contextPct(sessionKey)
       if (openDeliveries().length === 0 && middayRolloverDue({ lastTurnAt: lastActivity, contextPct: ctxPct, turnsSinceReset, now, busy })) {
         deps.log(`[brain] mid-day rollover due (ctx=${ctxPct ?? "?"}%, turns=${turnsSinceReset})`)
-        setBusy(true)
-        const out = await type(rolloverPrompt(await memoryRef()))
-        if (out === "ok") control = "rollover"
-        else setBusy(false)
-        return
+        await startControlTurn("rollover", rolloverPrompt(await memoryRef()))
       }
       return
     }
     if (compactedAt < lastActivity && idleCompactDue({ lastTurnAt: lastActivity, contextPct: deps.contextPct(sessionKey), now, busy })) {
       compactedAt = now
-      setBusy(true)
-      const out = await type(flushPrompt(await memoryRef()))
-      if (out === "ok") control = "flush"
-      else setBusy(false)
+      const out = await startControlTurn("flush", flushPrompt(await memoryRef()))
       deps.log(`[brain] pre-compact flush ${out}`)
     }
   }
 
   return {
-    status,
-    tick,
-    laneB,
+    status, tick, laneB,
 
     start(): void {
       if (timer) return
       const { channel, created } = ensureChannel(BRAIN_THREAD, "Brain")
       if (created) emitChannel(channel)
       onTurnAppended(wake)
-      timer = setInterval(() => void tick(), TICK_MS)
-      timer.unref?.()
-      void tick()
+      timer = setInterval(() => void tick(), TICK_MS); timer.unref?.(); void tick()
     },
 
     stop(): void {
@@ -500,24 +437,26 @@ export function createBrainWiring(deps: BrainDeps) {
         clearCoalesce()
         enqueueDelivery(turn.id, turn.createdAt)
         lastActivity = deps.now()
-        const steerAfterMs = Number(process.env.COMPANION_BRAIN_USER_STEER_MS ?? 15_000)
+        const steerAfterMs = Number(process.env.COMPANION_BRAIN_USER_STEER_MS ?? 0)
         if (compacting && sessionKey) {
-          // Jeremie comes first: Esc cancels the idle /compact, delivery follows.
-          compacting = false
-          syncActivity()
+          compacting = false; syncActivity()
           deps.log("[brain] message during idle compact — compact cancelled")
           void deps.interrupt(sessionKey).then(() => flush())
-        } else if (busy && sessionKey && busySince > 0 && steerAfterMs > 0 && deps.now() - busySince >= steerAfterMs) {
-          // Mid-turn turn-stealing: ONLY preempt a pure background-event turn — never kill an active user turn!
-          const activeTyped = openDeliveries().filter((r) => r.state === "typed").map((r) => r.turnId)
-          const isPureBackgroundTurn = activeTyped.length > 0 && activeTyped.every((id) => getTurn(id)?.role !== "user")
-          if (isPureBackgroundTurn) {
-            const elapsed = deps.now() - busySince
-            const interrupted = clearTyped()
-            if (interrupted.length > 0) requeueDeliveries(interrupted)
+        } else if (busy && sessionKey && (steerAfterMs <= 0 || (busySince > 0 && deps.now() - busySince >= steerAfterMs))) {
+          if (canPreemptBrainTurn(activeTurn)) {
+            const elapsed = busySince > 0 ? deps.now() - busySince : 0
+            const preempted = activeTurn!
+            preempted.preempted = true; activeTurn = null
+            const finishedDraft = activeDraft; activeDraft = null
+            const evToRequeue = requeueActiveEvents(preempted.turnIds)
+            if (finishedDraft?.acc.hasStreamed()) {
+              deps.broadcast(buildBrainClearFrame(finishedDraft.draftTurnId, "preempted", finishedDraft.acc.currentBlockIndex()) as unknown as Record<string, unknown>)
+            }
             setBusy(false)
-            deps.log(`[brain] user message arrived while background turn open ${elapsed}ms — interrupting background turn to deliver immediately`)
+            deps.log(`[brain] user message arrived while [event] turn open ${elapsed}ms (0 side effects) — preempting and re-queueing ${evToRequeue.length} event(s)`)
             void deps.interrupt(sessionKey).then(() => flush())
+          } else if (activeTurn?.trigger === "event" && activeTurn.sideEffectFired) {
+            deps.log(`[brain] user message arrived during [event] turn after side effect (${activeTurn.sideEffectReason}) — waiting for turn completion`)
           }
         }
         trace([upsertRow({ id: rowId.turn(turn.id), turnId: turn.id, kind: "turn", status: "pending", title: turn.text, detail: state === "up" ? null : `brain ${state}` })])
@@ -527,38 +466,58 @@ export function createBrainWiring(deps: BrainDeps) {
       }
     },
 
-    /** The brain's Stop hook (routes/hooks.ts). Its reply becomes a thread turn; the next queued turns go in. */
-    async onStop(sid: string, lastMessage: string): Promise<void> {
+    async onStop(sid: string, lastMessage: string, draftTurnId?: string): Promise<void> {
       if (!sid || !sessionId || sid !== sessionId) return
       lastHookAt = deps.now()
-      await finishTurn(lastMessage)
+      await finishTurn(lastMessage, draftTurnId)
     },
 
-    /** Any hook from the adopted brain session: it is alive (busy deadline). A tool hook also names its step. */
+    onTextDelta(sid: string, ev: { draftTurnId?: string; delta: string; text?: string; blockIndex?: number } | string, isDelta = false): void {
+      if (!sid || sid !== sessionId || !busy || activeTurn?.preempted) return
+      lastHookAt = deps.now()
+      const draftId = (typeof ev === "object" && ev.draftTurnId ? ev.draftTurnId : null) || activeDraft?.draftTurnId || activeTurn?.draftTurnId || randomUUID()
+      if (!activeDraft || activeDraft.draftTurnId !== draftId) {
+        activeDraft = { draftTurnId: draftId, acc: new BrainTurnAccumulator(draftId) }
+        if (activeTurn) activeTurn.draftTurnId = draftId
+      }
+      if (typeof ev === "string") {
+        const pushed = activeDraft.acc.pushText(ev, isDelta)
+        if (!pushed) return
+        deps.broadcast(buildBrainDeltaFrame({ draftTurnId: draftId, delta: pushed.delta, text: pushed.text, blockIndex: pushed.blockIndex }) as unknown as Record<string, unknown>)
+        return
+      }
+      const pushed = activeDraft.acc.pushText(ev.delta, true)
+      const text = typeof ev.text === "string" && ev.text ? ev.text : pushed?.text ?? ev.delta
+      const blockIndex = typeof ev.blockIndex === "number" ? ev.blockIndex : activeDraft.acc.currentBlockIndex()
+      if (!text) return
+      deps.broadcast(buildBrainDeltaFrame({ draftTurnId: draftId, delta: ev.delta, text, blockIndex }) as unknown as Record<string, unknown>)
+    },
+
     noteActivity(sid: string, call?: { phase: "pre" | "post"; tool: string; input: Record<string, unknown>; toolUseId: string }): void {
       if (!sid || sid !== sessionId) return
       lastHookAt = deps.now()
-      if (call && busy) activity.tool(call.phase, call.tool, call.input, call.toolUseId)
-    },
-
-    /** SessionStart from the brain: adopt it (a fresh spawn gets its boot seed on the next tick). */
-    onSessionStart(s: Session): void {
-      if (deps.paused.read()) return
-      if (adopt(s)) {
-        compacting = false
-        syncActivity()
-        spawnedAt = 0
-        setState("up")
-        void flush()
+      if (call && busy) {
+        activeDraft?.acc.noteTool()
+        const sideEffect = isMutatingBrainToolCall(call.tool, call.input)
+        if (sideEffect) noteSideEffect(sideEffect)
+        activity.tool(call.phase, call.tool, call.input, call.toolUseId)
       }
     },
 
-    /** A proposal from bin/propose (POST /hooks/brain/propose, auth done by the route). */
-    async propose(p: ProposeInput): Promise<{ status: number; body: Record<string, unknown> }> {
-      return executeBrainPropose(p, { dispatch: deps.dispatch, log: deps.log, trace })
+    noteSideEffect,
+    activeTurnState: (): ActiveBrainTurnState | null => activeTurn ? { ...activeTurn, turnIds: [...activeTurn.turnIds] } : null,
+    activeDraftFrame(): BrainStreamFrame | null {
+      if (!busy || !activeDraft || !activeDraft.acc.hasStreamed()) return null
+      const text = activeDraft.acc.currentText()
+      return text ? buildBrainDeltaFrame({ draftTurnId: activeDraft.draftTurnId, delta: text, text, blockIndex: activeDraft.acc.currentBlockIndex() }) : null
     },
-
-    /** A brain voice take was archived (POST /api/capture/voice/start brainTurnId): the turn card gets its audio id. */
+    onSessionStart(s: Session): void {
+      if (!deps.paused.read() && adopt(s)) { compacting = false; syncActivity(); spawnedAt = 0; setState("up"); void flush() }
+    },
+    async propose(p: ProposeInput): Promise<{ status: number; body: Record<string, unknown> }> {
+      noteSideEffect("propose")
+      return proposeBrainTask(p, { dispatch: deps.dispatch, trace, log: deps.log })
+    },
     attachAudio(turnId: string, audioId: string): void {
       const turn = getTurn(turnId)
       if (!turn || turn.threadId !== BRAIN_THREAD || turn.card?.kind !== "voice") return
@@ -566,40 +525,15 @@ export function createBrainWiring(deps: BrainDeps) {
       if (updated) orchEmit(updated)
       trace([upsertRow({ id: rowId.voice(turnId), parentId: rowId.turn(turnId), turnId, kind: "voice", status: "done", title: "Voice take archived", ref: { audioId } })])
     },
-
-    pause(): BrainStatus {
-      deps.paused.write(true)
-      void deps.stopAgent().then(forgetSession)
-      setState("paused")
-      return status()
-    },
-
-    resume(): BrainStatus {
-      deps.paused.write(false)
-      // Out of down (or a pause): a resumed conversation may be what kept crashing.
-      setKv("session_id", "")
-      restarts = []
-      setState("starting")
-      void tick()
-      return status()
-    },
-
-    /** Every appended turn (registered by start()): brain-thread system turns wake the brain. */
+    pause(): BrainStatus { deps.paused.write(true); void deps.stopAgent().then(forgetSession); setState("paused"); return status() },
+    resume(): BrainStatus { deps.paused.write(false); setKv("session_id", ""); restarts = []; setState("starting"); void tick(); return status() },
     onTurn: wake,
-
-    /** Test seam: the pane a spawn would have returned (adoption requires it). */
-    setSpawnedPaneForTests(p: string): void {
-      pane = p
-    },
-
+    setSpawnedPaneForTests(p: string): void { pane = p },
     async restart(): Promise<BrainStatus | null> {
       if (deps.paused.read()) return null
-      restarts = []
-      await deps.stopAgent()
+      restarts = []; await deps.stopAgent()
       if (deps.paused.read()) return null
-      setState("starting")
-      await spawnNow()
-      return status()
+      setState("starting"); await spawnNow(); return status()
     },
   }
 }
@@ -619,7 +553,8 @@ export const getBrainDeliver = (): ((text: string, key: string) => Promise<Respo
 
 export const headlessBrainRunner = createHeadlessBrainRunner({
   noteActivity: (sid, call) => brainWiring.noteActivity(sid, call),
-  onStop: (sid, reply) => brainWiring.onStop(sid, reply),
+  onTextDelta: (sid, ev: BrainDeltaEvent) => brainWiring.onTextDelta(sid, ev),
+  onStop: (sid, reply, draftTurnId) => brainWiring.onStop(sid, reply, draftTurnId),
 })
 
 export function setBrainModel(model: string): void {

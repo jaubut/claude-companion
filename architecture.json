@@ -360,7 +360,7 @@
         },
         {
           "path": "lib/adaptive-routing.ts",
-          "lines": 155,
+          "lines": 196,
           "kind": "lib",
           "exports": [
             "GEMINI4_UNIFIED_CONTEXT_WINDOW",
@@ -372,6 +372,7 @@
             "Gemini4ThinkingLevel",
             "AdaptiveRouteDecision",
             "classifyPromptRoute",
+            "shouldSwitchWarmAgyModel",
             "resolveTierTimeoutMs"
           ],
           "state": [],
@@ -380,7 +381,8 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
-            "lib/orchestrator-telemetry.ts"
+            "lib/orchestrator-telemetry.ts",
+            "lib/worker-invocation.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1574,8 +1576,31 @@
           "externals": []
         },
         {
+          "path": "lib/brain-preempt.ts",
+          "lines": 147,
+          "kind": "lib",
+          "exports": [
+            "BrainTurnTrigger",
+            "ActiveBrainTurnState",
+            "isMutatingBrainToolCall",
+            "canPreemptBrainTurn"
+          ],
+          "state": [
+            "READ_ONLY_TOOLS: Set",
+            "MUTATING_FILE_TOOLS: Set"
+          ],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
           "path": "lib/brain-store.ts",
-          "lines": 111,
+          "lines": 350,
           "kind": "lib",
           "exports": [
             "OutboxState",
@@ -1585,6 +1610,7 @@
             "openDeliveries",
             "markDelivered",
             "requeueDeliveries",
+            "requeueTyped",
             "markMaybe",
             "clearTyped",
             "dismissDeliveries",
@@ -1592,7 +1618,22 @@
             "setKv",
             "proposeSeen",
             "rememberPropose",
-            "proposalTurnOf"
+            "proposalTurnOf",
+            "proposeSeenById",
+            "LocalHandoffRow",
+            "handoffSeen",
+            "rememberHandoff",
+            "updateHandoff",
+            "removeHandoff",
+            "isLocalHandoffPendingSync",
+            "SyncOutboxRow",
+            "enqueueSyncOutbox",
+            "getSyncOutboxItem",
+            "listPendingSyncOutbox",
+            "markSyncOutboxDone",
+            "markSyncOutboxRetry",
+            "markSyncOutboxFailed",
+            "removeSyncOutbox"
           ],
           "state": [],
           "emits": [],
@@ -1601,6 +1642,42 @@
           "apiCalls": [],
           "imports": [
             "lib/orchestrator-db.ts"
+          ],
+          "listeners": [],
+          "sheets": 0,
+          "externals": []
+        },
+        {
+          "path": "lib/brain-stream.ts",
+          "lines": 439,
+          "kind": "lib",
+          "exports": [
+            "SpawnedPersistentWorkerHandle",
+            "defaultSpawnPersistentWorker",
+            "BrainStreamOp",
+            "BrainStreamClearReason",
+            "BrainStreamFrame",
+            "BrainTurnAccumulator",
+            "buildBrainDeltaFrame",
+            "buildBrainDoneFrame",
+            "buildBrainClearFrame",
+            "reconcileBrainStream",
+            "StreamToolCall",
+            "extractStreamToolCall",
+            "readAgyStepText"
+          ],
+          "state": [],
+          "emits": [],
+          "consumes": [],
+          "endpoints": [],
+          "apiCalls": [],
+          "imports": [
+            "lib/agy-feed.ts",
+            "lib/brain.ts",
+            "lib/orchestrator-chat.ts",
+            "lib/transcript-cursor.ts",
+            "lib/worker-pid.ts",
+            "lib/worker-spawn.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -1644,16 +1721,12 @@
         },
         {
           "path": "lib/brain-turn-harness.ts",
-          "lines": 449,
+          "lines": 356,
           "kind": "lib",
           "exports": [
-            "SpawnedPersistentWorkerHandle",
-            "defaultSpawnPersistentWorker",
             "getSharedSkillRegistry",
             "resetSharedSkillRegistryForTests",
             "runBrainLoadSkill",
-            "StreamToolCall",
-            "extractBrainStreamToolCall",
             "ModelTurnPart",
             "ModelTurn",
             "preserveModelTurnThoughtSignatures",
@@ -1674,6 +1747,7 @@
           "apiCalls": [],
           "imports": [
             "lib/adaptive-routing.ts",
+            "lib/brain-stream.ts",
             "lib/context-pruning.ts",
             "lib/feature-flags.ts",
             "lib/orchestrator-telemetry.ts",
@@ -1682,9 +1756,7 @@
             "lib/skill-prompt.ts",
             "lib/skill-retrieval.ts",
             "lib/skill-tools.ts",
-            "lib/skill-types.ts",
-            "lib/worker-pid.ts",
-            "lib/worker-supervisor.ts"
+            "lib/skill-types.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -4380,7 +4452,7 @@
         },
         {
           "path": "lib/orchestrator-chat.ts",
-          "lines": 367,
+          "lines": 375,
           "kind": "lib",
           "exports": [
             "TurnRole",
@@ -7900,7 +7972,7 @@
         },
         {
           "path": "lib/worker-pr-link.ts",
-          "lines": 159,
+          "lines": 161,
           "kind": "lib",
           "exports": [
             "OWNABLE",
@@ -7917,6 +7989,7 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "lib/brain-store.ts",
             "lib/handoff-claim.ts",
             "lib/log.ts",
             "lib/triage-pr.ts",
@@ -8551,7 +8624,7 @@
         },
         {
           "path": "routes/brain.ts",
-          "lines": 524,
+          "lines": 551,
           "kind": "lib",
           "exports": [
             "BrainRouteDeps",
@@ -8573,15 +8646,16 @@
             "lib/gemini4-orchestrator-client.ts",
             "lib/link-media.ts",
             "lib/log.ts",
-            "lib/native-tool-executor.ts",
             "lib/orchestrator-chat.ts",
             "lib/outbound.ts",
             "lib/sessions.ts",
             "lib/triage-pr.ts",
             "lib/vault-guard.ts",
             "lib/worker-invocation.ts",
+            "lib/worker-mcp.ts",
             "wiring/brain.ts",
             "wiring/brain-handoff.ts",
+            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-pr-close.ts",
             "wiring/brain-pr-merge.ts",
@@ -9444,7 +9518,7 @@
         },
         {
           "path": "routes/worker-mcp.ts",
-          "lines": 96,
+          "lines": 103,
           "kind": "route-host",
           "exports": [
             "WorkerMcpRouteDeps",
@@ -9458,6 +9532,11 @@
             {
               "method": "*",
               "path": "/api/mcp/workers",
+              "prefix": false
+            },
+            {
+              "method": "*",
+              "path": "/hooks/brain/workers-mcp",
               "prefix": false
             }
           ],
@@ -9759,14 +9838,23 @@
         },
         {
           "path": "wiring/brain-handoff.ts",
-          "lines": 58,
+          "lines": 498,
           "kind": "lib",
           "exports": [
+            "DEFAULT_LOCAL_SYNC_BUDGET_MS",
             "HandoffInput",
+            "ProposeSyncInput",
             "handoffOrigin",
-            "addBrainHandoff"
+            "deterministicHandoffId",
+            "deterministicProposeHash",
+            "flushBrainSyncOutbox",
+            "addBrainHandoff",
+            "proposeBrainTask"
           ],
-          "state": [],
+          "state": [
+            "let retryTimer",
+            "activeFlushes: Map"
+          ],
           "emits": [],
           "consumes": [],
           "endpoints": [],
@@ -9782,7 +9870,8 @@
             "lib/turso.ts",
             "wiring/brain.ts",
             "wiring/dispatch.ts",
-            "wiring/orchestrator.ts"
+            "wiring/orchestrator.ts",
+            "wiring/proposals.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -9790,7 +9879,7 @@
         },
         {
           "path": "wiring/brain-headless.ts",
-          "lines": 578,
+          "lines": 583,
           "kind": "lib",
           "exports": [
             "BRAIN_DIR",
@@ -9805,6 +9894,7 @@
             "brainFamilyForModel",
             "resolveBrainSessionModel",
             "AGY_BOOT_PREFIX",
+            "BrainDeltaEvent",
             "createHeadlessBrainRunner"
           ],
           "state": [],
@@ -9816,7 +9906,9 @@
             "lib/adaptive-routing.ts",
             "lib/brain.ts",
             "lib/brain-store.ts",
+            "lib/brain-stream.ts",
             "lib/brain-turn-harness.ts",
+            "lib/command-catalog.ts",
             "lib/feature-flags.ts",
             "lib/last-assistant.ts",
             "lib/log.ts",
@@ -9825,10 +9917,9 @@
             "lib/sessions.ts",
             "lib/skill-retrieval.ts",
             "lib/spawn-session.ts",
-            "lib/worker-supervisor.ts",
             "lib/worker-invocation.ts",
-            "wiring/brain-workers.ts",
-            "lib/command-catalog.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-workers.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10021,12 +10112,13 @@
         },
         {
           "path": "wiring/brain-propose.ts",
-          "lines": 73,
+          "lines": 150,
           "kind": "lib",
           "exports": [
             "ProposeInput",
             "proposalHandedOff",
-            "executeBrainPropose"
+            "executeAtomicBrainDispatch",
+            "createBrainSseTurnResponse"
           ],
           "state": [],
           "emits": [],
@@ -10034,14 +10126,17 @@
           "endpoints": [],
           "apiCalls": [],
           "imports": [
+            "wiring/brain-headless.ts",
+            "wiring/brain-handoff.ts",
+            "wiring/worker-mcp.ts",
             "lib/brain.ts",
-            "lib/brain-store.ts",
-            "lib/brain-trace.ts",
-            "lib/dispatch-tasks.ts",
+            "lib/brain-turn-harness.ts",
+            "lib/gemini4-orchestrator-client.ts",
+            "lib/native-tool-executor.ts",
             "lib/orchestrator-chat.ts",
-            "wiring/dispatch.ts",
-            "wiring/orchestrator.ts",
-            "wiring/proposals.ts"
+            "lib/skill-prompt.ts",
+            "lib/worker-invocation.ts",
+            "lib/worker-mcp.ts"
           ],
           "listeners": [],
           "sheets": 0,
@@ -10217,7 +10312,7 @@
         },
         {
           "path": "wiring/brain.ts",
-          "lines": 661,
+          "lines": 596,
           "kind": "lib",
           "exports": [
             "BrainStatus",
@@ -10247,6 +10342,8 @@
             "lib/brain.ts",
             "lib/brain-event-triage.ts",
             "lib/brain-lane-isolation.ts",
+            "lib/brain-preempt.ts",
+            "lib/brain-stream.ts",
             "lib/feature-flags.ts",
             "lib/ops-triage.ts",
             "lib/orchestrator-telemetry.ts",
@@ -10262,6 +10359,7 @@
             "wiring/gauge.ts",
             "wiring/orchestrator.ts",
             "wiring/dispatch.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-headless.ts",
             "wiring/brain-propose.ts"
           ],
@@ -10674,7 +10772,7 @@
         },
         {
           "path": "wiring/orchestrator.ts",
-          "lines": 255,
+          "lines": 260,
           "kind": "lib",
           "exports": [
             "orchEmit",
@@ -11306,7 +11404,7 @@
         },
         {
           "path": "ws.ts",
-          "lines": 198,
+          "lines": 200,
           "kind": "lib",
           "exports": [
             "websocket"
@@ -11316,6 +11414,7 @@
             "init",
             "brain",
             "brain_trace",
+            "brain_stream",
             "approval",
             "question",
             "resolved",
@@ -11609,6 +11708,7 @@
             "routes/hooks.ts#POST /hooks/session-start",
             "routes/orchestrator.ts#POST /api/orchestrator/send",
             "routes/worker-mcp.ts",
+            "routes/worker-mcp.ts#* /hooks/brain/workers-mcp",
             "ws.ts"
           ]
         },
@@ -12159,6 +12259,7 @@
             "lib/a2ui-macros.ts",
             "lib/a2ui.ts",
             "lib/brain-lane-isolation.ts",
+            "lib/brain-stream.ts",
             "lib/context-pruning.ts",
             "lib/dispatch-poller.ts",
             "lib/front-door.ts",
@@ -12284,6 +12385,7 @@
             "lib/a2ui.ts",
             "lib/brain-event-triage.ts",
             "lib/brain-lane-isolation.ts",
+            "lib/brain-stream.ts",
             "lib/brain-workers.ts",
             "lib/context-pruning.ts",
             "routes/brain.ts",
@@ -12298,7 +12400,6 @@
             "wiring/brain-pr-merge.ts",
             "wiring/brain-pr-resolve-conflicts.ts",
             "wiring/brain-pr-update-branch.ts",
-            "wiring/brain-propose.ts",
             "wiring/brain-stuck-events.ts",
             "wiring/brain-task-cancel.ts",
             "wiring/brain.ts",
@@ -12716,6 +12817,15 @@
             "lib/activity.ts"
           ]
         },
+        "normalizeAgyCliModelFlag": {
+          "module": "lib/worker-invocation.ts",
+          "callers": [
+            "lib/adaptive-routing.ts",
+            "lib/agy-feed.ts",
+            "lib/ops-triage.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
         "sanitizeThinkingLevel": {
           "module": "lib/orchestrator-telemetry.ts",
           "callers": [
@@ -12753,18 +12863,11 @@
             "wiring/brain.ts"
           ]
         },
-        "normalizeAgyCliModelFlag": {
-          "module": "lib/worker-invocation.ts",
-          "callers": [
-            "lib/agy-feed.ts",
-            "lib/ops-triage.ts",
-            "lib/worker-supervisor.ts"
-          ]
-        },
         "readTailLines": {
           "module": "lib/transcript-cursor.ts",
           "callers": [
             "lib/agy-feed.ts",
+            "lib/brain-stream.ts",
             "lib/transcript-backfill.ts",
             "lib/transcript.ts"
           ]
@@ -14031,6 +14134,53 @@
             "wiring/brain.ts"
           ]
         },
+        "SpawnedWorkerHandle": {
+          "module": "lib/worker-spawn.ts",
+          "callers": [
+            "lib/brain-stream.ts",
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts",
+            "lib/worker-task.ts",
+            "lib/worker-turn-watch.ts"
+          ]
+        },
+        "SpawnWorkerOpts": {
+          "module": "lib/worker-spawn.ts",
+          "callers": [
+            "lib/brain-stream.ts",
+            "lib/desk-runner.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "defaultKillPid": {
+          "module": "lib/worker-pid.ts",
+          "callers": [
+            "lib/brain-stream.ts",
+            "lib/desk-runner.ts",
+            "lib/worker-spawn.ts",
+            "lib/worker-supervisor.ts"
+          ]
+        },
+        "QUIET_REPLY": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "lib/brain-stream.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "agyTranscriptPath": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/brain-stream.ts",
+            "lib/transcript-backfill.ts"
+          ]
+        },
+        "agyFullTranscriptPath": {
+          "module": "lib/agy-feed.ts",
+          "callers": [
+            "lib/brain-stream.ts"
+          ]
+        },
         "WorkerProgress": {
           "module": "lib/worker-invocation.ts",
           "callers": [
@@ -14062,6 +14212,33 @@
             "lib/dispatch-mirror.ts",
             "lib/dispatch-poller.ts",
             "wiring/brain-workers.ts"
+          ]
+        },
+        "SpawnedPersistentWorkerHandle": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "StreamToolCall": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "defaultSpawnPersistentWorker": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "extractStreamToolCall": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "ExtractedUsageMetrics": {
@@ -14105,13 +14282,36 @@
             "lib/gemini4-orchestrator-client.ts"
           ]
         },
-        "defaultKillPid": {
-          "module": "lib/worker-pid.ts",
+        "STATIC_LOAD_SKILL_INSTRUCTIONS": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "buildBaselineStaticSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
+          ]
+        },
+        "buildDynamicSystemPrompt": {
+          "module": "lib/skill-prompt.ts",
           "callers": [
             "lib/brain-turn-harness.ts",
-            "lib/desk-runner.ts",
-            "lib/worker-spawn.ts",
-            "lib/worker-supervisor.ts"
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "loadStaticBrainRules": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "renderFullSkillBlock": {
+          "module": "lib/skill-prompt.ts",
+          "callers": [
+            "lib/brain-turn-harness.ts"
           ]
         },
         "DynamicSkillRegistry": {
@@ -14180,18 +14380,6 @@
             "wiring/brain-headless.ts"
           ]
         },
-        "loadStaticBrainRules": {
-          "module": "lib/skill-prompt.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts"
-          ]
-        },
-        "buildBaselineStaticSystemPrompt": {
-          "module": "lib/skill-prompt.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts"
-          ]
-        },
         "estimateTokens": {
           "module": "lib/skill-types.ts",
           "callers": [
@@ -14201,24 +14389,13 @@
             "lib/skill-prompt.ts"
           ]
         },
-        "buildDynamicSystemPrompt": {
-          "module": "lib/skill-prompt.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts"
-          ]
-        },
-        "renderFullSkillBlock": {
-          "module": "lib/skill-prompt.ts",
-          "callers": [
-            "lib/brain-turn-harness.ts"
-          ]
-        },
         "BRAIN_AGENT": {
           "module": "lib/brain.ts",
           "callers": [
             "lib/brain-workers.ts",
             "routes/brain.ts",
             "routes/worker-mcp.ts",
+            "routes/worker-mcp.ts#* /hooks/brain/workers-mcp",
             "wiring/brain-headless.ts",
             "wiring/brain-lead.ts",
             "wiring/brain-pr-close.ts",
@@ -14760,22 +14937,6 @@
           "module": "lib/figcraft.ts",
           "callers": [
             "lib/design-state.ts"
-          ]
-        },
-        "SpawnedWorkerHandle": {
-          "module": "lib/worker-spawn.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts",
-            "lib/worker-task.ts",
-            "lib/worker-turn-watch.ts"
-          ]
-        },
-        "SpawnWorkerOpts": {
-          "module": "lib/worker-spawn.ts",
-          "callers": [
-            "lib/desk-runner.ts",
-            "lib/worker-supervisor.ts"
           ]
         },
         "defaultGetParentPid": {
@@ -15364,7 +15525,8 @@
             "lib/github-webhook.ts",
             "lib/worker-pr-link.ts",
             "lib/worker-supervisor.ts",
-            "lib/worker-task-store.ts"
+            "lib/worker-task-store.ts",
+            "routes/brain.ts"
           ]
         },
         "SAFE_IDENTIFIER_RE": {
@@ -15382,7 +15544,8 @@
             "lib/worker-supervisor.ts",
             "lib/worker-task-store.ts",
             "lib/worker-worktree.ts",
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain-propose.ts"
           ]
         },
         "herdrGateKey": {
@@ -17754,12 +17917,6 @@
             "wiring/events.ts"
           ]
         },
-        "agyTranscriptPath": {
-          "module": "lib/agy-feed.ts",
-          "callers": [
-            "lib/transcript-backfill.ts"
-          ]
-        },
         "eventsFromAgyTranscript": {
           "module": "lib/agy-feed.ts",
           "callers": [
@@ -18316,6 +18473,12 @@
             "lib/worker-pr-link.ts"
           ]
         },
+        "isLocalHandoffPendingSync": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "lib/worker-pr-link.ts"
+          ]
+        },
         "LINK_RE": {
           "module": "lib/worker-task-store.ts",
           "callers": [
@@ -18327,7 +18490,7 @@
           "callers": [
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
           ]
@@ -18338,7 +18501,6 @@
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts",
@@ -18351,7 +18513,6 @@
             "lib/worker-progress-trace.ts",
             "wiring/brain-activity.ts",
             "wiring/brain-handoff.ts",
-            "wiring/brain-propose.ts",
             "wiring/brain-todo.ts",
             "wiring/brain-workers.ts",
             "wiring/brain.ts"
@@ -18484,7 +18645,8 @@
         "StreamJsonEvent": {
           "module": "lib/worker-invocation.ts",
           "callers": [
-            "lib/worker-supervisor.ts"
+            "lib/worker-supervisor.ts",
+            "wiring/brain-headless.ts"
           ]
         },
         "progressOf": {
@@ -19319,24 +19481,6 @@
             "routes/body.ts#POST /api/body/investigate"
           ]
         },
-        "Gemini4StreamTransport": {
-          "module": "lib/gemini4-orchestrator-client.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "createFetchGemini4Transport": {
-          "module": "lib/gemini4-orchestrator-client.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "createOrchestratorSseResponse": {
-          "module": "lib/gemini4-orchestrator-client.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
         "BrainWiring": {
           "module": "wiring/brain.ts",
           "callers": [
@@ -19353,7 +19497,8 @@
         "addBrainHandoff": {
           "module": "wiring/brain-handoff.ts",
           "callers": [
-            "routes/brain.ts"
+            "routes/brain.ts",
+            "wiring/brain-propose.ts"
           ]
         },
         "BrainWorkers": {
@@ -19392,8 +19537,29 @@
             "routes/brain.ts"
           ]
         },
+        "WorkerMcpHandler": {
+          "module": "lib/worker-mcp.ts",
+          "callers": [
+            "routes/brain.ts",
+            "routes/worker-mcp.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
         "runBrainLoadSkill": {
           "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "routes/brain.ts"
+          ]
+        },
+        "Gemini4StreamTransport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
+          "callers": [
+            "routes/brain.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "executeAtomicBrainDispatch": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -19480,14 +19646,8 @@
             "routes/brain.ts"
           ]
         },
-        "getSharedSkillRegistry": {
-          "module": "lib/brain-turn-harness.ts",
-          "callers": [
-            "routes/brain.ts"
-          ]
-        },
-        "createNativeLoadSkillTool": {
-          "module": "lib/native-tool-executor.ts",
+        "createBrainSseTurnResponse": {
+          "module": "wiring/brain-propose.ts",
           "callers": [
             "routes/brain.ts"
           ]
@@ -20259,7 +20419,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/proposals.ts"
           ]
         },
@@ -20277,6 +20437,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/brain-propose.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
@@ -20359,7 +20520,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -20413,7 +20574,7 @@
           "callers": [
             "routes/orchestrator.ts",
             "wiring/body-agent.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -20421,6 +20582,7 @@
           "module": "lib/dispatch-tasks.ts",
           "callers": [
             "routes/orchestrator.ts",
+            "wiring/brain-handoff.ts",
             "wiring/orchestrator.ts"
           ]
         },
@@ -20449,14 +20611,15 @@
           "module": "wiring/proposals.ts",
           "callers": [
             "routes/orchestrator.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/triage.ts"
           ]
         },
         "filedStatus": {
           "module": "wiring/proposals.ts",
           "callers": [
-            "routes/orchestrator.ts"
+            "routes/orchestrator.ts",
+            "wiring/brain-handoff.ts"
           ]
         },
         "BodyVitals": {
@@ -20820,16 +20983,11 @@
             "routes/worker-blocked.ts"
           ]
         },
-        "WorkerMcpHandler": {
-          "module": "lib/worker-mcp.ts",
-          "callers": [
-            "routes/worker-mcp.ts"
-          ]
-        },
         "workerMcp": {
           "module": "wiring/worker-mcp.ts",
           "callers": [
             "routes/worker-mcp.ts",
+            "wiring/brain-propose.ts",
             "wiring/github-webhook.ts"
           ]
         },
@@ -21071,7 +21229,7 @@
           "callers": [
             "wiring/body-agent.ts",
             "wiring/body-investigate.ts",
-            "wiring/brain-propose.ts",
+            "wiring/brain-handoff.ts",
             "wiring/orchestrator.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts"
@@ -21081,6 +21239,7 @@
           "module": "wiring/orchestrator.ts",
           "callers": [
             "wiring/body-agent.ts",
+            "wiring/brain-handoff.ts",
             "wiring/proposals.ts",
             "wiring/repo-view.ts"
           ]
@@ -21226,11 +21385,95 @@
             "wiring/brain-activity.ts"
           ]
         },
+        "enqueueSyncOutbox": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "getSyncOutboxItem": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "handoffSeen": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "listPendingSyncOutbox": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "markSyncOutboxDone": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "markSyncOutboxFailed": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "markSyncOutboxRetry": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
         "openDeliveries": {
           "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain-handoff.ts",
             "wiring/brain.ts"
+          ]
+        },
+        "proposeSeen": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "proposeSeenById": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "rememberHandoff": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "rememberPropose": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "removeHandoff": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "removeSyncOutbox": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
+          ]
+        },
+        "updateHandoff": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain-handoff.ts"
           ]
         },
         "mintHandoffClaim": {
@@ -21254,31 +21497,40 @@
             "wiring/worker-mcp.ts"
           ]
         },
+        "brainFiling": {
+          "module": "lib/brain.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "stampDispatchId": {
+          "module": "lib/orchestrator-chat.ts",
+          "callers": [
+            "wiring/brain-handoff.ts",
+            "wiring/orchestrator.ts"
+          ]
+        },
+        "BrainTurnAccumulator": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain-headless.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "readAgyStepText": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
         "PreparedBrainTurn": {
           "module": "lib/brain-turn-harness.ts",
           "callers": [
             "wiring/brain-headless.ts"
           ]
         },
-        "SpawnedPersistentWorkerHandle": {
-          "module": "lib/brain-turn-harness.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
         "TurnMetricsTracker": {
-          "module": "lib/brain-turn-harness.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "defaultSpawnPersistentWorker": {
-          "module": "lib/brain-turn-harness.ts",
-          "callers": [
-            "wiring/brain-headless.ts"
-          ]
-        },
-        "extractBrainStreamToolCall": {
           "module": "lib/brain-turn-harness.ts",
           "callers": [
             "wiring/brain-headless.ts"
@@ -21320,6 +21572,12 @@
         },
         "buildPersistentGeminiArgs": {
           "module": "lib/worker-invocation.ts",
+          "callers": [
+            "wiring/brain-headless.ts"
+          ]
+        },
+        "shouldSwitchWarmAgyModel": {
+          "module": "lib/adaptive-routing.ts",
           "callers": [
             "wiring/brain-headless.ts"
           ]
@@ -21417,20 +21675,33 @@
             "wiring/brain-pr-update-branch.ts"
           ]
         },
-        "brainFiling": {
-          "module": "lib/brain.ts",
+        "createFetchGemini4Transport": {
+          "module": "lib/gemini4-orchestrator-client.ts",
           "callers": [
             "wiring/brain-propose.ts"
           ]
         },
-        "proposeSeen": {
-          "module": "lib/brain-store.ts",
+        "createOrchestratorSseResponse": {
+          "module": "lib/gemini4-orchestrator-client.ts",
           "callers": [
             "wiring/brain-propose.ts"
           ]
         },
-        "rememberPropose": {
-          "module": "lib/brain-store.ts",
+        "getSharedSkillRegistry": {
+          "module": "lib/brain-turn-harness.ts",
+          "callers": [
+            "wiring/brain-propose.ts"
+          ]
+        },
+        "BRAIN_DIR": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain-propose.ts",
+            "wiring/brain.ts"
+          ]
+        },
+        "createNativeLoadSkillTool": {
+          "module": "lib/native-tool-executor.ts",
           "callers": [
             "wiring/brain-propose.ts"
           ]
@@ -21630,92 +21901,8 @@
             "wiring/brain.ts"
           ]
         },
-        "QUIET_REPLY": {
-          "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
         "flushPrompt": {
           "module": "lib/brain.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "fitPrioritizedTurns": {
-          "module": "lib/brain-lane-isolation.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "createIsolatedBackgroundLane": {
-          "module": "lib/brain-lane-isolation.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "appendLaneANotifications": {
-          "module": "lib/brain-lane-isolation.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "runLegacyPureEventTriage": {
-          "module": "lib/brain-lane-isolation.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "scrubInternalEventsFromReply": {
-          "module": "lib/brain-lane-isolation.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "enqueueDelivery": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "markDelivered": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "requeueDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "markMaybe": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "clearTyped": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "dismissDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "takeDeliveries": {
-          "module": "lib/brain-store.ts",
-          "callers": [
-            "wiring/brain.ts"
-          ]
-        },
-        "BRAIN_DIR": {
-          "module": "wiring/brain-headless.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -21744,8 +21931,110 @@
             "wiring/brain.ts"
           ]
         },
+        "ActiveBrainTurnState": {
+          "module": "lib/brain-preempt.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "createIsolatedBackgroundLane": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
         "createBrainActivity": {
           "module": "wiring/brain-activity.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "requeueTyped": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "requeueDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "enqueueDelivery": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "takeDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "dismissDeliveries": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "fitPrioritizedTurns": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "runLegacyPureEventTriage": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "appendLaneANotifications": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "BrainTurnTrigger": {
+          "module": "lib/brain-preempt.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "markMaybe": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "markDelivered": {
+          "module": "lib/brain-store.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "scrubInternalEventsFromReply": {
+          "module": "lib/brain-lane-isolation.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "buildBrainDoneFrame": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "buildBrainClearFrame": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "clearTyped": {
+          "module": "lib/brain-store.ts",
           "callers": [
             "wiring/brain.ts"
           ]
@@ -21756,13 +22045,43 @@
             "wiring/brain.ts"
           ]
         },
-        "executeBrainPropose": {
-          "module": "wiring/brain-propose.ts",
+        "canPreemptBrainTurn": {
+          "module": "lib/brain-preempt.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "buildBrainDeltaFrame": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "isMutatingBrainToolCall": {
+          "module": "lib/brain-preempt.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "BrainStreamFrame": {
+          "module": "lib/brain-stream.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "proposeBrainTask": {
+          "module": "wiring/brain-handoff.ts",
           "callers": [
             "wiring/brain.ts"
           ]
         },
         "createHeadlessBrainRunner": {
+          "module": "wiring/brain-headless.ts",
+          "callers": [
+            "wiring/brain.ts"
+          ]
+        },
+        "BrainDeltaEvent": {
           "module": "wiring/brain-headless.ts",
           "callers": [
             "wiring/brain.ts"
@@ -22349,12 +22668,6 @@
           "module": "lib/sent-files.ts",
           "callers": [
             "wiring/media.ts"
-          ]
-        },
-        "stampDispatchId": {
-          "module": "lib/orchestrator-chat.ts",
-          "callers": [
-            "wiring/orchestrator.ts"
           ]
         },
         "markFiled": {

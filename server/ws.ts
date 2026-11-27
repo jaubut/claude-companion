@@ -58,6 +58,8 @@ export const websocket: WebSocketHandler<WsData> = {
     if (brain) {
       ws.send(JSON.stringify({ type: "brain", ...brain }))
       ws.send(JSON.stringify({ type: "brain_trace", op: "snapshot", rows: latestRows() }))
+      const activeDraft = brainWiring.activeDraftFrame?.() ?? null
+      if (activeDraft) ws.send(JSON.stringify({ ...activeDraft, type: "brain_stream" }))
     }
     // The host's copy jobs right after init (same reset trap), only when any.
     const copies = copyJobs.frame()
