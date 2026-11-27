@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { classifyPromptRoute } from "../lib/adaptive-routing"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import {
@@ -13,6 +14,7 @@ import {
   prepareBrainTurn,
   startBrainTurnMetrics,
 } from "../lib/brain-turn-harness"
+import { getFeatureFlags } from "../lib/feature-flags"
 import { extractLastAssistantMessage } from "../lib/last-assistant"
 import { companionLog } from "../lib/log"
 import type { TelemetrySink } from "../lib/orchestrator-telemetry"
@@ -464,7 +466,10 @@ export function createHeadlessBrainRunner(hooks: {
       brainAlive = true
       lastTurnReply = ""
       if (family === "gemini" && (hooks.prewarm ?? process.env.NODE_ENV !== "test")) {
-        ensureWarmAgy(sessionModel)
+        const prewarmModel = getFeatureFlags(hooks.env).ENABLE_ADAPTIVE_ROUTING && getKv("brain_model_explicit_effort") !== "1"
+          ? classifyPromptRoute("", { env: hooks.env }).cliModelFlag
+          : sessionModel
+        ensureWarmAgy(prewarmModel)
       }
       syncSession(sessionModel)
       return { ok: true, app: "herdr", herdrPane: HEADLESS_BRAIN_PANE, sessionName: BRAIN_AGENT }

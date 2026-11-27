@@ -21,8 +21,8 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `lib/worker-supervisor.ts` | 588 | lib | 5 |  |
 | `lib/a2ui-macros.ts` | 587 | lib | 14 |  |
 | `lib/activity.ts` | 586 | lib | 17 | state: activityListeners: Set, sessionKeyOf: WeakMap, let lastSessions, let pruneTimer, let pollTimer, progress: WeakMap, agentStatusByKey: Map |
+| `wiring/brain-headless.ts` | 578 | lib | 13 |  |
 | `routes/hooks.ts` | 573 | route-host | 1 | emits: user_prompt · routes: 9 |
-| `wiring/brain-headless.ts` | 573 | lib | 13 |  |
 | `lib/a2ui.ts` | 571 | lib | 35 | state: ALLOWED_COMPONENTS: Set, DANGEROUS_KEYS: Set |
 | `lib/command-offpane.ts` | 569 | lib | 18 | state: active: Map, pendingKill: Map, foreign: Map, let serverTicket, let serverTicketSeen, let retryTimer, let retryDeps |
 | `lib/keyboard-inject.ts` | 568 | lib | 4 | state: let injectQueue |
@@ -595,6 +595,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `addDays()` | `lib/my-tasks.ts` | `lib/body-tokens.ts`, `lib/mytask-triage.ts`, `lib/tasks-agent-load.ts`, `lib/tasks-agent-rules.ts`, `lib/tasks-agent.ts` |
 | `brainText()` | `lib/brain.ts` | `lib/brain-lane-isolation.ts`, `lib/context-pruning.ts`, `lib/front-door.ts`, `lib/orchestrator-brain.ts`, `routes/brain.ts` |
 | `DynamicSkillRegistry()` | `lib/skill-retrieval.ts` | `lib/brain-turn-harness.ts`, `lib/native-tool-executor.ts`, `lib/skill-prompt.ts`, `lib/skill-tools.ts`, `wiring/brain-headless.ts` |
+| `getFeatureFlags()` | `lib/feature-flags.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts`, `lib/orchestrator-brain.ts`, `wiring/brain-headless.ts`, `wiring/brain.ts` |
 | `CommandEntry()` | `lib/command-list.ts` | `lib/command-catalog.ts`, `lib/command-menu.ts`, `lib/command-offpane-cache.ts`, `lib/command-offpane.ts`, `routes/command.ts` |
 | `TASKS_TZ()` | `lib/my-tasks.ts` | `lib/mytask-triage.ts`, `lib/tasks-agent-chat.ts`, `lib/tasks-agent.ts`, `routes/my-tasks.ts`, `routes/my-tasks.ts#* /api/tasks/mine` |
 | `isDir()` | `lib/live-repo.ts` | `lib/project-catalog.ts`, `lib/spawn-seed.ts`, `wiring/brain-lead.ts`, `wiring/repo-view.ts`, `wiring/resolver.ts` |
@@ -629,7 +630,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `WorkerProgress()` | `lib/worker-invocation.ts` | `lib/brain-trace.ts`, `lib/builder-jobs.ts`, `lib/worker-supervisor.ts`, `lib/worker-task.ts` |
 | `phaseOf()` | `lib/dispatch-tasks.ts` | `lib/brain-trace.ts`, `lib/dispatch-mirror.ts`, `lib/dispatch-poller.ts`, `wiring/brain-workers.ts` |
 | `defaultKillPid()` | `lib/worker-pid.ts` | `lib/brain-turn-harness.ts`, `lib/desk-runner.ts`, `lib/worker-spawn.ts`, `lib/worker-supervisor.ts` |
-| `getFeatureFlags()` | `lib/feature-flags.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts`, `lib/orchestrator-brain.ts`, `wiring/brain.ts` |
 | `estimateTokens()` | `lib/skill-types.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts`, `lib/skill-loader.ts`, `lib/skill-prompt.ts` |
 | `inputLine()` | `lib/command-menu.ts` | `lib/command-list.ts`, `lib/inject-guard.ts`, `lib/submit-confirm.ts`, `lib/suggest-cleanup.ts` |
 | `herdrSendKey()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts`, `lib/submit-confirm.ts` |
@@ -703,6 +703,7 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `getAuthToken()` | `lib/auth.ts` | `lib/body-investigate-engine.ts`, `lib/vault-upstream.ts`, `routes/capture.ts` |
 | `InvestigationResult()` | `lib/body-investigate.ts` | `lib/body-investigator.ts`, `lib/resolver-work.ts`, `wiring/resolver.ts` |
 | `runReadonlyClaude()` | `lib/readonly-claude.ts` | `lib/body-investigator.ts`, `lib/quick-look.ts`, `wiring/resolver.ts` |
+| `classifyPromptRoute()` | `lib/adaptive-routing.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts`, `wiring/brain-headless.ts` |
 | `Activity()` | `lib/activity.ts` | `lib/canvas.ts`, `lib/transcript.ts`, `wiring/events.ts` |
 | `herdrSendText()` | `lib/herdr.ts` | `lib/command-offpane-herdr.ts`, `lib/herdr-inject.ts`, `lib/inject-verified.ts` |
 | `isAgentPidAlive()` | `lib/agent-pid.ts` | `lib/desk-runner.ts`, `lib/session-prune-gone.ts`, `lib/sessions.ts` |
@@ -842,7 +843,6 @@ Claude Companion server: an always-on Bun service on each host (macOS, Linux) th
 | `recordTurnMetrics()` | `lib/orchestrator-telemetry.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts` |
 | `executeLoadSkill()` | `lib/skill-tools.ts` | `lib/brain-turn-harness.ts`, `lib/native-tool-executor.ts` |
 | `getSessionSummarySync()` | `lib/session-summaries.ts` | `lib/brain-turn-harness.ts`, `lib/orchestrator-brain.ts` |
-| `classifyPromptRoute()` | `lib/adaptive-routing.ts` | `lib/brain-turn-harness.ts`, `lib/gemini4-orchestrator-client.ts` |
 | `ClaudeLaunch()` | `lib/command-offpane-launch.ts` | `lib/command-offpane-cache.ts`, `lib/command-offpane.ts` |
 | `herdrScrapeRunner()` | `lib/command-offpane-herdr.ts` | `lib/command-offpane-cache.ts`, `lib/command-offpane.ts` |
 | `herdrSocketCall()` | `lib/herdr-socket.ts` | `lib/command-offpane-herdr.ts`, `wiring/pane-mirror.ts` |

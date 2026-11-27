@@ -192,8 +192,7 @@ describe("Phase 4: Native Tool Invocation, Zod Self-Correction & SSE Stream", ()
     expect(ok).toEqual({ success: true, output: "Merged jaubut/claude-companion#42" })
   })
 
-  test("self-corrects malformed tool args, preserves thoughtSignature, streams SSE events, and logs Tier 1 TTFT < 1.5s with zero agy_exit_1", async () => {
-    process.env.ENABLE_ADAPTIVE_ROUTING = "true"
+  test("self-corrects malformed tool args by default, preserves thoughtSignature, streams SSE events, and logs Tier 1 TTFT < 1.5s with zero agy_exit_1", async () => {
     const registry = new DynamicSkillRegistry([
       SkillManifestSchema.parse({
         id: "deploy-zettlab",
