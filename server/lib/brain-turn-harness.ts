@@ -303,7 +303,10 @@ export function prepareBrainTurn(opts: {
     }
   }
 
-  const staticRules = loadStaticBrainRules(opts.brainDir)
+  const baseStatic = loadStaticBrainRules(opts.brainDir)
+  const staticRules = opts.family === "gemini" && opts.legacyAgyBootPrefix
+    ? `${opts.legacyAgyBootPrefix}${baseStatic}`
+    : baseStatic
   const built = buildDynamicSystemPrompt({
     staticRules,
     registry,

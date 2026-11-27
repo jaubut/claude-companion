@@ -1,5 +1,6 @@
 // Environment-gated feature flags for the Companion Orchestrator Harness upgrade (Phases 1-4).
-// All flags strictly default to `false` until each phase's verification gates pass.
+// Sequential rollout Step 2 active: ENABLE_DYNAMIC_SKILLS defaults to `true` (set `"false"` to roll back);
+// Phases 2-4 remain `false` by default until flipped sequentially.
 
 export interface FeatureFlags {
   ENABLE_DYNAMIC_SKILLS: boolean
@@ -12,18 +13,22 @@ export type SafeParseResult<T> =
   | { success: true; data: T }
   | { success: false; error: { issues: Array<{ path: string[]; message: string }> } }
 
-function parseBoolEnv(raw: unknown): boolean {
+function parseBoolEnv(raw: unknown, defaultValue = false): boolean {
   if (typeof raw === "boolean") return raw
-  if (typeof raw === "string") return raw.trim().toLowerCase() === "true"
-  return false
+  if (typeof raw === "string") {
+    const norm = raw.trim().toLowerCase()
+    if (!norm) return defaultValue
+    return norm === "true"
+  }
+  return defaultValue
 }
 
 export function parseFeatureFlags(env: Record<string, unknown> = process.env): FeatureFlags {
   return {
-    ENABLE_DYNAMIC_SKILLS: parseBoolEnv(env.ENABLE_DYNAMIC_SKILLS),
-    ENABLE_CONTEXT_PRUNING: parseBoolEnv(env.ENABLE_CONTEXT_PRUNING),
-    ENABLE_LANE_ISOLATION: parseBoolEnv(env.ENABLE_LANE_ISOLATION),
-    ENABLE_ADAPTIVE_ROUTING: parseBoolEnv(env.ENABLE_ADAPTIVE_ROUTING),
+    ENABLE_DYNAMIC_SKILLS: parseBoolEnv(env.ENABLE_DYNAMIC_SKILLS, true),
+    ENABLE_CONTEXT_PRUNING: parseBoolEnv(env.ENABLE_CONTEXT_PRUNING, false),
+    ENABLE_LANE_ISOLATION: parseBoolEnv(env.ENABLE_LANE_ISOLATION, false),
+    ENABLE_ADAPTIVE_ROUTING: parseBoolEnv(env.ENABLE_ADAPTIVE_ROUTING, false),
   }
 }
 
