@@ -6,7 +6,7 @@ import { BRAIN_THREAD, deliveryText } from "../lib/brain"
 import { appendTurn, findA2UITurn, getThread, type Turn } from "../lib/orchestrator-chat"
 import type { GhFn } from "../lib/triage-pr"
 import type { ExecFn } from "../lib/turso"
-import { createStuckEvents, emitStuckPrGateCard, stuckLine } from "./brain-stuck-events"
+import { createStuckEvents, emitStuckPrGateCard, greenPrWakeLine, needsPrMergeCard, stuckLine } from "./brain-stuck-events"
 
 const url = (n: number) => `https://github.com/jaubut/r/pull/${n}`
 const meta = (n: number, over: Record<string, unknown> = {}) => ({ url: url(n), repo: "r", pr: n, kind: "stuck-parked", stuck_key: `park:${n}`, reason: "parked 5 h: merge conflict", ...over })
@@ -326,5 +326,102 @@ describe("the reader", () => {
     expect(after90Cs.components.some((c) => c.id === "reason_text")).toBe(true)
     expect(after90Cs.components.find((c) => c.id === "col")?.children).toContain("reason_text")
     expect(getJsonPointer(getSurfaceDataModel(after90Turn.card!), "/pr/reason")).toBe("touches hooks/guard.py — human merge only")
+  })
+
+  test("watchGreenPrs wakes the Brain once per (prUrl, headSha) when a gated dispatch/* PR transitions from pending CI to MERGEABLE + CLEAN", async () => {
+    expect(needsPrMergeCard({ files: ["server/lib/foo.ts"], labels: [] })).toBeNull()
+    expect(needsPrMergeCard({ files: ["brain/CLAUDE.md"], labels: [] })).toBe("touches human-merge path (brain/CLAUDE.md)")
+    expect(needsPrMergeCard({ files: ["db/migrations/004.sql"], labels: [] })).toBe("touches prod-schema path (db/migrations/004.sql)")
+    expect(needsPrMergeCard({ files: ["src/index.ts"], labels: ["client-origin"] })).toBe("client-origin PR")
+    expect(needsPrMergeCard({ files: ["src/index.ts"], labels: [], origin: "client" })).toBe("client-origin PR")
+
+    const db = new Database(":memory:")
+    db.exec("CREATE TABLE agent_activity (id INTEGER PRIMARY KEY, agent_slug TEXT, target_kind TEXT, target_id TEXT, action TEXT, meta TEXT)")
+    db.exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, text TEXT, origin TEXT, done INTEGER, updated_at TEXT, dispatch_pr_url TEXT)")
+    db.query("INSERT INTO tasks (id, text, origin, done, updated_at, dispatch_pr_url) VALUES (?, ?, ?, 0, '2026-11-27 00:00:00', ?)").run(
+      "task-gated-1",
+      "Update Brain rules",
+      "internal",
+      "https://github.com/jaubut/claude-companion/pull/399",
+    )
+    db.query("INSERT INTO tasks (id, text, origin, done, updated_at, dispatch_pr_url) VALUES (?, ?, ?, 0, '2026-11-27 00:00:00', ?)").run(
+      "task-routine-2",
+      "Routine server refactor",
+      "internal",
+      "https://github.com/jaubut/claude-companion/pull/400",
+    )
+
+    let pr399CheckStatus = "IN_PROGRESS"
+    let pr399Conclusion = ""
+    let pr399Sha = "1111222233334444"
+    const gh: GhFn = async (args) => {
+      const prNum = args[2]
+      const isGated = prNum === "399"
+      return {
+        code: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          state: "OPEN",
+          isDraft: false,
+          headRefName: isGated ? "dispatch/task-gated-1" : "dispatch/task-routine-2",
+          headRefOid: isGated ? pr399Sha : "9999888877776666",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          url: `https://github.com/jaubut/claude-companion/pull/${prNum}`,
+          title: `PR #${prNum}`,
+          labels: [],
+          statusCheckRollup: [
+            {
+              status: isGated ? pr399CheckStatus : "COMPLETED",
+              conclusion: isGated ? pr399Conclusion : "SUCCESS",
+              name: "ci",
+            },
+          ],
+          files: [{ path: isGated ? "brain/CLAUDE.md" : "server/lib/foo.ts" }],
+        }),
+      }
+    }
+
+    const events: string[] = []
+    let cursor: string | null = "0"
+    const reader = createStuckEvents({
+      exec: async (sql, args) => ({ rows: db.query(sql).all(...(args as never[])) as never[], affected: 0 }),
+      event: (t) => { events.push(t) },
+      getCursor: () => cursor,
+      setCursor: (id) => { cursor = id },
+      log: () => {},
+      gh,
+      watchGreenPrs: true,
+    })
+
+    // 1. Tick while PR #399 CI is still IN_PROGRESS -> no wake event (routine PR #400 is green but doesn't need a merge card)
+    await reader.tick()
+    expect(events).toEqual([])
+
+    // 2. PR #399 CI transitions to COMPLETED + SUCCESS (MERGEABLE + CLEAN) -> wakes Brain once with ./bin/ui pr command
+    pr399CheckStatus = "COMPLETED"
+    pr399Conclusion = "SUCCESS"
+    await reader.tick()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toBe(
+      greenPrWakeLine({
+        repo: "jaubut/claude-companion",
+        pr: 399,
+        url: "https://github.com/jaubut/claude-companion/pull/399",
+        headSha: "1111222233334444",
+        reason: "touches human-merge path (brain/CLAUDE.md)",
+      }),
+    )
+    expect(events[0]).toContain("./bin/ui pr --repo jaubut/claude-companion --pr 399 --deploy-repo claude-companion")
+
+    // 3. Subsequent ticks with the same (prUrl, headSha) are deduplicated
+    await reader.tick()
+    expect(events).toHaveLength(1)
+
+    // 4. A new commit pushed to PR #399 that turns green wakes once for the new headSha
+    pr399Sha = "5555666677778888"
+    await reader.tick()
+    expect(events).toHaveLength(2)
+    expect(events[1]).toContain("5555666")
   })
 })

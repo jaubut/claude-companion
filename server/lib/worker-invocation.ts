@@ -472,25 +472,17 @@ export function buildHeadlessCodexArgs(opts: { prompt: string; sessionId: string
 export function normalizeAgyCliModelFlag(raw: string): string {
   const trimmed = raw.trim()
   const lower = trimmed.toLowerCase()
+  if (/^gemini-(?:4-(?:hydrogen|carbon|argon)-(?:x?high|medium|low)|3\.8-flash-(?:high|medium|low)|pro-orchestrator(?:-argon)?)$/.test(lower)) return lower
   const map: Record<string, string> = {
-    "orchestrator (carbon)": "gemini-pro-orchestrator",
-    "orchestrator": "gemini-pro-orchestrator",
-    "gemini-pro-orchestrator": "gemini-pro-orchestrator",
+    "orchestrator (carbon)": "gemini-pro-orchestrator", "orchestrator": "gemini-pro-orchestrator",
     "orchestrator (argon)": "gemini-pro-orchestrator-argon",
-    "gemini-pro-orchestrator-argon": "gemini-pro-orchestrator-argon",
-    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high",
-    "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
-    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium",
-    "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
-    "gemini 4 carbon (high)": "gemini-4-carbon-high",
-    "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
-    "gemini 4 carbon (low)": "gemini-4-carbon-low",
-    "gemini 4 argon (high)": "gemini-4-argon-high",
-    "gemini 4 argon (medium)": "gemini-4-argon-medium",
-    "gemini 4 argon (low)": "gemini-4-argon-low",
-    "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
-    "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
-    "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
+    "gemini 4 hydrogen (high)": "gemini-4-hydrogen-high", "gemini 4 hydrogen (xhigh)": "gemini-4-hydrogen-xhigh",
+    "gemini 4 hydrogen (medium)": "gemini-4-hydrogen-medium", "gemini 4 hydrogen (low)": "gemini-4-hydrogen-low",
+    "gemini 4 carbon (high)": "gemini-4-carbon-high", "gemini 4 carbon (medium)": "gemini-4-carbon-medium",
+    "gemini 4 carbon (low)": "gemini-4-carbon-low", "gemini 4 carbon": "gemini-4-carbon-low", "gemini-4-carbon": "gemini-4-carbon-low",
+    "gemini 4 argon (high)": "gemini-4-argon-high", "gemini 4 argon (medium)": "gemini-4-argon-medium",
+    "gemini 4 argon (low)": "gemini-4-argon-low", "gemini 4 argon": "gemini-4-argon-low", "gemini-4-argon": "gemini-4-argon-low",
+    "gemini 3.8 flash (high)": "gemini-3.8-flash-high", "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium", "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
   }
   return map[lower] ?? trimmed
 }
@@ -502,29 +494,33 @@ export function agyBin(home = homedir()): string {
 }
 
 export const DEFAULT_GEMINI_WORKER_MODEL = "gemini-4-argon-high"
+export const DEFAULT_GEMINI_BRAIN_MODEL = "gemini-4-argon-low"
 /** Below Linux MAX_ARG_STRLEN (131,072 bytes): prompts larger than this go via a 0600 temp file + --add-dir. */
 export const GEMINI_INLINE_PROMPT_MAX = 90_000
 
 /** Hardened `--settings` JSON for headless `agy` workers: deny unscrubbed user MCPs and host secret roots. */
 export function agyWorkerSettings(home = homedir()): string {
   const secretRoots = [
-    join(home, ".claude-companion"),
-    join(home, ".config", "tls-agent"),
-    join(home, ".config", "gh"),
-    join(home, ".ssh"),
-    join(home, ".aws"),
-    join(home, ".gnupg"),
-    join(home, ".claude", ".credentials.json"),
-    join(home, ".codex"),
-    "/proc",
+    join(home, ".claude-companion"), join(home, ".config", "tls-agent"), join(home, ".config", "gh"),
+    join(home, ".ssh"), join(home, ".aws"), join(home, ".gnupg"), join(home, ".claude", ".credentials.json"), join(home, ".codex"), "/proc",
   ].map((p) => `read_file(${p})`)
   return JSON.stringify({ permissions: { deny: ["mcp(*)", ...secretRoots] } })
+}
+
+/** Slim `--settings` JSON for the Antigravity Brain: excludes global `~/.agents/skills`, preserves `tls` & `board` MCPs, and bans `schedule` & `sleep`. */
+export function agyBrainSettings(home = homedir()): string {
+  const deny = [
+    "schedule", "command(sleep*)", "command(gh pr merge*)",
+    `read_file(${join(home, ".agents", "skills")})`, `read_file(${join(home, ".agents")})`,
+    `write_file(${home})`, `edit_file(${home})`,
+  ]
+  return JSON.stringify({ disableSlashCommands: true, permissions: { deny } })
 }
 
 /** Build the headless `agy -p --output-format stream-json` argv; agy mints the conversation id, so resume only. */
 export function buildHeadlessGeminiArgs(opts: {
   prompt: string; sessionId: string; resume: boolean; mode: string; model?: string
-  promptDir?: string; onTempDir?: (dir: string) => void
+  settings?: string; promptDir?: string; onTempDir?: (dir: string) => void
 }): string[] {
   let printPrompt = opts.prompt
   let addDir: string | null = null
@@ -546,17 +542,19 @@ export function buildHeadlessGeminiArgs(opts: {
   if (opts.mode === "plan") args.push("--mode", "plan")
   else if (opts.mode === "acceptEdits") args.push("--mode", "accept-edits")
   else args.push("--dangerously-skip-permissions")
+  if (opts.settings?.trim()) args.push("--settings", opts.settings.trim())
   return args
 }
 
 /** Build the persistent `agy --print= --input-format stream-json --output-format stream-json` daemon argv. */
-export function buildPersistentGeminiArgs(opts: { sessionId?: string; resume?: boolean; mode: string; model?: string }): string[] {
+export function buildPersistentGeminiArgs(opts: { sessionId?: string; resume?: boolean; mode: string; model?: string; settings?: string }): string[] {
   const args = ["--print=", "--input-format", "stream-json", "--output-format", "stream-json"]
   if (opts.resume && opts.sessionId?.trim()) args.push("--conversation", opts.sessionId.trim())
   if (opts.model?.trim()) args.push("--model", normalizeAgyCliModelFlag(opts.model))
   if (opts.mode === "plan") args.push("--mode", "plan")
   else if (opts.mode === "acceptEdits") args.push("--mode", "accept-edits")
   else args.push("--dangerously-skip-permissions")
+  if (opts.settings?.trim()) args.push("--settings", opts.settings.trim())
   return args
 }
 

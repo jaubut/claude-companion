@@ -5,7 +5,15 @@ import { join } from "node:path"
 import { BRAIN_AGENT } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import { listSessions, recordSession } from "../lib/sessions"
-import { buildPersistentGeminiArgs, formatGeminiStreamInput } from "../lib/worker-invocation"
+import {
+  DEFAULT_GEMINI_BRAIN_MODEL,
+  DEFAULT_GEMINI_WORKER_MODEL,
+  agyBrainSettings,
+  buildHeadlessGeminiArgs,
+  buildPersistentGeminiArgs,
+  formatGeminiStreamInput,
+  normalizeAgyCliModelFlag,
+} from "../lib/worker-invocation"
 import type { SpawnWorkerOpts } from "../lib/worker-supervisor"
 import {
   AGY_BOOT_PREFIX,
@@ -16,6 +24,8 @@ import {
   brainFamilyForModel,
   buildBrainClaudeArgs,
   createHeadlessBrainRunner,
+  getBrainModel,
+  resolveBrainEffortDefault,
   resolveBrainSessionModel,
   writeBrainMcpConfig,
 } from "./brain-headless"
@@ -78,11 +88,84 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(brainFamilyForModel("claude-sonnet-5-5")).toBe("claude")
   })
 
-  test("resolves default model from picker, COMPANION_BRAIN_DEFAULT_MODEL, or COMPANION_BRAIN_FAMILY=gemini (fast gemini-4-argon-high fallback)", () => {
+  test("resolves default model from picker, COMPANION_BRAIN_DEFAULT_MODEL, COMPANION_BRAIN_EFFORT_DEFAULT, or COMPANION_BRAIN_FAMILY=gemini (gemini-4-argon-low default)", () => {
+    expect(DEFAULT_GEMINI_WORKER_MODEL).toBe("gemini-4-argon-high")
+    expect(DEFAULT_GEMINI_BRAIN_MODEL).toBe("gemini-4-argon-low")
+    expect(resolveBrainEffortDefault({})).toBe("low")
+    expect(resolveBrainEffortDefault({ COMPANION_BRAIN_EFFORT_DEFAULT: "medium" })).toBe("medium")
+    expect(resolveBrainEffortDefault({ COMPANION_BRAIN_EFFORT_DEFAULT: "high" })).toBe("high")
+
     expect(resolveBrainSessionModel("Gemini 4 Carbon (High)", {})).toBe("Gemini 4 Carbon (High)")
+    expect(resolveBrainSessionModel("gemini-4-carbon-low", {})).toBe("gemini-4-carbon-low")
+    expect(resolveBrainSessionModel("gemini-4-argon-low", {})).toBe("gemini-4-argon-low")
+    expect(resolveBrainSessionModel("gemini-4-argon", {})).toBe("gemini-4-argon-low")
+    expect(resolveBrainSessionModel("gemini-4-carbon", {})).toBe("gemini-4-carbon-low")
+    expect(resolveBrainSessionModel("gemini-4-argon", { COMPANION_BRAIN_EFFORT_DEFAULT: "medium" })).toBe("gemini-4-argon-medium")
     expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_DEFAULT_MODEL: "gemini-4-argon-medium" })).toBe("gemini-4-argon-medium")
-    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-argon-high")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini" })).toBe("gemini-4-argon-low")
+    expect(resolveBrainSessionModel("auto", { COMPANION_BRAIN_FAMILY: "gemini", COMPANION_BRAIN_EFFORT_DEFAULT: "medium" })).toBe("gemini-4-argon-medium")
     expect(resolveBrainSessionModel("auto", {})).toBe("claude-opus-5-5")
+
+    // Legacy KV high values downgrade to -low unless explicitly opted into high effort
+    setKv("brain_model", "gemini-4-argon-high")
+    setKv("brain_model_explicit_effort", "")
+    expect(getBrainModel({})).toBe("gemini-4-argon-low")
+    setKv("brain_model", "Gemini 4 Carbon (High)")
+    expect(getBrainModel({})).toBe("gemini-4-carbon-low")
+    setKv("brain_model_explicit_effort", "1")
+    expect(getBrainModel({})).toBe("Gemini 4 Carbon (High)")
+    setKv("brain_model_explicit_effort", "")
+    setKv("brain_model", "auto")
+  })
+
+  test("normalizes Gemini 4 Argon/Carbon low, medium, and high CLI model flags cleanly", () => {
+    expect(normalizeAgyCliModelFlag("gemini-4-argon-low")).toBe("gemini-4-argon-low")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Argon (Low)")).toBe("gemini-4-argon-low")
+    expect(normalizeAgyCliModelFlag("gemini-4-argon-medium")).toBe("gemini-4-argon-medium")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Argon (Medium)")).toBe("gemini-4-argon-medium")
+    expect(normalizeAgyCliModelFlag("gemini-4-argon-high")).toBe("gemini-4-argon-high")
+    expect(normalizeAgyCliModelFlag("gemini-4-argon")).toBe("gemini-4-argon-low")
+    expect(normalizeAgyCliModelFlag("gemini-4-carbon-low")).toBe("gemini-4-carbon-low")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Carbon (Low)")).toBe("gemini-4-carbon-low")
+    expect(normalizeAgyCliModelFlag("gemini-4-carbon-medium")).toBe("gemini-4-carbon-medium")
+    expect(normalizeAgyCliModelFlag("Gemini 4 Carbon (Medium)")).toBe("gemini-4-carbon-medium")
+    expect(normalizeAgyCliModelFlag("gemini-4-carbon-high")).toBe("gemini-4-carbon-high")
+    expect(normalizeAgyCliModelFlag("gemini-4-carbon")).toBe("gemini-4-carbon-low")
+  })
+
+  test("agyBrainSettings scopes out global ~/.agents/skills, bans schedule and sleep, and preserves tls and board MCP servers", () => {
+    const raw = agyBrainSettings("/home/testuser")
+    const parsed = JSON.parse(raw) as { disableSlashCommands?: boolean; permissions?: { deny?: string[] } }
+    expect(parsed.disableSlashCommands).toBe(true)
+    const deny = parsed.permissions?.deny ?? []
+    expect(deny).toContain("schedule")
+    expect(deny).toContain("command(sleep*)")
+    expect(deny).toContain("command(gh pr merge*)")
+    expect(deny).toContain("read_file(/home/testuser/.agents/skills)")
+    expect(deny).toContain("read_file(/home/testuser/.agents)")
+    expect(deny).toContain("write_file(/home/testuser)")
+    expect(deny).toContain("edit_file(/home/testuser)")
+    // Must NOT deny mcp(*) so tls and board MCP servers stay enabled for the Brain
+    expect(deny).not.toContain("mcp(*)")
+
+    const headlessArgs = buildHeadlessGeminiArgs({
+      prompt: "hi",
+      sessionId: "c1",
+      resume: true,
+      mode: "auto",
+      model: "gemini-4-argon-low",
+      settings: raw,
+    })
+    expect(headlessArgs.slice(-2)).toEqual(["--settings", raw])
+
+    const persistentArgs = buildPersistentGeminiArgs({
+      sessionId: "c1",
+      resume: true,
+      mode: "auto",
+      model: "gemini-4-argon-low",
+      settings: raw,
+    })
+    expect(persistentArgs.slice(-2)).toEqual(["--settings", raw])
   })
 
   test("buildBrainClaudeArgs injects runtime --allowedTools for bin/ui and ./bin/ui before -- prompt", () => {
@@ -98,6 +181,8 @@ describe("brain family and Gemini 4 resolution", () => {
     expect(args.slice(-2)).toEqual(["--", "render card"])
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui email --to <addr>")
     expect(AGY_BOOT_PREFIX).toContain("./bin/ui pr --repo <owner/name> --pr <n>")
+    expect(AGY_BOOT_PREFIX).toContain("NEVER call `schedule` or `sleep`")
+    expect(AGY_BOOT_PREFIX).toContain("Delegate repo file grepping/archaeology to headless builders (`bin/worker dispatch`)")
   })
 
   test("buildPersistentGeminiArgs and formatGeminiStreamInput build stream-json persistent daemon args and NDJSON user event lines", () => {
@@ -178,6 +263,8 @@ describe("warm persistent Antigravity Brain session & CLI fallback", () => {
     expect(oneShotSpawns).toHaveLength(0)
     expect(persistentSpawns[0]!.opts.args).toContain("--input-format")
     expect(persistentSpawns[0]!.opts.args).toContain("stream-json")
+    expect(persistentSpawns[0]!.opts.args).toContain("--settings")
+    expect(persistentSpawns[0]!.opts.args).toContain(agyBrainSettings())
     expect(persistentSpawns[0]!.lines).toHaveLength(1)
     const turn1Msg = JSON.parse(persistentSpawns[0]!.lines[0]!) as { event: string; message: { content: string } }
     expect(turn1Msg.event).toBe("user")
@@ -273,6 +360,8 @@ describe("warm persistent Antigravity Brain session & CLI fallback", () => {
     expect(oneShotSpawns[0]!.args).toContain("--print=urgent question")
     expect(oneShotSpawns[0]!.args).toContain("--conversation")
     expect(oneShotSpawns[0]!.args).toContain("agy-saved-conv-99")
+    expect(oneShotSpawns[0]!.args).toContain("--settings")
+    expect(oneShotSpawns[0]!.args).toContain(agyBrainSettings())
     expect(stops).toEqual([{ sid: "resumed-brain-sid", reply: "recovered via fallback" }])
     expect(await runner.agentStatus()).toBe("idle")
 

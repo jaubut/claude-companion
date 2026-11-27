@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { envLineValue, jevKeySources } from "./jev"
-import { agyBin } from "./worker-invocation"
+import { agyBin, normalizeAgyCliModelFlag } from "./worker-invocation"
 
 // Stateless cheap Ops Triage layer.
 // Default provider: `agy` CLI (`gemini-3.8-flash-low`) running on Jeremie's
@@ -27,6 +27,18 @@ const TRIAGE_JSON_SCHEMA = JSON.stringify({
     reason: { type: "string" },
   },
   required: ["action", "reason"],
+})
+
+/**
+ * Isolated `--settings` for stateless ops-triage `agy --print`:
+ * blocks all MCP connections (`mcp(*)`) and tool calls (`command`, `read_file`, `write_file`, `edit_file`, `schedule`)
+ * so `agy` never boots user MCP servers or attempts a headless-denied tool call instead of answering JSON.
+ */
+export const OPS_TRIAGE_AGY_SETTINGS = JSON.stringify({
+  disableSlashCommands: true,
+  permissions: {
+    deny: ["mcp(*)", "command(*)", "read_file(*)", "write_file(*)", "edit_file(*)", "schedule"],
+  },
 })
 
 export type OpsTriageMode = "off" | "shadow" | "live"
@@ -110,6 +122,7 @@ const SYSTEM_PROMPT = [
   "",
   "Choose \"escalate\" whenever ANY event in the batch needs Brain or human action:",
   "- A repo lead asks to merge or close a PR (`merge owner/repo#123`, `close ...`) or dispatch a replacement builder.",
+  "- CI turned green on a PR that needs a merge card or human approval (`CI green owner/repo#123 ...`).",
   "- A PR is stuck (`stuck repo#123 ...`) and needs inspection, closing, or Jeremie's approval.",
   "- A worker failed, is blocked, hit an error/conflict, left uncommitted changes with no PR, or was stopped for idling.",
   "- Any event asks Jeremie a question or flags a product, client, billing, or security decision.",
@@ -276,7 +289,8 @@ export async function triageOpsEvents(
   const providerPref = opts.provider ?? (env.COMPANION_OPS_TRIAGE_PROVIDER?.trim().toLowerCase() === "http" ? "http" : "agy")
 
   if (providerPref === "agy") {
-    const model = opts.model || env.COMPANION_OPS_TRIAGE_MODEL?.trim() || DEFAULT_AGY_TRIAGE_MODEL
+    const rawModel = opts.model || env.COMPANION_OPS_TRIAGE_MODEL?.trim() || DEFAULT_AGY_TRIAGE_MODEL
+    const model = normalizeAgyCliModelFlag(rawModel)
     const timeoutMs = opts.timeoutMs ?? OPS_TRIAGE_TIMEOUT_MS
     const cmd = opts.agyCmd ?? agyBin()
     const runAgy = opts.runAgy ?? defaultRunAgy
@@ -284,10 +298,11 @@ export async function triageOpsEvents(
     const args = [
       `--print=${prompt}`,
       "--model", model,
-      "--mode", "plan",
+      "--effort", "low",
       "--output-format", "json",
       "--json-schema", TRIAGE_JSON_SCHEMA,
       "--disable-slash-commands",
+      "--settings", OPS_TRIAGE_AGY_SETTINGS,
       "--print-timeout", `${Math.max(5, Math.ceil(timeoutMs / 1000))}s`,
     ]
     const out = await runAgy(cmd, args, timeoutMs)

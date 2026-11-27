@@ -7,6 +7,7 @@ import {
   updateSurfaceData,
 } from "../lib/a2ui"
 import { buildPrGateSurface, hydratePrGateData, prSurfaceId, stripAngleTags } from "../lib/a2ui-macros"
+import { type GhCheck, computeCiState } from "../lib/a2ui-pr-state"
 import { BRAIN_THREAD } from "../lib/brain"
 import { getKv, setKv } from "../lib/brain-store"
 import { companionLog } from "../lib/log"
@@ -26,10 +27,17 @@ import { orchEmit } from "./orchestrator"
 const POLL_MS = 60_000
 const CURSOR_KEY = "stuck-events-cursor"
 const SEEN_KEY = "stuck-events-seen"
+const GREEN_SEEN_KEY = "green-pr-wake-seen"
 const COOLDOWN_MS = 6 * 60 * 60_000
+const GREEN_SEEN_TTL_MS = 7 * 24 * 60 * 60_000
 const REASON_MAX = 200
 /** Below the brain's 4,000-character delivery, with room for the first line's framing. */
 const SUMMARY_CHARS = 3_500
+const HUMAN_MERGE_PATH_RE = /(?:^|\/)(?:CLAUDE\.md|AGENTS\.md|\.claude\/|settings[^/]*\.json$|hooks\/|skills\/|rules\/|agents\/|commands\/|workflows\/|mods\/|output-styles\/|memory\/)/
+const PROD_SCHEMA_PATH_RE = /(?:^|\/)(?:db\/migrations\/|migrations\/|schema\.sql$|drizzle\/|prisma\/migrations\/)/
+const HOLD_LABEL_RE = /do-not-merge|dnm|(^|[^a-z])wip([^a-z]|$)/i
+const OPEN_DISPATCH_PRS_SQL = "SELECT id, text, origin, dispatch_pr_url FROM tasks WHERE done = 0 AND dispatch_pr_url LIKE 'https://github.com/%/pull/%' ORDER BY updated_at DESC LIMIT 30"
+const TASK_PR_PARK_SQL = "SELECT action, meta FROM agent_activity WHERE target_kind = 'task' AND target_id = ? AND action IN ('pr:needs-human', 'pr:hold', 'pr:unpark') ORDER BY id DESC LIMIT 1"
 /**
  * Non-terminal `loop-round-3` is intentionally omitted: the shepherd is still actively
  * working the PR. Only terminal loop stops and stuck states wake the brain.
@@ -60,6 +68,60 @@ export interface StuckEventsDeps {
   getSeen?: () => Record<string, number>
   setSeen?: (seen: Record<string, number>) => void
   onStuckRow?: (m: Record<string, unknown>) => Promise<void> | void
+  gh?: GhFn
+  watchGreenPrs?: boolean
+  getGreenSeen?: () => Record<string, number>
+  setGreenSeen?: (seen: Record<string, number>) => void
+}
+
+/**
+ * Determine whether an open green `dispatch/*` PR requires a `./bin/ui pr` Merge card
+ * (human-merge path, prod-schema path, hold label, shepherd park/hold, or client-origin PR).
+ * Returns the concise reason string, or null when the PR is a routine internal PR handled by the shepherd.
+ */
+export function needsPrMergeCard(input: {
+  files: string[]
+  labels: string[]
+  origin?: string | null
+  parkReason?: string | null
+}): string | null {
+  const humanFile = input.files.find((f) => HUMAN_MERGE_PATH_RE.test(f))
+  if (humanFile) return `touches human-merge path (${humanFile})`
+  const schemaFile = input.files.find((f) => PROD_SCHEMA_PATH_RE.test(f))
+  if (schemaFile) return `touches prod-schema path (${schemaFile})`
+  const holdLabel = input.labels.find((l) => HOLD_LABEL_RE.test(l))
+  if (holdLabel) return `hold label (${holdLabel})`
+  if (input.parkReason && input.parkReason.trim()) return input.parkReason.trim()
+  if (
+    (typeof input.origin === "string" && input.origin.trim().toLowerCase() === "client") ||
+    input.labels.some((l) => l.trim().toLowerCase() === "client-origin")
+  ) {
+    return "client-origin PR"
+  }
+  return null
+}
+
+/** Build the single deduplicated `[event]` wake line when a gated `dispatch/*` PR turns green (`MERGEABLE` + `CLEAN`). */
+export function greenPrWakeLine(info: {
+  repo: string
+  pr: number
+  url: string
+  headSha: string
+  reason: string
+}): string {
+  const sha7 = info.headSha.slice(0, 7)
+  const cleanReason = redactSecrets(info.reason)
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .replace(/"/g, "'")
+    .trim()
+    .slice(0, REASON_MAX)
+  const deployFlag = info.repo === "jaubut/claude-companion"
+    ? " --deploy-repo claude-companion"
+    : info.repo === "jaubut/claude-config"
+      ? " --deploy-repo claude-config"
+      : ""
+  return `CI green ${info.repo}#${info.pr} (${sha7}, MERGEABLE + CLEAN): emit \`./bin/ui pr --repo ${info.repo} --pr ${info.pr}${deployFlag} --reason "${cleanReason}"\` now. ${info.url}`
 }
 
 function parse(raw: unknown): Record<string, unknown> | null {
@@ -91,11 +153,121 @@ export function createStuckEvents(deps: StuckEventsDeps) {
   const nowFn = deps.now ?? Date.now
   const cooldownMs = deps.cooldownMs ?? COOLDOWN_MS
   const memSeen: Record<string, number> = {}
+  const memGreenSeen: Record<string, number> = {}
 
   const loadSeen = (): Record<string, number> => (deps.getSeen ? deps.getSeen() : memSeen)
   const saveSeen = (seen: Record<string, number>): void => {
     if (deps.setSeen) deps.setSeen(seen)
     else Object.assign(memSeen, seen)
+  }
+
+  const loadGreenSeen = (): Record<string, number> => (deps.getGreenSeen ? deps.getGreenSeen() : memGreenSeen)
+  const saveGreenSeen = (seen: Record<string, number>): void => {
+    if (deps.setGreenSeen) deps.setGreenSeen(seen)
+    else {
+      for (const k of Object.keys(memGreenSeen)) delete memGreenSeen[k]
+      Object.assign(memGreenSeen, seen)
+    }
+  }
+
+  function markGreenPrSeen(prUrl: string, headSha: string, now: number): boolean {
+    const key = `${prUrl}#${headSha}`
+    const seen = loadGreenSeen()
+    const prev = seen[key]
+    if (typeof prev === "number" && now - prev < GREEN_SEEN_TTL_MS) return true
+    const next: Record<string, number> = {}
+    for (const [k, ts] of Object.entries(seen)) {
+      if (now - ts < GREEN_SEEN_TTL_MS) next[k] = ts
+    }
+    next[key] = now
+    saveGreenSeen(next)
+    return false
+  }
+
+  async function checkGreenPrWakes(now: number): Promise<void> {
+    if (!deps.watchGreenPrs || !deps.gh) return
+    let taskRows: Array<Record<string, unknown>> = []
+    try {
+      taskRows = (await deps.exec(OPEN_DISPATCH_PRS_SQL, [])).rows as Array<Record<string, unknown>>
+    } catch (err) {
+      deps.log(`[stuck-events] green-pr query failed: ${(err as Error)?.message ?? err}`)
+      return
+    }
+    const visitedUrls = new Set<string>()
+    for (const row of taskRows) {
+      const rawUrl = typeof row.dispatch_pr_url === "string" ? row.dispatch_pr_url.trim() : ""
+      const urlMatch = PARSED_PR_URL_RE.exec(rawUrl)
+      if (!urlMatch) continue
+      const fullRepo = urlMatch[1]!
+      const prNum = Number(urlMatch[2]!)
+      if (!Number.isInteger(prNum) || prNum <= 0) continue
+      const canonUrl = `https://github.com/${fullRepo}/pull/${prNum}`
+      if (visitedUrls.has(canonUrl)) continue
+      visitedUrls.add(canonUrl)
+
+      let prData: Record<string, unknown> | null = null
+      try {
+        const res = await deps.gh([
+          "pr",
+          "view",
+          String(prNum),
+          "--repo",
+          fullRepo,
+          "--json",
+          "state,isDraft,headRefName,headRefOid,mergeable,mergeStateStatus,url,title,labels,statusCheckRollup,files",
+        ])
+        if (res.code === 0) prData = parse(res.stdout)
+      } catch {
+        continue
+      }
+      if (!prData) continue
+      const state = String(prData.state ?? "").toUpperCase()
+      const isDraft = prData.isDraft === true
+      const headRefName = String(prData.headRefName ?? "")
+      const headSha = String(prData.headRefOid ?? "").trim()
+      const mergeable = String(prData.mergeable ?? "")
+      const mergeStateStatus = String(prData.mergeStateStatus ?? "")
+      if (state !== "OPEN" || isDraft || !/^dispatch\/[\w.-]+$/.test(headRefName) || !headSha) continue
+
+      const checks = Array.isArray(prData.statusCheckRollup) ? (prData.statusCheckRollup as GhCheck[]) : []
+      const ciState = computeCiState(checks, mergeable, mergeStateStatus)
+      if (mergeable !== "MERGEABLE" || mergeStateStatus !== "CLEAN" || ciState !== "green") continue
+
+      // Already woken for this exact (prUrl, headSha)?
+      if ( loadGreenSeen()[`${canonUrl}#${headSha}`] !== undefined && now - (loadGreenSeen()[`${canonUrl}#${headSha}`] ?? 0) < GREEN_SEEN_TTL_MS ) {
+        continue
+      }
+
+      const files = Array.isArray(prData.files)
+        ? (prData.files as Array<{ path?: unknown }>).map((f) => String(f?.path ?? "")).filter(Boolean)
+        : []
+      const labels = Array.isArray(prData.labels)
+        ? (prData.labels as Array<{ name?: unknown }>).map((l) => String(l?.name ?? "")).filter(Boolean)
+        : []
+
+      let parkReason: string | null = null
+      try {
+        const parkRows = (await deps.exec(TASK_PR_PARK_SQL, [String(row.id ?? "")])).rows as Array<Record<string, unknown>>
+        const latestPark = parkRows[0]
+        if (latestPark && (latestPark.action === "pr:needs-human" || latestPark.action === "pr:hold")) {
+          const pm = parse(latestPark.meta)
+          const rawWhy = typeof pm?.reason === "string" ? pm.reason : ""
+          if (!/tainted \(/i.test(rawWhy)) {
+            parkReason = rawWhy || (latestPark.action === "pr:hold" ? "held by shepherd" : "needs human approval")
+          }
+        }
+      } catch { /* best-effort */ }
+
+      const reason = needsPrMergeCard({
+        files,
+        labels,
+        origin: typeof row.origin === "string" ? row.origin : null,
+        parkReason,
+      })
+      if (!reason) continue
+      if (markGreenPrSeen(canonUrl, headSha, now)) continue
+      deps.event(greenPrWakeLine({ repo: fullRepo, pr: prNum, url: canonUrl, headSha, reason }))
+    }
   }
 
   /** True if `(repo#pr, kind)` was already posted within `cooldownMs`. */
@@ -165,6 +337,7 @@ export function createStuckEvents(deps: StuckEventsDeps) {
         }
         deps.setCursor(r.id)
       }
+      await checkGreenPrWakes(now)
     } catch (err) {
       // An unhandled rejection exits the server, so nothing here may escape.
       deps.log(`[stuck-events] tick failed: ${(err as Error)?.message ?? err}`)
@@ -184,8 +357,8 @@ export function createStuckEvents(deps: StuckEventsDeps) {
   }
 }
 
-function readSeenKv(): Record<string, number> {
-  const raw = getKv(SEEN_KEY)
+function readSeenKv(key = SEEN_KEY): Record<string, number> {
+  const raw = getKv(key)
   if (!raw) return {}
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -267,8 +440,12 @@ const stuckEvents = createStuckEvents({
   event: (text) => orchEmit(appendTurn("orchestrator", text, null, BRAIN_THREAD)),
   getCursor: () => getKv(CURSOR_KEY),
   setCursor: (id) => setKv(CURSOR_KEY, id),
-  getSeen: readSeenKv,
+  getSeen: () => readSeenKv(SEEN_KEY),
   setSeen: (seen) => setKv(SEEN_KEY, JSON.stringify(seen)),
+  getGreenSeen: () => readSeenKv(GREEN_SEEN_KEY),
+  setGreenSeen: (seen) => setKv(GREEN_SEEN_KEY, JSON.stringify(seen)),
+  gh: realGh,
+  watchGreenPrs: true,
   log: companionLog,
   onStuckRow: (m) => emitStuckPrGateCard(m, { log: companionLog }),
 })

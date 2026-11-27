@@ -47,7 +47,7 @@ const DEPLOY_MISMATCH_RE = /expected [0-9a-f]+/i
 const BATCHABLE_EVENT_RE = /^(?:PR ready \[|completed \[|stuck |More stuck PRs:|\d+ stuck PRs |\[from lead-)/i
 
 /** Immediate-wake alerts. */
-const IMMEDIATE_EVENT_RE = /^blocked \[/i
+const IMMEDIATE_EVENT_RE = /^(?:blocked \[|CI green \S+)/i
 
 export function classifyBrainEvent(turn: BrainEventCandidate): BrainEventDisposition {
   if (turn.threadId !== BRAIN_THREAD || turn.role !== "orchestrator") return "silent"
